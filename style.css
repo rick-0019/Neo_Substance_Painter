@@ -45,7 +45,7 @@ body, html {
     height: 100%;
     justify-content: flex-start;
     align-items: center;
-    padding: 10px 15px;
+    padding: 10px 8px;
     box-sizing: border-box;
     position: relative;
 }

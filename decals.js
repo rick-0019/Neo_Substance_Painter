@@ -30,6 +30,7 @@ export class DecalSystem {
         this.projectorScale = 100;  // 100% por defecto
         this.currentProjectorOrientation = new THREE.Euler();
         this.currentProjectorSize = new THREE.Vector3(1, 1, 1);
+        this.allowPassthrough = false; // false = solo cara frontal (por defecto), true = atravesar caras opuestas
 
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
@@ -76,6 +77,8 @@ export class DecalSystem {
         const btnMode2D = document.getElementById('btn-decal-mode-2d');
         if (btnMode3D) btnMode3D.classList.toggle('active', mode === '3d');
         if (btnMode2D) btnMode2D.classList.toggle('active', mode === '2d');
+        const passGroup = document.getElementById('decal-passthrough-group');
+        if (passGroup) passGroup.style.display = mode === '3d' ? 'flex' : 'none';
 
         if (mode === '2d') {
             this.previewGroup.visible = false;
@@ -224,6 +227,14 @@ export class DecalSystem {
             }
         });
 
+        const chkPassthrough = document.getElementById('decal-passthrough');
+        chkPassthrough?.addEventListener('change', (e) => {
+            this.allowPassthrough = e.target.checked;
+            if (this.mode === '3d' && this.isActive) {
+                this.updatePreviewTransform();
+            }
+        });
+
         btnBake?.addEventListener('click', () => {
             this.bakeToActiveLayer();
         });
@@ -306,9 +317,11 @@ export class DecalSystem {
         const scaleInput = document.getElementById('decal-scale');
         const rotInput = document.getElementById('decal-rotation');
         const rotLabel = document.getElementById('decal-rot-label');
+        const chkPassthrough = document.getElementById('decal-passthrough');
         if (scaleInput) scaleInput.value = 100;
         if (rotInput) rotInput.value = 0;
         if (rotLabel) rotLabel.textContent = '0°';
+        if (chkPassthrough) chkPassthrough.checked = this.allowPassthrough;
         this.projectorScale = 100;
         this.projectorRotation = 0;
 
@@ -424,7 +437,8 @@ export class DecalSystem {
 
         if (targetMesh) {
             try {
-                const decalGeo = new DecalGeometry(targetMesh, this.projectorPosition, orientation, size);
+                let decalGeo = new DecalGeometry(targetMesh, this.projectorPosition, orientation, size);
+                decalGeo = this.filterDecalGeometry(decalGeo, this.projectorNormal, this.allowPassthrough);
                 if (decalGeo.attributes.position && decalGeo.attributes.position.count > 0) {
                     this.previewMesh.geometry.dispose();
                     this.previewMesh.geometry = decalGeo;
@@ -457,6 +471,67 @@ export class DecalSystem {
         this.previewBorder.visible = false;
         this.fallbackPlane.visible = true;
         this.fallbackBorder.visible = true;
+    }
+
+    /**
+     * Filtra los triángulos generados por DecalGeometry.
+     * Si allowPassthrough es false, elimina los triángulos cuyas normales apuntan en sentido contrario
+     * al proyector (dot < 0.08), evitando que la calca se proyecte en la cara inferior de alas delgadas o caras opuestas.
+     */
+    filterDecalGeometry(decalGeo, projectorNormal, allowPassthrough) {
+        if (allowPassthrough) return decalGeo;
+
+        const pos = decalGeo.attributes.position;
+        const norm = decalGeo.attributes.normal;
+        const uv = decalGeo.attributes.uv;
+        if (!pos || pos.count === 0) return decalGeo;
+
+        const filteredPos = [];
+        const filteredNorm = [];
+        const filteredUv = [];
+
+        const v0 = new THREE.Vector3();
+        const v1 = new THREE.Vector3();
+        const v2 = new THREE.Vector3();
+        const edge1 = new THREE.Vector3();
+        const edge2 = new THREE.Vector3();
+        const faceNormal = new THREE.Vector3();
+
+        for (let i = 0; i < pos.count; i += 3) {
+            v0.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+            v1.set(pos.getX(i + 1), pos.getY(i + 1), pos.getZ(i + 1));
+            v2.set(pos.getX(i + 2), pos.getY(i + 2), pos.getZ(i + 2));
+
+            edge1.subVectors(v1, v0);
+            edge2.subVectors(v2, v0);
+            faceNormal.crossVectors(edge1, edge2).normalize();
+
+            // Descartar caras opuestas al proyector
+            if (faceNormal.dot(projectorNormal) >= 0.08) {
+                for (let j = 0; j < 3; j++) {
+                    const idx = i + j;
+                    filteredPos.push(pos.getX(idx), pos.getY(idx), pos.getZ(idx));
+                    if (norm) filteredNorm.push(norm.getX(idx), norm.getY(idx), norm.getZ(idx));
+                    if (uv) filteredUv.push(uv.getX(idx), uv.getY(idx));
+                }
+            }
+        }
+
+        if (filteredPos.length === 0) {
+            return decalGeo;
+        }
+
+        const filteredGeo = new THREE.BufferGeometry();
+        filteredGeo.setAttribute('position', new THREE.Float32BufferAttribute(filteredPos, 3));
+        if (filteredNorm.length > 0) {
+            filteredGeo.setAttribute('normal', new THREE.Float32BufferAttribute(filteredNorm, 3));
+        }
+        if (filteredUv.length > 0) {
+            filteredGeo.setAttribute('uv', new THREE.Float32BufferAttribute(filteredUv, 2));
+        }
+
+        decalGeo.dispose();
+        return filteredGeo;
     }
 
     // ==========================================
@@ -777,7 +852,8 @@ export class DecalSystem {
                 uProjectorMatrix: { value: inverseProjectorMatrix },
                 uProjectorNormal: { value: this.projectorNormal },
                 uDecalTexture: { value: this.decalTexture },
-                uModelMatrix: { value: new THREE.Matrix4() }
+                uModelMatrix: { value: new THREE.Matrix4() },
+                uAllowPassthrough: { value: this.allowPassthrough ? 1.0 : 0.0 }
             },
             vertexShader: `
                 varying vec3 vWorldPosition;
@@ -797,14 +873,17 @@ export class DecalSystem {
                 uniform mat4 uProjectorMatrix;
                 uniform vec3 uProjectorNormal;
                 uniform sampler2D uDecalTexture;
+                uniform float uAllowPassthrough;
 
                 varying vec3 vWorldPosition;
                 varying vec3 vWorldNormal;
 
                 void main() {
-                    // Descartar caras perpendiculares o que apuntan en sentido contrario
-                    // (Evita manchar caras a 90° o el otro lado del fuselaje, pero abraza suavemente curvas de hasta ~75°)
-                    if (dot(vWorldNormal, uProjectorNormal) < 0.20) discard;
+                    // Si no está habilitado traspasar, descartar caras perpendiculares o que apuntan en sentido contrario
+                    // (Evita manchar caras a 90° o el otro lado del fuselaje / alas finas, pero abraza suavemente curvas de hasta ~75°)
+                    if (uAllowPassthrough < 0.5) {
+                        if (dot(vWorldNormal, uProjectorNormal) < 0.20) discard;
+                    }
 
                     vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
 
@@ -838,6 +917,7 @@ export class DecalSystem {
             meshClone.material.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
             meshClone.material.uniforms.uProjectorNormal.value = this.projectorNormal;
             meshClone.material.uniforms.uDecalTexture.value = this.decalTexture;
+            meshClone.material.uniforms.uAllowPassthrough.value = this.allowPassthrough ? 1.0 : 0.0;
             bakeScene.add(meshClone);
         });
 

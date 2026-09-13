@@ -181,44 +181,55 @@
                         <div id="decal-preview-thumb" class="decal-thumb" style="display: none;" title="Previsualización de la calcomanía"></div>
                     </div>
 
-                    <div id="decal-controls" style="display: none; align-items: center; gap: 8px;">
-                        <div class="ribbon-divider" style="height: 45px;"></div>
+                    <div id="decal-controls" style="display: none; align-items: center; gap: 6px;">
+                        <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
 
                         <!-- Selector de Modo 3D / 2D -->
                         <div style="display: flex; flex-direction: column; gap: 2px;">
-                            <label style="font-size: 0.75em; color: #ccc;">Vista</label>
+                            <label style="font-size: 0.75em; color: #ccc; white-space: nowrap;">Vista</label>
                             <div class="decal-mode-selector" style="display: flex; gap: 2px; background: #222; border: 1px solid #444; border-radius: 4px; padding: 2px;">
                                 <button type="button" id="btn-decal-mode-3d" class="decal-mode-btn active" title="Proyectar sobre el modelo 3D (amoldado a curvas)">🌐 3D</button>
                                 <button type="button" id="btn-decal-mode-2d" class="decal-mode-btn" title="Colocar directamente sobre la plantilla de papel 2D (sin deformación)">📄 2D</button>
                             </div>
                         </div>
 
-                        <div class="ribbon-divider" style="height: 45px;"></div>
+                        <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
+
                         <!-- Escala -->
                         <div style="display: flex; flex-direction: column; gap: 2px;">
-                            <label style="font-size: 0.75em; color: #ccc;">Tamaño</label>
-                            <div style="display: flex; align-items: center; gap: 3px;">
+                            <label style="font-size: 0.75em; color: #ccc; white-space: nowrap;">Tamaño</label>
+                            <div style="display: flex; align-items: center; gap: 2px;">
                                 <button type="button" id="btn-decal-scale-dec" class="size-step-btn" title="Reducir tamaño">-</button>
-                                <input type="range" id="decal-scale" min="10" max="300" value="100" style="width: 65px;">
+                                <input type="range" id="decal-scale" min="10" max="300" value="100" style="width: 55px;">
                                 <button type="button" id="btn-decal-scale-inc" class="size-step-btn" title="Aumentar tamaño">+</button>
                             </div>
                         </div>
 
                         <!-- Rotación -->
                         <div style="display: flex; flex-direction: column; gap: 2px;">
-                            <div style="display: flex; justify-content: space-between; font-size: 0.75em; color: #ccc;">
+                            <div style="display: flex; justify-content: space-between; font-size: 0.75em; color: #ccc; white-space: nowrap;">
                                 <span>Giro</span>
                                 <span id="decal-rot-label">0°</span>
                             </div>
-                            <input type="range" id="decal-rotation" min="-180" max="180" value="0" style="width: 65px;">
+                            <input type="range" id="decal-rotation" min="-180" max="180" value="0" style="width: 55px;">
                         </div>
 
-                        <div class="ribbon-divider" style="height: 45px;"></div>
+                        <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
+
+                        <!-- Opción Atravesar / Doble cara (Modo 3D) -->
+                        <div id="decal-passthrough-group" style="display: flex; flex-direction: column; justify-content: center; gap: 2px;">
+                            <label style="font-size: 0.75em; color: #ccc; white-space: nowrap;">Proyección</label>
+                            <label style="font-size: 0.78em; display: flex; align-items: center; gap: 3px; cursor: pointer; color: #eee; user-select: none; white-space: nowrap;" title="Desactivado (por defecto): Proyecta solo en la cara frontal (no atraviesa alas finas ni caras opuestas). Activado: Proyecta atravesando a ambos lados.">
+                                <input type="checkbox" id="decal-passthrough"> Traspasar
+                            </label>
+                        </div>
+
+                        <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
 
                         <!-- Acciones: Estampar / Cancelar -->
-                        <div style="display: flex; flex-direction: column; gap: 4px;">
-                            <button id="btn-bake-decal" class="ribbon-btn" style="background-color: #28a745; border-color: #1e7e34; min-width: 75px; font-weight: bold;" title="Estampar la calcomanía en la capa activa">✨ Estampar</button>
-                            <button id="btn-cancel-decal" class="ribbon-btn" style="background-color: #dc3545; border-color: #bd2130; min-width: 75px;" title="Cancelar calcomanía">✖ Cancelar</button>
+                        <div style="display: flex; flex-direction: column; gap: 3px;">
+                            <button id="btn-bake-decal" class="ribbon-btn" style="background-color: #28a745; border-color: #1e7e34; min-width: 65px; padding: 3px 6px; font-weight: bold;" title="Estampar la calcomanía en la capa activa">✨ Estampar</button>
+                            <button id="btn-cancel-decal" class="ribbon-btn" style="background-color: #dc3545; border-color: #bd2130; min-width: 65px; padding: 3px 6px;" title="Cancelar calcomanía">✖ Cancelar</button>
                         </div>
                     </div>
                 </div>
