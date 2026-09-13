@@ -3,185 +3,243 @@ import bmesh
 import math
 from mathutils import Vector, Euler
 
-# Limpiar escena
+# 1. Limpiar escena
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
-# Crear material básico
+# 2. Crear material básico
 mat = bpy.data.materials.new(name="V1_Papercraft")
 mat.use_nodes = True
+bsdf = mat.node_tree.nodes.get('Principled BSDF')
+if bsdf:
+    bsdf.inputs['Roughness'].default_value = 0.8
 
-# Colección de objetos que conformarán la V-1
 parts = []
 
 # ==============================================================================
-# 1. FUSELAJE CENTRAL (Cilindro horizontal a lo largo del eje Y)
-#    Y positivo = Hacia adelante (nariz), Y negativo = Hacia atrás (cola)
-#    Z = Arriba, X = Alas (izq / der)
+# FUNCIONES AUXILIARES PARA CREAR Y DESPLEGAR PIEZAS PAPERCRAFT
 # ==============================================================================
-# Diámetro: 0.8m (radio 0.4m), Longitud cilíndrica: 3.2m
-bpy.ops.mesh.primitive_cylinder_add(
-    vertices=16,
+
+def create_paper_cylinder(name, radius, depth, location, rotation, vertices=16):
+    """Crea un tubo cilíndrico sin tapas internas y con costura longitudinal en la panza."""
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=vertices,
+        radius=radius,
+        depth=depth,
+        end_fill_type='NOTHING',
+        location=location,
+        rotation=rotation
+    )
+    obj = bpy.context.active_object
+    obj.name = name
+
+    bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
+    bm.edges.ensure_lookup_table()
+
+    # Costura longitudinal a lo largo del cilindro en la parte inferior (panza)
+    long_edges = [e for e in bm.edges if e.calc_length() > depth * 0.85]
+    if long_edges:
+        long_edges.sort(key=lambda e: (e.verts[0].co.z + e.verts[1].co.z))
+        long_edges[0].seam = True
+
+    bmesh.update_edit_mesh(obj.data)
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.02)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    parts.append(obj)
+    return obj
+
+
+def create_paper_cone(name, r1, r2, depth, location, rotation, vertices=16):
+    """Crea un cono o cono truncado sin tapas internas y con costura longitudinal."""
+    bpy.ops.mesh.primitive_cone_add(
+        vertices=vertices,
+        radius1=r1,
+        radius2=r2,
+        depth=depth,
+        end_fill_type='NOTHING',
+        location=location,
+        rotation=rotation
+    )
+    obj = bpy.context.active_object
+    obj.name = name
+
+    bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
+    bm.edges.ensure_lookup_table()
+
+    # Aristas longitudinales desde la base hacia la punta
+    long_edges = [e for e in bm.edges if e.calc_length() > depth * 0.75]
+    if long_edges:
+        long_edges.sort(key=lambda e: (e.verts[0].co.z + e.verts[1].co.z))
+        long_edges[0].seam = True
+
+    bmesh.update_edit_mesh(obj.data)
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.02)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    parts.append(obj)
+    return obj
+
+
+def create_paper_box(name, scale, location, rotation=(0, 0, 0)):
+    """Crea un prisma rectangular (ala o timón) desplegable en una sola pieza doblada."""
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=location, rotation=rotation)
+    obj = bpy.context.active_object
+    obj.name = name
+    obj.scale = scale
+    bpy.ops.object.transform_apply(scale=True, rotation=(rotation != (0, 0, 0)))
+
+    bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(obj.data)
+
+    # Identificar la arista del borde de ataque (borde frontal de mayor longitud) para NO cortarla (es el pliegue)
+    max_len = max(e.calc_length() for e in bm.edges)
+    fold_edge_found = False
+
+    for e in bm.edges:
+        mid = (e.verts[0].co + e.verts[1].co) * 0.5
+        length = e.calc_length()
+        if not fold_edge_found and length > max_len * 0.9 and mid.y >= location[1]:
+            fold_edge_found = True
+            continue
+        e.seam = True
+
+    bmesh.update_edit_mesh(obj.data)
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.02)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    parts.append(obj)
+    return obj
+
+
+# ==============================================================================
+# CONSTRUCCIÓN DE LA BOMBA VOLADORA V-1
+# ==============================================================================
+
+# 1. Fuselaje Central (Cilindro principal)
+body = create_paper_cylinder(
+    name="Fuselage_Center",
     radius=0.4,
     depth=3.2,
     location=(0, 0, 0),
-    rotation=(math.radians(90), 0, 0)
+    rotation=(math.radians(90), 0, 0),
+    vertices=16
 )
-body = bpy.context.active_object
-body.name = "Fuselage_Center"
-parts.append(body)
 
-# ==============================================================================
-# 2. OJIVA FRONTAL / NARIZ (Cono que cierra la punta delantera)
-# ==============================================================================
-# Base radio 0.4, altura 1.4m, ubicada en Y = 1.6 + 0.7 = 2.3
-bpy.ops.mesh.primitive_cone_add(
-    vertices=16,
-    radius1=0.4,
-    radius2=0.06,  # Punta ligeramente redondeada / truncada típica de papel
+# 2. Ojiva Delantera (Cono truncado)
+nose = create_paper_cone(
+    name="Fuselage_Nose",
+    r1=0.4,
+    r2=0.06,
     depth=1.4,
     location=(0, 2.3, 0),
-    rotation=(math.radians(-90), 0, 0)
+    rotation=(math.radians(-90), 0, 0),
+    vertices=16
 )
-nose = bpy.context.active_object
-nose.name = "Fuselage_Nose"
-parts.append(nose)
 
-# Punta redondeada extrema
-bpy.ops.mesh.primitive_cone_add(
-    vertices=16,
-    radius1=0.06,
-    radius2=0.0,
+# 3. Punta Extrema de Ojiva (Cono cerrado)
+nose_tip = create_paper_cone(
+    name="Fuselage_Tip",
+    r1=0.06,
+    r2=0.0,
     depth=0.15,
     location=(0, 3.075, 0),
-    rotation=(math.radians(-90), 0, 0)
+    rotation=(math.radians(-90), 0, 0),
+    vertices=16
 )
-nose_tip = bpy.context.active_object
-nose_tip.name = "Fuselage_Tip"
-parts.append(nose_tip)
 
-# ==============================================================================
-# 3. CONO DE COLA TRASERO (Cono truncado hacia atrás)
-# ==============================================================================
-# Base radio 0.4, se afina a 0.18m, longitud 1.8m. Ubicado en Y = -1.6 - 0.9 = -2.5
-bpy.ops.mesh.primitive_cone_add(
-    vertices=16,
-    radius1=0.4,
-    radius2=0.18,
+# 4. Cono de Cola Trasero (Cono truncado hacia atrás)
+tail = create_paper_cone(
+    name="Fuselage_Tail",
+    r1=0.4,
+    r2=0.18,
     depth=1.8,
     location=(0, -2.5, 0),
-    rotation=(math.radians(90), 0, 0)
+    rotation=(math.radians(90), 0, 0),
+    vertices=16
 )
-tail = bpy.context.active_object
-tail.name = "Fuselage_Tail"
-parts.append(tail)
 
-# Tapa trasera de cola
+# 5. Tapa Trasera de Cola
 bpy.ops.mesh.primitive_cylinder_add(
     vertices=16,
     radius=0.18,
-    depth=0.1,
-    location=(0, -3.45, 0),
+    depth=0.02,
+    location=(0, -3.4, 0),
     rotation=(math.radians(90), 0, 0)
 )
 tail_cap = bpy.context.active_object
 tail_cap.name = "Tail_Cap"
+bpy.ops.object.mode_set(mode='EDIT')
+bm = bmesh.from_edit_mesh(tail_cap.data)
+for e in bm.edges:
+    e.seam = True
+bmesh.update_edit_mesh(tail_cap.data)
+bpy.ops.mesh.select_all(action='SELECT')
+bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.02)
+bpy.ops.object.mode_set(mode='OBJECT')
 parts.append(tail_cap)
 
-# ==============================================================================
-# 4. MOTOR PULSORREACTOR (Argus As 014) montado en la parte superior trasera
-# ==============================================================================
-# Tubo principal del motor (cilindro radio 0.22m, longitud 2.8m, centro en Z = 0.72, Y = -2.0)
-bpy.ops.mesh.primitive_cylinder_add(
-    vertices=16,
+# 6. Motor Pulsorreactor Argus As 014
+engine_body = create_paper_cylinder(
+    name="Engine_Body",
     radius=0.22,
     depth=2.8,
     location=(0, -2.0, 0.72),
-    rotation=(math.radians(90), 0, 0)
+    rotation=(math.radians(90), 0, 0),
+    vertices=16
 )
-engine_body = bpy.context.active_object
-engine_body.name = "Engine_Body"
-parts.append(engine_body)
 
-# Admisión frontal del motor (cono corto ensanchado adelante)
-bpy.ops.mesh.primitive_cone_add(
-    vertices=16,
-    radius1=0.26,
-    radius2=0.22,
+engine_intake = create_paper_cone(
+    name="Engine_Intake",
+    r1=0.26,
+    r2=0.22,
     depth=0.4,
     location=(0, -0.4, 0.72),
-    rotation=(math.radians(90), 0, 0)
+    rotation=(math.radians(90), 0, 0),
+    vertices=16
 )
-engine_intake = bpy.context.active_object
-engine_intake.name = "Engine_Intake"
-parts.append(engine_intake)
 
-# Tobera de escape trasera afinada
-bpy.ops.mesh.primitive_cone_add(
-    vertices=16,
-    radius1=0.22,
-    radius2=0.19,
+engine_exhaust = create_paper_cone(
+    name="Engine_Exhaust",
+    r1=0.22,
+    r2=0.19,
     depth=0.6,
     location=(0, -3.7, 0.72),
-    rotation=(math.radians(-90), 0, 0)
+    rotation=(math.radians(-90), 0, 0),
+    vertices=16
 )
-engine_exhaust = bpy.context.active_object
-engine_exhaust.name = "Engine_Exhaust"
-parts.append(engine_exhaust)
 
-# Soporte vertical / pilón que une el fuselaje con el motor
-bpy.ops.mesh.primitive_cube_add(
-    size=1.0,
+# 7. Pilón de soporte del motor
+pylon = create_paper_box(
+    name="Engine_Pylon",
+    scale=(0.08, 0.6, 0.28),
     location=(0, -1.8, 0.45)
 )
-pylon = bpy.context.active_object
-pylon.scale = (0.08, 0.6, 0.28)
-bpy.ops.object.transform_apply(scale=True)
-pylon.name = "Engine_Pylon"
-parts.append(pylon)
 
-# ==============================================================================
-# 5. ALAS PRINCIPALES RECTAS (Típico perfil V-1 / papercraft)
-#    Envergadura: 4.8m (X = -2.4 a +2.4), Cuerda: 1.0m, Espesor delgado: 0.08m
-# ==============================================================================
-bpy.ops.mesh.primitive_cube_add(
-    size=1.0,
+# 8. Alas Principales Rectas
+wings = create_paper_box(
+    name="Wings",
+    scale=(4.8, 1.0, 0.08),
     location=(0, 0.5, 0.0)
 )
-wings = bpy.context.active_object
-wings.scale = (4.8, 1.0, 0.08)
-bpy.ops.object.transform_apply(scale=True)
-wings.name = "Wings"
-parts.append(wings)
 
-# ==============================================================================
-# 6. ESTABILIZADORES DE COLA (Vertical y Horizontales)
-# ==============================================================================
-# Estabilizador vertical (Timón inferior que conecta con fuselaje y motor)
-bpy.ops.mesh.primitive_cube_add(
-    size=1.0,
+# 9. Estabilizadores de Cola
+tail_vertical = create_paper_box(
+    name="Tail_Vertical",
+    scale=(0.06, 0.7, 0.55),
     location=(0, -3.0, 0.38)
 )
-tail_vertical = bpy.context.active_object
-tail_vertical.scale = (0.06, 0.7, 0.55)
-bpy.ops.object.transform_apply(scale=True)
-tail_vertical.name = "Tail_Vertical"
-parts.append(tail_vertical)
 
-# Estabilizadores horizontales traseros
-bpy.ops.mesh.primitive_cube_add(
-    size=1.0,
+tail_horizontal = create_paper_box(
+    name="Tail_Horizontal",
+    scale=(1.8, 0.6, 0.06),
     location=(0, -2.9, 0.05)
 )
-tail_horizontal = bpy.context.active_object
-tail_horizontal.scale = (1.8, 0.6, 0.06)
-bpy.ops.object.transform_apply(scale=True)
-tail_horizontal.name = "Tail_Horizontal"
-parts.append(tail_horizontal)
 
 # ==============================================================================
-# 7. UNIFICAR PIEZAS Y REALIZAR DESENROLLADO UV ÓPTIMO PARA PAPERCRAFT
+# UNIFICACIÓN FINAL Y EMPAQUE DE ISLAS PAPERCRAFT
 # ==============================================================================
-# Seleccionar todas las partes
 bpy.ops.object.select_all(action='DESELECT')
 for p in parts:
     p.select_set(True)
@@ -198,36 +256,21 @@ bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 # Asignar material
 if len(v1_model.data.materials) == 0:
     v1_model.data.materials.append(mat)
+else:
+    v1_model.data.materials[0] = mat
 
-# ==============================================================================
-# 8. MARCADO INTELIGENTE DE COSTURAS (SEAMS) Y DESENROLLADO UV DE PAPEL
-# ==============================================================================
-# Entrar a modo edición con BMesh
+# Empacar las islas de papercraft con margen generoso
 bpy.ops.object.mode_set(mode='EDIT')
-bm = bmesh.from_edit_mesh(v1_model.data)
-
-# Seleccionar todas las caras y usar Unwrap con costuras angulares automáticas
 bpy.ops.mesh.select_all(action='SELECT')
+bpy.ops.uv.pack_islands(margin=0.03)
 
-# Smart Project para desplegar todas las facetas planas y curvas sin estiramiento
-# margin=0.025 garantiza que cada solapa/pieza tenga separación suficiente en 2048px
-bpy.ops.uv.smart_project(
-    angle_limit=math.radians(66.0),
-    island_margin=0.025,
-    area_weight=0.0,
-    correct_aspect=True,
-    scale_to_bounds=False
-)
-
-# Empacar islas para aprovechar al máximo el espacio UV cuadrado [0, 1]
-bpy.ops.uv.pack_islands(margin=0.025)
-
+# Flat shading para aspecto poligonal limpio de papel
+bmesh_data = bmesh.from_edit_mesh(v1_model.data)
+for f in bmesh_data.faces:
+    f.smooth = False
 bmesh.update_edit_mesh(v1_model.data)
-bpy.ops.object.mode_set(mode='OBJECT')
 
-# Suavizado suave de normales
-for poly in v1_model.data.polygons:
-    poly.use_smooth = True
+bpy.ops.object.mode_set(mode='OBJECT')
 
 # Guardar archivo .blend
 blend_path = "c:/Proyectos varios/Neo_Substance_Painter/models/bomba_v1.blend"
@@ -254,4 +297,4 @@ except Exception as e:
         use_normals=True
     )
 
-print("¡PROCESO COMPLETADO CON ÉXITO!")
+print("¡PROCESO PAPERCRAFT COMPLETADO CON ÉXITO!")
