@@ -160,21 +160,17 @@ tail = create_paper_cone(
     vertices=16
 )
 
-# 5. Tapa Trasera de Cola
-bpy.ops.mesh.primitive_cylinder_add(
+# 5. Tapa Trasera de Cola (Disco plano de papel)
+bpy.ops.mesh.primitive_circle_add(
     vertices=16,
     radius=0.18,
-    depth=0.02,
+    fill_type='TRIFAN',
     location=(0, -3.4, 0),
     rotation=(math.radians(90), 0, 0)
 )
 tail_cap = bpy.context.active_object
 tail_cap.name = "Tail_Cap"
 bpy.ops.object.mode_set(mode='EDIT')
-bm = bmesh.from_edit_mesh(tail_cap.data)
-for e in bm.edges:
-    e.seam = True
-bmesh.update_edit_mesh(tail_cap.data)
 bpy.ops.mesh.select_all(action='SELECT')
 bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.02)
 bpy.ops.object.mode_set(mode='OBJECT')
