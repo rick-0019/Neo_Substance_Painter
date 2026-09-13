@@ -27,6 +27,9 @@ export class Painter {
         this.dragMode = null; 
         this.dragOffset = { x: 0, y: 0 };
         this.savedCanvasData = null;
+
+        // Editor de Transformación de Capas (Mover / Escalar / Rotar / Espejar)
+        this.transformState = null;
         
         // Interpolación
         this.lastU = null;
@@ -41,6 +44,16 @@ export class Painter {
         window.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key === 'z') {
                 this.undo();
+            } else if (e.key === 'Enter') {
+                if (this.transformState && this.transformState.active) {
+                    this.commitLayerTransform();
+                } else if (this.editingShape) {
+                    this.commitShape();
+                }
+            } else if (e.key === 'Escape') {
+                if (this.transformState && this.transformState.active) {
+                    this.cancelLayerTransform();
+                }
             }
         });
         
@@ -82,6 +95,10 @@ export class Painter {
     }
 
     undo() {
+        if (this.transformState && this.transformState.active) {
+            this.cancelLayerTransform();
+            return;
+        }
         if (this.editingShape) this.commitShape();
         if (this.undoStack.length > 0) {
             const lastState = this.undoStack.pop();
@@ -199,6 +216,63 @@ export class Painter {
                 }
             }
         });
+
+        window.addEventListener('pointermove', (e) => {
+            if (this.transformState && this.transformState.active && this.transformState.isDragging) {
+                const rect = this.canvas.getBoundingClientRect();
+                const scaleX = this.canvas.width / rect.width;
+                const scaleY = this.canvas.height / rect.height;
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+
+                const t = this.transformState;
+                const h = t.dragHandle;
+                const init = t.initialState;
+
+                if (h === 'move') {
+                    t.x = x - t.dragOffset.x;
+                    t.y = y - t.dragOffset.y;
+                } else if (h === 'rotate') {
+                    const angle = Math.atan2(y - t.y, x - t.x) + Math.PI / 2;
+                    t.rotation = angle;
+                } else if (['nw', 'ne', 'sw', 'se'].includes(h)) {
+                    const dx = x - init.x;
+                    const dy = y - init.y;
+                    const cos = Math.cos(-init.rotation);
+                    const sin = Math.sin(-init.rotation);
+                    const lx = dx * cos - dy * sin;
+                    const ly = dx * sin + dy * cos;
+
+                    const aspect = init.baseWidth / init.baseHeight;
+                    let newHalfW = Math.abs(lx);
+                    let newHalfH = newHalfW / aspect;
+                    if (Math.abs(ly) * aspect > newHalfW) {
+                        newHalfH = Math.abs(ly);
+                        newHalfW = newHalfH * aspect;
+                    }
+
+                    t.width = Math.max(10, newHalfW * 2);
+                    t.height = Math.max(10, newHalfH * 2);
+                } else if (['n', 's'].includes(h)) {
+                    const dx = x - init.x;
+                    const dy = y - init.y;
+                    const cos = Math.cos(-init.rotation);
+                    const sin = Math.sin(-init.rotation);
+                    const ly = dx * sin + dy * cos;
+                    t.height = Math.max(10, Math.abs(ly) * 2);
+                } else if (['e', 'w'].includes(h)) {
+                    const dx = x - init.x;
+                    const dy = y - init.y;
+                    const cos = Math.cos(-init.rotation);
+                    const sin = Math.sin(-init.rotation);
+                    const lx = dx * cos - dy * sin;
+                    t.width = Math.max(10, Math.abs(lx) * 2);
+                }
+
+                this.updateLiveLayerPreview();
+                this.renderTransformUI();
+            }
+        });
         
         window.addEventListener('pointerup', (e) => {
             try { view3d.releasePointerCapture(e.pointerId); } catch (_) {}
@@ -240,6 +314,10 @@ export class Painter {
                         this.renderEditingShape(); // Dibuja los nodos de control
                     }
                 }
+                if (this.transformState && this.transformState.isDragging) {
+                    this.transformState.isDragging = false;
+                    this.transformState.dragHandle = null;
+                }
             }
         });
         
@@ -254,6 +332,18 @@ export class Painter {
             const x = (e.clientX - rect.left) * scaleX;
             const y = (e.clientY - rect.top) * scaleY;
             
+            if (this.transformState && this.transformState.active) {
+                const hit = this.hitTestTransform(x, y);
+                if (hit) {
+                    this.transformState.isDragging = true;
+                    this.transformState.dragHandle = hit;
+                    this.transformState.dragOffset = { x: x - this.transformState.x, y: y - this.transformState.y };
+                    this.transformState.initialState = { ...this.transformState };
+                    this.transformState.dragStart = { x, y };
+                }
+                return;
+            }
+
             const mode = document.getElementById('brush-mode').value;
             
             if (this.editingShape) {
@@ -304,6 +394,68 @@ export class Painter {
             const x = (e.clientX - rect.left) * scaleX;
             const y = (e.clientY - rect.top) * scaleY;
             
+            if (this.transformState && this.transformState.active) {
+                if (!this.transformState.isDragging) {
+                    const hit = this.hitTestTransform(x, y);
+                    if (hit === 'rotate') this.canvas.style.cursor = 'grab';
+                    else if (hit === 'move') this.canvas.style.cursor = 'move';
+                    else if (['nw', 'se'].includes(hit)) this.canvas.style.cursor = 'nwse-resize';
+                    else if (['ne', 'sw'].includes(hit)) this.canvas.style.cursor = 'nesw-resize';
+                    else if (['n', 's'].includes(hit)) this.canvas.style.cursor = 'ns-resize';
+                    else if (['e', 'w'].includes(hit)) this.canvas.style.cursor = 'ew-resize';
+                    else this.canvas.style.cursor = 'default';
+                    return;
+                }
+
+                const t = this.transformState;
+                const h = t.dragHandle;
+                const init = t.initialState;
+
+                if (h === 'move') {
+                    t.x = x - t.dragOffset.x;
+                    t.y = y - t.dragOffset.y;
+                } else if (h === 'rotate') {
+                    const angle = Math.atan2(y - t.y, x - t.x) + Math.PI / 2;
+                    t.rotation = angle;
+                } else if (['nw', 'ne', 'sw', 'se'].includes(h)) {
+                    const dx = x - init.x;
+                    const dy = y - init.y;
+                    const cos = Math.cos(-init.rotation);
+                    const sin = Math.sin(-init.rotation);
+                    const lx = dx * cos - dy * sin;
+                    const ly = dx * sin + dy * cos;
+
+                    const aspect = init.baseWidth / init.baseHeight;
+                    let newHalfW = Math.abs(lx);
+                    let newHalfH = newHalfW / aspect;
+                    if (Math.abs(ly) * aspect > newHalfW) {
+                        newHalfH = Math.abs(ly);
+                        newHalfW = newHalfH * aspect;
+                    }
+
+                    t.width = Math.max(10, newHalfW * 2);
+                    t.height = Math.max(10, newHalfH * 2);
+                } else if (['n', 's'].includes(h)) {
+                    const dx = x - init.x;
+                    const dy = y - init.y;
+                    const cos = Math.cos(-init.rotation);
+                    const sin = Math.sin(-init.rotation);
+                    const ly = dx * sin + dy * cos;
+                    t.height = Math.max(10, Math.abs(ly) * 2);
+                } else if (['e', 'w'].includes(h)) {
+                    const dx = x - init.x;
+                    const dy = y - init.y;
+                    const cos = Math.cos(-init.rotation);
+                    const sin = Math.sin(-init.rotation);
+                    const lx = dx * cos - dy * sin;
+                    t.width = Math.max(10, Math.abs(lx) * 2);
+                }
+
+                this.updateLiveLayerPreview();
+                this.renderTransformUI();
+                return;
+            }
+
             if (this.editingShape && this.dragMode) {
                 const s = this.editingShape;
                 if (this.dragMode === 'create') {
@@ -584,6 +736,254 @@ export class Painter {
         }
         this.uiNeedsUpdate = true;
     }
+
+    // --- Transformación de Capas (Mover / Escalar / Rotar / Espejar) ---
+
+    startLayerTransform() {
+        if (!this.layerManager) return;
+        const activeLayer = this.layerManager.getActiveLayer();
+        if (!activeLayer) return;
+
+        if (activeLayer.isBackground) {
+            alert('La capa de Fondo no se puede mover. Selecciona una capa de dibujo o duplica una capa.');
+            return;
+        }
+
+        if (this.transformState && this.transformState.active) {
+            this.commitLayerTransform();
+        }
+
+        const bbox = this.layerManager.getLayerBoundingBox(activeLayer);
+        if (!bbox) {
+            alert('La capa seleccionada está vacía.');
+            return;
+        }
+
+        const originalData = activeLayer.ctx.getImageData(0, 0, activeLayer.width, activeLayer.height);
+
+        const sourceCanvas = document.createElement('canvas');
+        sourceCanvas.width = bbox.width;
+        sourceCanvas.height = bbox.height;
+        const sCtx = sourceCanvas.getContext('2d');
+        sCtx.drawImage(
+            activeLayer.canvas,
+            bbox.x, bbox.y, bbox.width, bbox.height,
+            0, 0, bbox.width, bbox.height
+        );
+
+        // Limpiar la capa para la previsualización interactiva en tiempo real
+        activeLayer.ctx.clearRect(0, 0, activeLayer.width, activeLayer.height);
+
+        this.transformState = {
+            active: true,
+            layerId: activeLayer.id,
+            sourceCanvas: sourceCanvas,
+            originalLayerData: originalData,
+            x: bbox.x + bbox.width / 2,
+            y: bbox.y + bbox.height / 2,
+            width: bbox.width,
+            height: bbox.height,
+            baseWidth: bbox.width,
+            baseHeight: bbox.height,
+            rotation: 0,
+            flipH: false,
+            flipV: false,
+            isDragging: false,
+            dragHandle: null,
+            dragOffset: { x: 0, y: 0 },
+            initialState: null
+        };
+
+        const controls = document.getElementById('transform-controls');
+        if (controls) controls.style.display = 'flex';
+
+        this.updateLiveLayerPreview();
+        this.renderTransformUI();
+    }
+
+    updateLiveLayerPreview() {
+        if (!this.transformState || !this.transformState.active || !this.layerManager) return;
+        const t = this.transformState;
+        const layer = this.layerManager.layers.find(l => l.id === t.layerId);
+        if (!layer) return;
+
+        const ctx = layer.ctx;
+        ctx.clearRect(0, 0, layer.width, layer.height);
+
+        ctx.save();
+        ctx.translate(t.x, t.y);
+        ctx.rotate(t.rotation);
+        ctx.scale(t.flipH ? -1 : 1, t.flipV ? -1 : 1);
+        ctx.drawImage(t.sourceCanvas, -t.width / 2, -t.height / 2, t.width, t.height);
+        ctx.restore();
+
+        this.layerManager.recomposite();
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
+    }
+
+    renderTransformUI() {
+        if (!this.transformState || !this.transformState.active || !this.ctxUI) return;
+        this.clearUI();
+
+        const t = this.transformState;
+        const ctx = this.ctxUI;
+        const halfW = t.width / 2;
+        const halfH = t.height / 2;
+
+        ctx.save();
+        ctx.translate(t.x, t.y);
+        ctx.rotate(t.rotation);
+
+        // 1. Marco delimitador punteado
+        ctx.strokeStyle = '#00a2ff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 6]);
+        ctx.strokeRect(-halfW, -halfH, t.width, t.height);
+        ctx.setLineDash([]);
+
+        // 2. Tiradores
+        const maxDim = Math.max(t.width, t.height);
+        const handleRadius = Math.max(6, Math.min(12, maxDim / 15));
+
+        const drawHandle = (hx, hy, isRotate = false, isEdge = false) => {
+            ctx.fillStyle = isRotate ? '#00e5ff' : (isEdge ? '#ffffff' : '#00a2ff');
+            ctx.strokeStyle = isRotate ? '#0078d7' : (isEdge ? '#00a2ff' : '#ffffff');
+            ctx.lineWidth = 2;
+            if (isRotate) {
+                ctx.beginPath();
+                ctx.arc(hx, hy, handleRadius + 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            } else {
+                ctx.fillRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
+                ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
+            }
+        };
+
+        // Esquinas (escala proporcional)
+        drawHandle(-halfW, -halfH);
+        drawHandle( halfW, -halfH);
+        drawHandle(-halfW,  halfH);
+        drawHandle( halfW,  halfH);
+
+        // Bordes (ajuste de ancho o alto)
+        drawHandle(0, -halfH, false, true);
+        drawHandle(0,  halfH, false, true);
+        drawHandle(-halfW, 0, false, true);
+        drawHandle( halfW, 0, false, true);
+
+        // Mástil y tirador de rotación
+        const stemLength = Math.max(30, handleRadius * 3);
+        ctx.beginPath();
+        ctx.moveTo(0, -halfH);
+        ctx.lineTo(0, -halfH - stemLength);
+        ctx.strokeStyle = '#00a2ff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        drawHandle(0, -halfH - stemLength, true);
+
+        ctx.restore();
+    }
+
+    hitTestTransform(canvasX, canvasY) {
+        if (!this.transformState || !this.transformState.active) return null;
+
+        const t = this.transformState;
+        const dx = canvasX - t.x;
+        const dy = canvasY - t.y;
+        const cos = Math.cos(-t.rotation);
+        const sin = Math.sin(-t.rotation);
+        const lx = dx * cos - dy * sin;
+        const ly = dx * sin + dy * cos;
+
+        const halfW = t.width / 2;
+        const halfH = t.height / 2;
+        const maxDim = Math.max(t.width, t.height);
+        const handleRadius = Math.max(6, Math.min(12, maxDim / 15));
+        const tol = Math.max(14, handleRadius + 6);
+        const stemLength = Math.max(30, handleRadius * 3);
+
+        // 1. Nodo de rotación
+        if (Math.hypot(lx, ly - (-halfH - stemLength)) <= tol) {
+            return 'rotate';
+        }
+
+        // 2. Esquinas (nw, ne, sw, se)
+        if (Math.abs(lx - (-halfW)) <= tol && Math.abs(ly - (-halfH)) <= tol) return 'nw';
+        if (Math.abs(lx - ( halfW)) <= tol && Math.abs(ly - (-halfH)) <= tol) return 'ne';
+        if (Math.abs(lx - (-halfW)) <= tol && Math.abs(ly - ( halfH)) <= tol) return 'sw';
+        if (Math.abs(lx - ( halfW)) <= tol && Math.abs(ly - ( halfH)) <= tol) return 'se';
+
+        // 3. Bordes (n, s, w, e)
+        if (Math.abs(lx - 0) <= tol && Math.abs(ly - (-halfH)) <= tol) return 'n';
+        if (Math.abs(lx - 0) <= tol && Math.abs(ly - ( halfH)) <= tol) return 's';
+        if (Math.abs(lx - (-halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'w';
+        if (Math.abs(lx - ( halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'e';
+
+        // 4. Interior (mover)
+        if (Math.abs(lx) <= halfW && Math.abs(ly) <= halfH) {
+            return 'move';
+        }
+
+        return null;
+    }
+
+    flipTransformH() {
+        if (!this.transformState || !this.transformState.active) return;
+        this.transformState.flipH = !this.transformState.flipH;
+        this.updateLiveLayerPreview();
+        this.renderTransformUI();
+    }
+
+    flipTransformV() {
+        if (!this.transformState || !this.transformState.active) return;
+        this.transformState.flipV = !this.transformState.flipV;
+        this.updateLiveLayerPreview();
+        this.renderTransformUI();
+    }
+
+    commitLayerTransform() {
+        if (!this.transformState || !this.transformState.active) return;
+        const t = this.transformState;
+
+        // Guardar estado en pila de Deshacer
+        if (this.undoStack.length >= this.maxUndo) this.undoStack.shift();
+        this.undoStack.push({
+            layerId: t.layerId,
+            data: t.originalLayerData
+        });
+
+        this.updateLiveLayerPreview();
+
+        this.transformState = null;
+        this.clearUI();
+        const controls = document.getElementById('transform-controls');
+        if (controls) controls.style.display = 'none';
+        this.canvas.style.cursor = 'default';
+    }
+
+    cancelLayerTransform() {
+        if (!this.transformState || !this.transformState.active) return;
+        const t = this.transformState;
+        const layer = this.layerManager ? this.layerManager.layers.find(l => l.id === t.layerId) : null;
+        if (layer && t.originalLayerData) {
+            layer.ctx.putImageData(t.originalLayerData, 0, 0);
+            if (this.layerManager) this.layerManager.recomposite();
+            this.needsUpdate = true;
+            this.forceUpdate = true;
+            if (this.texture) this.texture.needsUpdate = true;
+        }
+
+        this.transformState = null;
+        this.clearUI();
+        const controls = document.getElementById('transform-controls');
+        if (controls) controls.style.display = 'none';
+        this.canvas.style.cursor = 'default';
+    }
+
 
     // --- Paint 2D y 3D ---
     getBrushSettings() {

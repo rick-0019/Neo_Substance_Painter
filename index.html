@@ -56,6 +56,16 @@
                             <path d="M2 18s0 4 3 4 3-2 3-4-3-6-3-6-3 4-3 6z" fill="currentColor"></path>
                         </svg>
                     </button>
+                    <button data-mode="transform" class="tool-btn" id="btn-tool-transform" title="Mover / Transformar Capa (Arrastrar, Escalar, Rotar, Espejar)">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="5 9 2 12 5 15"></polyline>
+                            <polyline points="9 5 12 2 15 5"></polyline>
+                            <polyline points="15 19 12 22 9 19"></polyline>
+                            <polyline points="19 9 22 12 19 15"></polyline>
+                            <line x1="2" y1="12" x2="22" y2="12"></line>
+                            <line x1="12" y1="2" x2="22" y2="22"></line>
+                        </svg>
+                    </button>
                     <button data-mode="erase" class="tool-btn" title="Goma de Borrar">
                         <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20"></path>
@@ -71,6 +81,22 @@
                 </div>
                 <input type="hidden" id="brush-mode" value="paint">
                 <span class="ribbon-label">Herramientas</span>
+            </div>
+
+            <!-- Controles contextuales de Transformación de Capa -->
+            <div id="transform-controls" style="display: none; align-items: center; gap: 8px;">
+                <div class="ribbon-divider" style="height: 45px;"></div>
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 0.75em; color: #ccc;">Espejar</span>
+                    <div style="display: flex; gap: 3px;">
+                        <button type="button" id="btn-transform-fliph" class="size-step-btn" style="width: 32px; font-weight: bold;" title="Voltear Horizontal (Espejar)">↔</button>
+                        <button type="button" id="btn-transform-flipv" class="size-step-btn" style="width: 32px; font-weight: bold;" title="Voltear Vertical">↕</button>
+                    </div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <button type="button" id="btn-transform-apply" class="ribbon-btn" style="background-color: #28a745; border-color: #1e7e34; min-width: 70px; font-weight: bold;" title="Aplicar Transformación (Enter)">✔ Aplicar</button>
+                    <button type="button" id="btn-transform-cancel" class="ribbon-btn" style="background-color: #dc3545; border-color: #bd2130; min-width: 70px;" title="Cancelar (Esc)">✖ Cancelar</button>
+                </div>
             </div>
 
             <div class="ribbon-divider"></div>
@@ -242,6 +268,7 @@
                 <div id="layers-list" class="layers-list"></div>
                 <div class="panel-layers-actions">
                     <button id="btn-add-layer" class="layer-action-btn" title="Nueva Capa">➕ Capa</button>
+                    <button id="btn-duplicate-layer" class="layer-action-btn" title="Duplicar Capa Seleccionada">📋 Copia</button>
                     <button id="btn-layer-up" class="layer-action-btn" title="Subir Capa">▲</button>
                     <button id="btn-layer-down" class="layer-action-btn" title="Bajar Capa">▼</button>
                     <button id="btn-delete-layer" class="layer-action-btn" title="Eliminar Capa">🗑️</button>
@@ -250,6 +277,6 @@
         </main>
     </div>
     
-    <script type="module" src="main.js?v=2.4"></script>
+    <script type="module" src="main.js?v=2.5"></script>
 </body>
 </html>

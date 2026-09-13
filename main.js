@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=2.4';
-import { DecalSystem } from './decals.js?v=2.4';
-import { LayerManager } from './layers.js?v=2.4';
+import { Painter } from './painter.js?v=2.5';
+import { DecalSystem } from './decals.js?v=2.5';
+import { LayerManager } from './layers.js?v=2.5';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -118,6 +118,21 @@ layerManager.renderUI();
 // Eventos del Panel de Capas (Layers)
 document.getElementById('btn-add-layer')?.addEventListener('click', () => {
     layerManager.addLayer();
+});
+document.getElementById('btn-duplicate-layer')?.addEventListener('click', () => {
+    if (window.painter && window.painter.transformState && window.painter.transformState.active) {
+        window.painter.commitLayerTransform();
+    }
+    const newLayer = layerManager.duplicateLayer();
+    if (newLayer && window.painter) {
+        const transformBtn = document.getElementById('btn-tool-transform');
+        if (transformBtn) {
+            toolButtons.forEach(b => b.classList.remove('active'));
+            transformBtn.classList.add('active');
+            brushModeInput.value = 'transform';
+        }
+        window.painter.startLayerTransform();
+    }
 });
 document.getElementById('btn-delete-layer')?.addEventListener('click', () => {
     layerManager.removeLayer(layerManager.activeLayerId);
@@ -269,11 +284,42 @@ toolButtons.forEach(btn => {
         if (window.painter && window.painter.editingShape) {
             window.painter.commitShape();
         }
+
+        const mode = targetBtn.getAttribute('data-mode');
+
+        if (mode === 'transform') {
+            toolButtons.forEach(b => b.classList.remove('active'));
+            targetBtn.classList.add('active');
+            brushModeInput.value = 'transform';
+            if (window.painter) {
+                window.painter.startLayerTransform();
+            }
+            return;
+        }
+
+        // Si se cambia de herramienta mientras se transformaba una capa, aplicar cambios
+        if (window.painter && window.painter.transformState && window.painter.transformState.active) {
+            window.painter.commitLayerTransform();
+        }
         
         toolButtons.forEach(b => b.classList.remove('active'));
         targetBtn.classList.add('active');
-        brushModeInput.value = targetBtn.getAttribute('data-mode');
+        brushModeInput.value = mode;
     });
+});
+
+// Controles contextuales de Transformación de Capa
+document.getElementById('btn-transform-fliph')?.addEventListener('click', () => {
+    window.painter?.flipTransformH();
+});
+document.getElementById('btn-transform-flipv')?.addEventListener('click', () => {
+    window.painter?.flipTransformV();
+});
+document.getElementById('btn-transform-apply')?.addEventListener('click', () => {
+    window.painter?.commitLayerTransform();
+});
+document.getElementById('btn-transform-cancel')?.addEventListener('click', () => {
+    window.painter?.cancelLayerTransform();
 });
 
 // Color palette

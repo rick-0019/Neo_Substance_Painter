@@ -96,6 +96,62 @@ export class LayerManager {
         return newLayer;
     }
 
+    duplicateLayer(id = null) {
+        const targetId = id !== null ? id : this.activeLayerId;
+        const index = this.layers.findIndex(l => l.id === targetId);
+        if (index === -1) return null;
+
+        const source = this.layers[index];
+        const newLayer = new Layer(this.nextId++, `${source.name} (copia)`, this.width, this.height, false);
+        newLayer.opacity = source.opacity;
+        newLayer.visible = source.visible;
+
+        // Copiar píxeles del lienzo original
+        newLayer.ctx.drawImage(source.canvas, 0, 0);
+
+        // Insertar justo encima de la capa original
+        this.layers.splice(index + 1, 0, newLayer);
+        this.activeLayerId = newLayer.id;
+
+        this.recomposite();
+        this.renderUI();
+        if (this.onUpdate) this.onUpdate();
+        return newLayer;
+    }
+
+    getLayerBoundingBox(layer) {
+        const ctx = layer.ctx;
+        const w = layer.width;
+        const h = layer.height;
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+
+        let minX = w, minY = h, maxX = -1, maxY = -1;
+
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const alpha = data[(y * w + x) * 4 + 3];
+                if (alpha > 5) {
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+
+        if (maxX < minX || maxY < minY) {
+            return null;
+        }
+
+        return {
+            x: minX,
+            y: minY,
+            width: maxX - minX + 1,
+            height: maxY - minY + 1
+        };
+    }
+
     removeLayer(id) {
         if (this.layers.length <= 1) {
             alert('No puedes eliminar todas las capas.');

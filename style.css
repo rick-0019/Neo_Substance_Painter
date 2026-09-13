@@ -102,7 +102,7 @@ body, html {
 
 .ribbon-grid-tools {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 4px;
     height: 60px;
 }
@@ -441,13 +441,14 @@ input[type=range]::-webkit-slider-runnable-track {
     color: #fff;
     border: 1px solid #555;
     border-radius: 3px;
-    padding: 4px 8px;
-    font-size: 0.8em;
+    padding: 4px 5px;
+    font-size: 0.72em;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: background 0.15s;
+    white-space: nowrap;
 }
 
 .layer-action-btn:hover {
