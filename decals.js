@@ -215,8 +215,12 @@ export class DecalSystem {
             }
         });
 
-        rotInput?.addEventListener('input', (e) => {
-            const deg = parseInt(e.target.value, 10);
+        const btnRotDec = document.getElementById('btn-decal-rot-dec');
+        const btnRotInc = document.getElementById('btn-decal-rot-inc');
+
+        const updateRotation = (deg) => {
+            deg = Math.max(-180, Math.min(180, deg));
+            if (rotInput) rotInput.value = deg;
             if (rotLabel) rotLabel.textContent = `${deg}°`;
             if (this.mode === '2d') {
                 this.decal2D.rotation = (deg * Math.PI) / 180;
@@ -225,6 +229,23 @@ export class DecalSystem {
                 this.projectorRotation = (deg * Math.PI) / 180;
                 this.updatePreviewTransform();
             }
+        };
+
+        rotInput?.addEventListener('input', (e) => {
+            const deg = parseInt(e.target.value, 10);
+            updateRotation(deg);
+        });
+
+        btnRotDec?.addEventListener('click', (e) => {
+            const step = e.shiftKey ? 5 : 1;
+            const current = parseInt(rotInput?.value || 0, 10);
+            updateRotation(current - step);
+        });
+
+        btnRotInc?.addEventListener('click', (e) => {
+            const step = e.shiftKey ? 5 : 1;
+            const current = parseInt(rotInput?.value || 0, 10);
+            updateRotation(current + step);
         });
 
         const chkPassthrough = document.getElementById('decal-passthrough');

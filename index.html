@@ -211,7 +211,11 @@
                                 <span>Giro</span>
                                 <span id="decal-rot-label">0°</span>
                             </div>
-                            <input type="range" id="decal-rotation" min="-180" max="180" value="0" style="width: 55px;">
+                            <div style="display: flex; align-items: center; gap: 2px;">
+                                <button type="button" id="btn-decal-rot-dec" class="size-step-btn" title="Girar -1° (-5° con Shift)">-</button>
+                                <input type="range" id="decal-rotation" min="-180" max="180" value="0" style="width: 55px;">
+                                <button type="button" id="btn-decal-rot-inc" class="size-step-btn" title="Girar +1° (+5° con Shift)">+</button>
+                            </div>
                         </div>
 
                         <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
