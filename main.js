@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=2.5';
-import { DecalSystem } from './decals.js?v=2.5';
-import { LayerManager } from './layers.js?v=2.5';
+import { Painter } from './painter.js?v=2.6';
+import { DecalSystem } from './decals.js?v=2.6';
+import { LayerManager } from './layers.js?v=2.6';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -204,8 +204,8 @@ document.getElementById('input-obj').addEventListener('change', (e) => {
             controls.target.copy(center);
             if (maxDim > 0) {
                 const fov = camera.fov * (Math.PI / 180);
-                let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.8;
-                camera.position.set(center.x, center.y, center.z + cameraZ);
+                const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
+                camera.position.set(center.x + dist * 0.7, center.y + dist * 0.5, center.z + dist * 0.7);
                 camera.near = Math.max(0.01, maxDim / 100);
                 camera.far = Math.max(1000, maxDim * 100);
                 camera.updateProjectionMatrix();
