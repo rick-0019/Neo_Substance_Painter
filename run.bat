@@ -1,12 +1,14 @@
 @echo off
 title Neo Substance Painter
-echo Iniciando servidor web local...
-echo.
-echo Presiona Ctrl+C en esta ventana para detener el servidor.
-echo.
+cd /d "%~dp0"
 
-:: Abre el navegador predeterminado
+echo ========================================================
+echo        Neo Substance Painter - Pepakura Edition
+echo ========================================================
+echo.
+echo Abriendo aplicacion en el navegador predeterminado...
 start http://localhost:8000
 
-:: Inicia el servidor usando Python arreglando el bug de Windows con los modulos JS
+echo Iniciando servidor local...
 python server.py
+

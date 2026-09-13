@@ -14,9 +14,12 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Expires', '0')
         super().end_headers()
 
-print(f"Serving HTTP on :: port {PORT} (http://localhost:{PORT}/) ...")
-with socketserver.TCPServer(("", PORT), NoCacheHandler) as httpd:
-    try:
+try:
+    with socketserver.TCPServer(("", PORT), NoCacheHandler) as httpd:
+        print(f"Servidor activo en: http://localhost:{PORT}/")
+        print("Presiona Ctrl+C en esta ventana para detener el servidor.")
         httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
+except OSError:
+    print(f"El servidor ya esta activo en http://localhost:{PORT}/ (puerto en uso).")
+except KeyboardInterrupt:
+    pass
