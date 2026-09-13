@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neo Substance Painter - Pepakura Edition</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="app">
+        <!-- Top Ribbon Toolbar (Estilo MS Paint) -->
+        <header id="ribbon">
+            
+            <!-- Grupo: Archivo -->
+            <div class="ribbon-group">
+                <div class="ribbon-items-vertical" style="flex-direction: row; gap: 10px;">
+                    <div class="ribbon-items-vertical">
+                        <button id="btn-load-obj" class="ribbon-btn">📂 Cargar OBJ</button>
+                        <input type="file" id="input-obj" accept=".obj" style="display: none;">
+                        <button id="btn-export" class="ribbon-btn">💾 Guardar PNG</button>
+                        <button id="btn-export-pdf" class="ribbon-btn">📄 Exportar PDF</button>
+                    </div>
+                    <div class="ribbon-items-vertical">
+                        <select id="doc-resolution" class="ribbon-select">
+                            <option value="1024">Res: 1024 px</option>
+                            <option value="2048" selected>Res: 2048 px</option>
+                            <option value="4096">Res: 4096 px</option>
+                        </select>
+                        <button id="btn-apply-res" class="ribbon-btn" title="Limpiar y cambiar resolución">📄 Nueva Hoja</button>
+                    </div>
+                </div>
+                <span class="ribbon-label">Archivo</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Grupo: Herramientas -->
+            <div class="ribbon-group">
+                <div class="ribbon-grid-tools">
+                    <button data-mode="paint" class="tool-btn active" title="Lápiz / Pincel">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                    </button>
+                    <button data-mode="fill" class="tool-btn" title="Relleno de Color">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19.33 11.22l-8.56-8.56a2 2 0 0 0-2.83 0l-5.66 5.66a2 2 0 0 0 0 2.83l8.56 8.56a2 2 0 0 0 2.83 0l5.66-5.66a2 2 0 0 0 0-2.83z"></path>
+                            <path d="M2 14l6 6"></path><path d="M16 4l4 4"></path>
+                            <path d="M2 18s0 4 3 4 3-2 3-4-3-6-3-6-3 4-3 6z" fill="currentColor"></path>
+                        </svg>
+                    </button>
+                    <button data-mode="erase" class="tool-btn" title="Goma de Borrar">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20"></path>
+                            <path d="M16 15l-5-5"></path>
+                        </svg>
+                    </button>
+                    <button data-mode="erase_face" class="tool-btn" title="Borrar Cara Completa">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+                            <path d="M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20"></path>
+                            <polygon points="17,17 23,17 20,11" fill="currentColor" stroke-width="0"></polygon>
+                        </svg>
+                    </button>
+                </div>
+                <input type="hidden" id="brush-mode" value="paint">
+                <span class="ribbon-label">Herramientas</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Grupo: Formas -->
+            <div class="ribbon-group">
+                <div class="ribbon-grid-tools" style="grid-template-columns: repeat(2, 1fr);">
+                    <button data-mode="line" class="tool-btn" title="Línea">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><line x1="4" y1="20" x2="20" y2="4"></line></svg>
+                    </button>
+                    <button data-mode="rect" class="tool-btn" title="Rectángulo">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                    </button>
+                    <button data-mode="circle" class="tool-btn" title="Círculo">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="9"></circle></svg>
+                    </button>
+                    <button data-mode="star" class="tool-btn" title="Estrella">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                    </button>
+                </div>
+                <span class="ribbon-label">Formas</span>
+            </div>
+            
+            <div class="ribbon-divider"></div>
+
+            <!-- Grupo: Tamaño -->
+            <div class="ribbon-group">
+                <div class="ribbon-items-vertical centered">
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                        <button id="btn-size-dec" class="size-step-btn" title="Reducir tamaño (-1 px)">-</button>
+                        <input type="range" id="brush-size" min="1" max="100" value="10" style="width: 80px;">
+                        <button id="btn-size-inc" class="size-step-btn" title="Aumentar tamaño (+1 px)">+</button>
+                    </div>
+                    <span id="brush-size-label" style="font-size: 0.8em; margin-top: 2px;">10 px</span>
+                </div>
+                <span class="ribbon-label">Tamaño</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Grupo: Colores -->
+            <div class="ribbon-group" style="flex-direction: row; gap: 10px; align-items: flex-start;">
+                <div class="ribbon-color-picker">
+                    <input type="color" id="brush-color" value="#ff0000" title="Color Seleccionado">
+                </div>
+                <div class="ribbon-palette" id="color-palette">
+                    <!-- Fila 1 -->
+                    <div class="palette-swatch" style="background-color:#000000;" data-color="#000000"></div>
+                    <div class="palette-swatch" style="background-color:#808080;" data-color="#808080"></div>
+                    <div class="palette-swatch" style="background-color:#ff0000;" data-color="#ff0000"></div>
+                    <div class="palette-swatch" style="background-color:#ff8000;" data-color="#ff8000"></div>
+                    <div class="palette-swatch" style="background-color:#ffff00;" data-color="#ffff00"></div>
+                    <div class="palette-swatch" style="background-color:#00ff00;" data-color="#00ff00"></div>
+                    
+                    <!-- Fila 2 -->
+                    <div class="palette-swatch" style="background-color:#ffffff;" data-color="#ffffff"></div>
+                    <div class="palette-swatch" style="background-color:#c0c0c0;" data-color="#c0c0c0"></div>
+                    <div class="palette-swatch" style="background-color:#ff8080;" data-color="#ff8080"></div>
+                    <div class="palette-swatch" style="background-color:#ffc080;" data-color="#ffc080"></div>
+                    <div class="palette-swatch" style="background-color:#ffff80;" data-color="#ffff80"></div>
+                    <div class="palette-swatch" style="background-color:#80ff80;" data-color="#80ff80"></div>
+                    
+                    <!-- Fila 3 -->
+                    <div class="palette-swatch" style="background-color:#0000ff;" data-color="#0000ff"></div>
+                    <div class="palette-swatch" style="background-color:#00ffff;" data-color="#00ffff"></div>
+                    <div class="palette-swatch" style="background-color:#8000ff;" data-color="#8000ff"></div>
+                    <div class="palette-swatch" style="background-color:#ff00ff;" data-color="#ff00ff"></div>
+                    <div class="palette-swatch" style="background-color:#804000;" data-color="#804000"></div>
+                    <div class="palette-swatch" style="background-color:#ff0080;" data-color="#ff0080"></div>
+                </div>
+                <span class="ribbon-label">Colores</span>
+            </div>
+            
+            <div class="ribbon-divider"></div>
+
+            <!-- Grupo: Calcomanías (Decals / Logos) -->
+            <div class="ribbon-group" id="group-decals">
+                <div class="ribbon-items-horizontal" style="display: flex; align-items: center; gap: 8px; height: 60px;">
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;">
+                        <button id="btn-load-decal" class="ribbon-btn" style="min-width: 80px;" title="Cargar imagen PNG/JPG/WebP para estampar en el modelo 3D">🏷️ Pegatina</button>
+                        <input type="file" id="input-decal" accept="image/png,image/jpeg,image/webp" style="display: none;">
+                        <div id="decal-preview-thumb" class="decal-thumb" style="display: none;" title="Previsualización de la calcomanía"></div>
+                    </div>
+
+                    <div id="decal-controls" style="display: none; align-items: center; gap: 8px;">
+                        <div class="ribbon-divider" style="height: 45px;"></div>
+
+                        <!-- Selector de Modo 3D / 2D -->
+                        <div style="display: flex; flex-direction: column; gap: 2px;">
+                            <label style="font-size: 0.75em; color: #ccc;">Vista</label>
+                            <div class="decal-mode-selector" style="display: flex; gap: 2px; background: #222; border: 1px solid #444; border-radius: 4px; padding: 2px;">
+                                <button type="button" id="btn-decal-mode-3d" class="decal-mode-btn active" title="Proyectar sobre el modelo 3D (amoldado a curvas)">🌐 3D</button>
+                                <button type="button" id="btn-decal-mode-2d" class="decal-mode-btn" title="Colocar directamente sobre la plantilla de papel 2D (sin deformación)">📄 2D</button>
+                            </div>
+                        </div>
+
+                        <div class="ribbon-divider" style="height: 45px;"></div>
+                        <!-- Escala -->
+                        <div style="display: flex; flex-direction: column; gap: 2px;">
+                            <label style="font-size: 0.75em; color: #ccc;">Tamaño</label>
+                            <div style="display: flex; align-items: center; gap: 3px;">
+                                <button type="button" id="btn-decal-scale-dec" class="size-step-btn" title="Reducir tamaño">-</button>
+                                <input type="range" id="decal-scale" min="10" max="300" value="100" style="width: 65px;">
+                                <button type="button" id="btn-decal-scale-inc" class="size-step-btn" title="Aumentar tamaño">+</button>
+                            </div>
+                        </div>
+
+                        <!-- Rotación -->
+                        <div style="display: flex; flex-direction: column; gap: 2px;">
+                            <div style="display: flex; justify-content: space-between; font-size: 0.75em; color: #ccc;">
+                                <span>Giro</span>
+                                <span id="decal-rot-label">0°</span>
+                            </div>
+                            <input type="range" id="decal-rotation" min="-180" max="180" value="0" style="width: 65px;">
+                        </div>
+
+                        <div class="ribbon-divider" style="height: 45px;"></div>
+
+                        <!-- Acciones: Estampar / Cancelar -->
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <button id="btn-bake-decal" class="ribbon-btn" style="background-color: #28a745; border-color: #1e7e34; min-width: 75px; font-weight: bold;" title="Estampar la calcomanía en la capa activa">✨ Estampar</button>
+                            <button id="btn-cancel-decal" class="ribbon-btn" style="background-color: #dc3545; border-color: #bd2130; min-width: 75px;" title="Cancelar calcomanía">✖ Cancelar</button>
+                        </div>
+                    </div>
+                </div>
+                <span class="ribbon-label">Calcomanías (Decals)</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Grupo: Visualización / Extras -->
+            <div class="ribbon-group">
+                <div class="ribbon-items-vertical" style="height: 60px; justify-content: center;">
+                    <label style="font-size: 0.85em; display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                        <input type="checkbox" id="toggle-wireframe" checked> Malla UV
+                    </label>
+                </div>
+                <span class="ribbon-label">Vista</span>
+            </div>
+
+        </header>
+
+        <!-- Main Viewport -->
+        <main id="viewport">
+            <div id="view-2d" class="view-panel">
+                <div class="canvas-container">
+                    <canvas id="canvas-2d" width="2048" height="2048"></canvas>
+                    <canvas id="canvas-uv" width="2048" height="2048"></canvas>
+                    <canvas id="canvas-ui" width="2048" height="2048"></canvas>
+                </div>
+                <div class="panel-label">Vista 2D (UV)</div>
+                <div style="position: absolute; bottom: 15px; left: 15px; display: flex; gap: 8px; z-index: 10;">
+                    <button id="btn-zoom-in" title="Acercar">+</button>
+                    <button id="btn-zoom-reset" title="Restaurar Vista">O</button>
+                    <button id="btn-zoom-out" title="Alejar">-</button>
+                </div>
+            </div>
+            <div id="resizer"></div>
+            <div id="view-3d" class="view-panel">
+                <div class="panel-label">Vista 3D</div>
+            </div>
+            
+            <!-- Panel de Capas (Layers Panel) -->
+            <div id="panel-layers">
+                <div class="panel-layers-header">
+                    <span>📑 Capas</span>
+                    <button id="btn-toggle-layers" title="Mostrar/Ocultar panel">✖</button>
+                </div>
+                <div id="layers-list" class="layers-list"></div>
+                <div class="panel-layers-actions">
+                    <button id="btn-add-layer" class="layer-action-btn" title="Nueva Capa">➕ Capa</button>
+                    <button id="btn-layer-up" class="layer-action-btn" title="Subir Capa">▲</button>
+                    <button id="btn-layer-down" class="layer-action-btn" title="Bajar Capa">▼</button>
+                    <button id="btn-delete-layer" class="layer-action-btn" title="Eliminar Capa">🗑️</button>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script type="module" src="main.js?v=2.4"></script>
+</body>
+</html>

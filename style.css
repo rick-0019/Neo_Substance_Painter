@@ -1,0 +1,518 @@
+:root {
+    --bg-dark: #1e1e1e;
+    --bg-ribbon: #2b2b2b;
+    --text-color: #e0e0e0;
+    --accent: #0078d7; /* Paint-like blue accent */
+    --border: #444;
+}
+
+body, html {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-dark);
+    color: var(--text-color);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow: hidden;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+}
+
+/* Ribbon Toolbar */
+#ribbon {
+    height: 110px;
+    background-color: var(--bg-ribbon);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 0 10px;
+    box-sizing: border-box;
+    overflow-x: auto;
+    overflow-y: hidden;
+    user-select: none;
+}
+
+.ribbon-group {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 10px 15px;
+    box-sizing: border-box;
+    position: relative;
+}
+
+.ribbon-label {
+    position: absolute;
+    bottom: 5px;
+    font-size: 0.75em;
+    color: #999;
+    text-align: center;
+    width: 100%;
+}
+
+.ribbon-divider {
+    width: 1px;
+    height: 70%;
+    background-color: var(--border);
+    margin: 0 5px;
+}
+
+.ribbon-items-vertical {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ribbon-items-vertical.centered {
+    align-items: center;
+    justify-content: center;
+    height: 60px;
+}
+
+.ribbon-btn {
+    background-color: var(--accent);
+    color: white;
+    border: 1px solid #005a9e;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 3px;
+    font-size: 0.85em;
+    min-width: 100px;
+}
+.ribbon-btn:hover { background-color: #005a9e; }
+.ribbon-btn:disabled { background-color: #555; color: #888; border-color: #444; cursor: not-allowed; }
+
+.ribbon-select {
+    padding: 3px;
+    font-size: 0.85em;
+    background: #444;
+    color: #fff;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+}
+
+.ribbon-grid-tools {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px;
+    height: 60px;
+}
+
+.tool-btn {
+    background-color: transparent;
+    color: #fff;
+    border: 1px solid transparent;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 1.2em;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+.tool-btn:hover { background-color: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); }
+.tool-btn.active {
+    background-color: rgba(0, 120, 215, 0.3);
+    border-color: var(--accent);
+}
+
+.ribbon-color-picker {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 60px;
+}
+
+#brush-color {
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    background: none;
+}
+
+.ribbon-palette {
+    display: grid;
+    grid-template-columns: repeat(6, 18px);
+    grid-template-rows: repeat(3, 18px);
+    gap: 2px;
+    height: 60px;
+}
+
+.palette-swatch {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #555;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+.palette-swatch:hover { border: 1px solid #fff; }
+
+/* Viewport & Canvases */
+#viewport {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    position: relative;
+}
+
+.view-panel {
+    flex: 1;
+    position: relative;
+    background-color: #111;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.canvas-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.canvas-container canvas {
+    position: absolute;
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: 1 / 1;
+}
+
+#canvas-2d {
+    background-color: transparent;
+    background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), 
+                      linear-gradient(-45deg, #ccc 25%, transparent 25%), 
+                      linear-gradient(45deg, transparent 75%, #ccc 75%), 
+                      linear-gradient(-45deg, transparent 75%, #ccc 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    z-index: 1;
+}
+
+#canvas-uv {
+    z-index: 2;
+    pointer-events: none;
+}
+
+#canvas-ui {
+    z-index: 3;
+    pointer-events: none;
+}
+
+.panel-label {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.5);
+    padding: 5px 10px;
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+#resizer {
+    width: 5px;
+    background-color: var(--border);
+    cursor: col-resize;
+    z-index: 5;
+}
+#resizer:hover { background-color: var(--accent); }
+
+/* Custom range slider */
+input[type=range] {
+    -webkit-appearance: none;
+    background: transparent;
+}
+input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    height: 14px; width: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    margin-top: -5px;
+}
+input[type=range]::-webkit-slider-runnable-track {
+    width: 100%; height: 4px;
+    cursor: pointer;
+    background: #555;
+    border-radius: 2px;
+}
+
+/* ==========================================================================
+   Panel de Capas (Layers Panel)
+   ========================================================================== */
+#panel-layers {
+    width: 240px;
+    background-color: var(--bg-ribbon);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
+    user-select: none;
+    transition: width 0.2s ease, transform 0.2s ease;
+}
+
+#panel-layers.collapsed {
+    width: 32px;
+}
+
+#panel-layers.collapsed .panel-layers-header span,
+#panel-layers.collapsed .layers-list,
+#panel-layers.collapsed .panel-layers-actions {
+    display: none;
+}
+
+.panel-layers-header {
+    height: 36px;
+    background-color: #222;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #ccc;
+}
+
+#btn-toggle-layers {
+    background: transparent;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 0.9em;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+#btn-toggle-layers:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.layers-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+}
+
+.layer-item {
+    display: flex;
+    flex-direction: column;
+    background: #333;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 6px 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+    gap: 4px;
+}
+
+.layer-item:hover {
+    background: #3c3c3c;
+}
+
+.layer-item.active {
+    background: #005a9e;
+    border-color: var(--accent);
+}
+
+.layer-header-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+}
+
+.layer-btn-vis {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border-radius: 3px;
+}
+.layer-btn-vis:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.layer-name {
+    font-size: 0.85em;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #eee;
+    flex: 1;
+    cursor: text;
+}
+
+.layer-btn-rename {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #aaa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px;
+    border-radius: 3px;
+    opacity: 0.6;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.layer-item:hover .layer-btn-rename {
+    opacity: 1;
+    color: #eee;
+}
+
+.layer-btn-rename:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.layer-name-input {
+    flex: 1;
+    background: #1e1e1e;
+    border: 1px solid var(--accent);
+    color: #fff;
+    font-size: 0.85em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    outline: none;
+}
+
+.layer-opac-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.layer-opac-slider {
+    flex: 1;
+    height: 3px;
+}
+
+.layer-opac-label {
+    font-size: 0.75em;
+    color: #bbb;
+    min-width: 32px;
+    text-align: right;
+}
+
+.panel-layers-actions {
+    height: 42px;
+    background: #222;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    padding: 0 6px;
+    gap: 4px;
+}
+
+.layer-action-btn {
+    background: #3a3a3a;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-size: 0.8em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+
+.layer-action-btn:hover {
+    background: var(--accent);
+    border-color: #0078d7;
+}
+
+/* Botones de incremento / decremento de tamaño de pincel */
+.size-step-btn {
+    background: #333;
+    color: #eee;
+    border: 1px solid #555;
+    border-radius: 3px;
+    width: 20px;
+    height: 20px;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.size-step-btn:hover {
+    background: var(--accent);
+    border-color: #0078d7;
+    color: #fff;
+}
+
+/* Previsualización de miniatura de Calcomanías */
+.decal-thumb {
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    border: 1px solid var(--accent);
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: #2a2a2a;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+
+/* Selector de Modo 3D / 2D para Calcomanías */
+.decal-mode-btn {
+    background: transparent;
+    color: #aaa;
+    border: none;
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 0.75em;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.decal-mode-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.decal-mode-btn.active {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
