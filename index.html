@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neo Substance Painter - Pepakura Edition</title>
     <link rel="icon" type="image/x-icon" href="app_icon.ico">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=3.2">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script type="importmap">
         {
@@ -21,27 +21,69 @@
         <!-- Top Ribbon Toolbar (Estilo MS Paint) -->
         <header id="ribbon">
             
-            <!-- Grupo: Archivo -->
-            <div class="ribbon-group">
-                <div class="ribbon-items-vertical" style="flex-direction: row; gap: 8px; align-items: center;">
-                    <div class="ribbon-items-vertical" style="gap: 4px;">
-                        <button id="btn-load-obj" class="ribbon-btn">📂 Cargar OBJ</button>
-                        <input type="file" id="input-obj" accept=".obj" style="display: none;">
-                        <button id="btn-export" class="ribbon-btn">💾 Guardar PNG</button>
+            <!-- Menú Desplegable: Archivo (Estilo MS Paint) -->
+            <div class="paint-file-menu-wrapper">
+                <button type="button" id="btn-paint-file-menu" class="paint-file-menu-btn" title="Menú de Archivo">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                    <span>Archivo</span>
+                    <span style="font-size: 9px; margin-left: 2px;">▼</span>
+                </button>
+                <div id="paint-file-dropdown" class="paint-dropdown-menu" style="display: none;">
+                    <div class="paint-menu-item" id="btn-apply-res">
+                        <span class="paint-menu-icon">📄</span>
+                        <div class="paint-menu-text">
+                            <span>Nueva Hoja / Limpiar</span>
+                            <small>Reiniciar lienzo con resolución</small>
+                        </div>
                     </div>
-                    <div class="ribbon-items-vertical" style="gap: 4px;">
-                        <button id="btn-export-pdf" class="ribbon-btn">📄 Exportar PDF</button>
-                        <button id="btn-apply-res" class="ribbon-btn" title="Limpiar y cambiar resolución">📄 Nueva Hoja</button>
+                    <div class="paint-menu-item" id="btn-load-project">
+                        <span class="paint-menu-icon">📂</span>
+                        <div class="paint-menu-text">
+                            <span>Abrir Proyecto (.nsp)</span>
+                            <small>Cargar capas, modelo y papercraft</small>
+                        </div>
                     </div>
-                    <div class="ribbon-items-vertical" style="gap: 4px; justify-content: center;">
-                        <select id="doc-resolution" class="ribbon-select" style="height: 26px;">
-                            <option value="1024">Res: 1024 px</option>
-                            <option value="2048" selected>Res: 2048 px</option>
-                            <option value="4096">Res: 4096 px</option>
+                    <div class="paint-menu-item" id="btn-save-project">
+                        <span class="paint-menu-icon">💾</span>
+                        <div class="paint-menu-text">
+                            <span>Guardar Proyecto (.nsp)</span>
+                            <small>Guardar proyecto completo</small>
+                        </div>
+                    </div>
+                    <div class="paint-menu-divider"></div>
+                    <div class="paint-menu-item" id="btn-load-obj">
+                        <span class="paint-menu-icon">📦</span>
+                        <div class="paint-menu-text">
+                            <span>Cargar Modelo 3D (.obj)</span>
+                            <small>Importar geometría 3D</small>
+                        </div>
+                    </div>
+                    <div class="paint-menu-item" id="btn-export">
+                        <span class="paint-menu-icon">🖼️</span>
+                        <div class="paint-menu-text">
+                            <span>Guardar Textura (PNG)</span>
+                            <small>Exportar imagen plana de textura</small>
+                        </div>
+                    </div>
+                    <div class="paint-menu-item" id="btn-export-pdf">
+                        <span class="paint-menu-icon">📄</span>
+                        <div class="paint-menu-text">
+                            <span>Exportar PDF A4 (1:1)</span>
+                            <small>Documento para imprimir y recortar</small>
+                        </div>
+                    </div>
+                    <div class="paint-menu-divider"></div>
+                    <div class="paint-menu-item-static" style="padding: 6px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #ccc;">
+                        <span>Resolución:</span>
+                        <select id="doc-resolution" class="ribbon-select" style="height: 22px; font-size: 11px; width: 85px;">
+                            <option value="1024">1024 px</option>
+                            <option value="2048" selected>2048 px</option>
+                            <option value="4096">4096 px</option>
                         </select>
                     </div>
                 </div>
-                <span class="ribbon-label">Archivo</span>
+                <input type="file" id="input-project" accept=".nsp,.json" style="display: none;">
+                <input type="file" id="input-obj" accept=".obj" style="display: none;">
             </div>
 
             <div class="ribbon-divider"></div>
@@ -81,6 +123,13 @@
                             <polygon points="17,17 23,17 20,11" fill="currentColor" stroke-width="0"></polygon>
                         </svg>
                     </button>
+                    <button data-mode="text" class="tool-btn" id="btn-tool-text" title="Texto (Ab) - Agregar texto con fuentes, tamaño y rotación">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+                            <polyline points="4 7 4 4 20 4 20 7"></polyline>
+                            <line x1="9" y1="20" x2="15" y2="20"></line>
+                            <line x1="12" y1="4" x2="12" y2="20"></line>
+                        </svg>
+                    </button>
                 </div>
                 <input type="hidden" id="brush-mode" value="paint">
                 <span class="ribbon-label">Herramientas</span>
@@ -99,6 +148,85 @@
                 <div style="display: flex; flex-direction: column; gap: 4px;">
                     <button type="button" id="btn-transform-apply" class="ribbon-btn" style="background-color: #28a745; border-color: #1e7e34; min-width: 70px; font-weight: bold;" title="Aplicar Transformación (Enter)">✔ Aplicar</button>
                     <button type="button" id="btn-transform-cancel" class="ribbon-btn" style="background-color: #dc3545; border-color: #bd2130; min-width: 70px;" title="Cancelar (Esc)">✖ Cancelar</button>
+                </div>
+            </div>
+
+            <!-- Controles contextuales de Modo Texto (Sincronizado 3D y 2D) -->
+            <div id="text-controls" style="display: none; align-items: center; gap: 6px;">
+                <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
+
+                <!-- Selector de Vista 3D / 2D -->
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <label style="font-size: 0.72em; color: #ccc; white-space: nowrap;">Vista</label>
+                    <div class="decal-mode-selector" style="display: flex; gap: 2px; background: #222; border: 1px solid #444; border-radius: 4px; padding: 2px;">
+                        <button type="button" id="btn-text-mode-3d" class="decal-mode-btn active" title="Proyectar texto sobre el modelo 3D (amoldado a curvas)">🌐 3D</button>
+                        <button type="button" id="btn-text-mode-2d" class="decal-mode-btn" title="Colocar texto directamente sobre la plantilla de papel 2D">📄 2D</button>
+                    </div>
+                </div>
+
+                <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
+
+                <!-- Entrada de Texto -->
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 0.72em; color: #ccc; white-space: nowrap;">Texto</span>
+                    <input type="text" id="text-input-value" value="TEXTO" style="width: 85px; height: 22px; font-size: 0.85em; background: #333; color: #fff; border: 1px solid #555; border-radius: 3px; padding: 2px 4px;">
+                </div>
+
+                <!-- Tipografía, Estilo y Color -->
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 0.72em; color: #ccc; white-space: nowrap;">Fuente / Color</span>
+                    <div style="display: flex; align-items: center; gap: 3px;">
+                        <select id="text-font-family" class="ribbon-select" style="height: 22px; width: 95px; font-size: 0.78em;">
+                            <option value="Arial" selected>Arial</option>
+                            <option value="Impact">Impact (Militar)</option>
+                            <option value="Courier New">Courier New</option>
+                            <option value="Trebuchet MS">Trebuchet MS</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Consolas">Consolas</option>
+                        </select>
+                        <input type="color" id="text-color" value="#111111" style="width: 20px; height: 20px; padding: 0; border: 1px solid #555; border-radius: 3px; cursor: pointer;" title="Color del Texto">
+                        <button type="button" id="btn-text-bold" class="size-step-btn active" style="font-weight: bold; width: 20px; height: 20px;" title="Negrita">B</button>
+                        <button type="button" id="btn-text-italic" class="size-step-btn" style="font-style: italic; width: 20px; height: 20px;" title="Cursiva">I</button>
+                    </div>
+                </div>
+
+                <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
+
+                <!-- Tamaño -->
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #ccc;">
+                        <span>Tamaño</span>
+                        <span id="text-size-val">48 px</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 2px;">
+                        <button type="button" id="btn-text-size-dec" class="size-step-btn" style="width: 18px; height: 18px;" title="Reducir tamaño">-</button>
+                        <input type="range" id="text-font-size" min="14" max="250" value="48" style="width: 45px;">
+                        <button type="button" id="btn-text-size-inc" class="size-step-btn" style="width: 18px; height: 18px;" title="Aumentar tamaño">+</button>
+                    </div>
+                </div>
+
+                <!-- Giro (Paso exacto de 1° en 1°) -->
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #ccc;">
+                        <span>Giro</span>
+                        <span id="text-rot-val">0°</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 2px;">
+                        <button type="button" id="btn-text-rot-dec" class="size-step-btn" style="width: 18px; height: 18px;" title="Girar -1°">-</button>
+                        <input type="range" id="text-rotation" min="-180" max="180" value="0" style="width: 45px;">
+                        <button type="button" id="btn-text-rot-inc" class="size-step-btn" style="width: 18px; height: 18px;" title="Girar +1°">+</button>
+                    </div>
+                </div>
+
+                <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
+
+                <!-- Acciones: Estampar 2D / Estampar 3D / Cancelar -->
+                <div style="display: flex; align-items: center; gap: 3px;">
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                        <button type="button" id="btn-text-bake-2d" class="ribbon-btn" style="background-color: #28a745; border-color: #1e7e34; padding: 2px 6px; font-size: 11px; font-weight: bold; min-width: 80px;" title="Estampar el texto plano 1:1 sobre la plantilla 2D (sin deformación cilíndrica)">📄 Estampar 2D</button>
+                        <button type="button" id="btn-text-bake-3d" class="ribbon-btn" style="background-color: #0d6efd; border-color: #0b5ed7; padding: 2px 6px; font-size: 11px; min-width: 80px;" title="Estampar proyectando y amoldando sobre la curvatura 3D">🌐 Estampar 3D</button>
+                    </div>
+                    <button type="button" id="btn-text-cancel" class="ribbon-btn" style="background-color: #dc3545; border-color: #bd2130; padding: 4px 6px; min-width: 24px;" title="Cancelar texto">✖</button>
                 </div>
             </div>
 
@@ -177,9 +305,17 @@
             <div class="ribbon-divider"></div>
 
             <!-- Grupo: Colores -->
-            <div class="ribbon-group" style="flex-direction: row; gap: 10px; align-items: flex-start;">
-                <div class="ribbon-color-picker">
-                    <input type="color" id="brush-color" value="#ff0000" title="Color Seleccionado">
+            <div class="ribbon-group" style="flex-direction: row; gap: 8px; align-items: flex-start;">
+                <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                    <div class="ribbon-color-picker">
+                        <input type="color" id="brush-color" value="#ff0000" title="Color Seleccionado">
+                    </div>
+                    <!-- Ranuras de Colores Rápidos 1, 2, 3 -->
+                    <div style="display: flex; gap: 4px;" title="Colores rápidos (Clic: usar, Clic derecho: guardar color actual)">
+                        <div class="quick-color-slot active" id="slot-color-1" style="background-color: #ff0000;" data-color="#ff0000" title="Color 1">1</div>
+                        <div class="quick-color-slot" id="slot-color-2" style="background-color: #00ff00;" data-color="#00ff00" title="Color 2">2</div>
+                        <div class="quick-color-slot" id="slot-color-3" style="background-color: #0000ff;" data-color="#0000ff" title="Color 3">3</div>
+                    </div>
                 </div>
                 <div class="ribbon-palette" id="color-palette">
                     <!-- Fila 1 -->
@@ -251,9 +387,9 @@
                                 <span id="decal-rot-label">0°</span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 2px;">
-                                <button type="button" id="btn-decal-rot-dec" class="size-step-btn" title="Girar -1° (-5° con Shift)">-</button>
+                                <button type="button" id="btn-decal-rot-dec" class="size-step-btn" title="Girar -1°">-</button>
                                 <input type="range" id="decal-rotation" min="-180" max="180" value="0" style="width: 55px;">
-                                <button type="button" id="btn-decal-rot-inc" class="size-step-btn" title="Girar +1° (+5° con Shift)">+</button>
+                                <button type="button" id="btn-decal-rot-inc" class="size-step-btn" title="Girar +1°">+</button>
                             </div>
                         </div>
 
@@ -270,9 +406,12 @@
                         <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
 
                         <!-- Acciones: Estampar / Cancelar -->
-                        <div style="display: flex; flex-direction: column; gap: 3px;">
-                            <button id="btn-bake-decal" class="ribbon-btn" style="background-color: #28a745; border-color: #1e7e34; min-width: 65px; padding: 3px 6px; font-weight: bold;" title="Estampar la calcomanía en la capa activa">✨ Estampar</button>
-                            <button id="btn-cancel-decal" class="ribbon-btn" style="background-color: #dc3545; border-color: #bd2130; min-width: 65px; padding: 3px 6px;" title="Cancelar calcomanía">✖ Cancelar</button>
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                            <div style="display: flex; flex-direction: column; gap: 2px;">
+                                <button type="button" id="btn-bake-decal-2d" class="ribbon-btn" style="background-color: #28a745; border-color: #1e7e34; padding: 2px 6px; font-size: 11px; font-weight: bold; min-width: 80px;" title="Estampar la calcomanía plana 1:1 sobre la pieza 2D (sin deformación cilíndrica)">📄 Estampar 2D</button>
+                                <button type="button" id="btn-bake-decal-3d" class="ribbon-btn" style="background-color: #0d6efd; border-color: #0b5ed7; padding: 2px 6px; font-size: 11px; min-width: 80px;" title="Estampar proyectando y amoldando sobre la curvatura 3D">🌐 Estampar 3D</button>
+                            </div>
+                            <button type="button" id="btn-cancel-decal" class="ribbon-btn" style="background-color: #dc3545; border-color: #bd2130; padding: 4px 6px; min-width: 24px;" title="Cancelar calcomanía">✖</button>
                         </div>
                     </div>
                 </div>
@@ -281,12 +420,119 @@
 
             <div class="ribbon-divider"></div>
 
+            <!-- Grupo: Texturas y Patrones Repetibles -->
+            <div class="ribbon-group" id="group-textures" style="position: relative;">
+                <div class="ribbon-items-horizontal" style="display: flex; align-items: center; gap: 6px; height: 60px;">
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;">
+                        <button type="button" id="btn-toggle-textures" class="ribbon-btn" style="min-width: 78px; display: flex; align-items: center; justify-content: center; gap: 4px;" title="Abrir catálogo de texturas y patrones">
+                            <span>🧱 Texturas</span>
+                            <span style="font-size: 8px;">▼</span>
+                        </button>
+                        <div id="texture-preview-thumb" class="texture-thumb" title="Muestra activa (Clic para cambiar textura)"></div>
+                    </div>
+                </div>
+                <span class="ribbon-label">Texturas</span>
+
+                <!-- Panel Popover Flotante de Texturas (No ensancha el Ribbon) -->
+                <div id="texture-popup-panel" class="paint-floating-panel" style="display: none;">
+                    <div class="floating-panel-header">
+                        <span>🧱 Biblioteca de Texturas y Patrones</span>
+                        <button type="button" id="btn-close-texture-panel" class="floating-panel-close" title="Cerrar panel">✖</button>
+                    </div>
+
+                    <div class="floating-panel-body">
+                        <!-- Galería visual de texturas -->
+                        <div class="texture-gallery-col">
+                            <span class="floating-panel-section-title">Elige un patrón:</span>
+                            <div class="texture-grid-cards">
+                                <div class="texture-card active" data-preset="brick" title="Ladrillos a la vista con mortero">
+                                    <div class="texture-card-img" id="thumb-preset-brick"></div>
+                                    <span class="texture-card-name">🧱 Ladrillos</span>
+                                </div>
+                                <div class="texture-card" data-preset="camo_woodland" title="Camuflaje Militar Bosque">
+                                    <div class="texture-card-img" id="thumb-preset-camo_woodland"></div>
+                                    <span class="texture-card-name">🌲 Camo Bosque</span>
+                                </div>
+                                <div class="texture-card" data-preset="camo_desert" title="Camuflaje Desértico">
+                                    <div class="texture-card-img" id="thumb-preset-camo_desert"></div>
+                                    <span class="texture-card-name">🏜️ Camo Desierto</span>
+                                </div>
+                                <div class="texture-card" data-preset="metal_plates" title="Planchas de Acero Remachadas">
+                                    <div class="texture-card-img" id="thumb-preset-metal_plates"></div>
+                                    <span class="texture-card-name">🔩 Metal Remachado</span>
+                                </div>
+                                <div class="texture-card" data-preset="wood" title="Vetas de Madera">
+                                    <div class="texture-card-img" id="thumb-preset-wood"></div>
+                                    <span class="texture-card-name">🪵 Madera</span>
+                                </div>
+                                <div class="texture-card" data-preset="carbon" title="Fibra de Carbono 2x2">
+                                    <div class="texture-card-img" id="thumb-preset-carbon"></div>
+                                    <span class="texture-card-name">🏁 Fibra Carbono</span>
+                                </div>
+                                <div class="texture-card" id="card-custom-upload" data-preset="custom" title="Cargar cualquier imagen PNG/JPG">
+                                    <div class="texture-card-img upload-slot" id="thumb-preset-custom">📁</div>
+                                    <span class="texture-card-name">➕ Tu Imagen...</span>
+                                </div>
+                            </div>
+                            <input type="file" id="input-texture" accept="image/png,image/jpeg,image/webp" style="display: none;">
+                        </div>
+
+                        <!-- Opciones y Acciones -->
+                        <div class="texture-actions-col">
+                            <span class="floating-panel-section-title">Ajustes:</span>
+                            <div class="texture-setting-row">
+                                <div style="display: flex; justify-content: space-between; font-size: 11px; color: #bbb;">
+                                    <span>Repetición / Escala:</span>
+                                    <span id="texture-scale-label" style="color: #00f3ff; font-weight: bold;">4x</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 4px; margin-top: 4px;">
+                                    <button type="button" id="btn-texture-scale-dec" class="size-step-btn" title="Menos repeticiones">-</button>
+                                    <input type="range" id="texture-scale" min="1" max="16" value="4" style="flex: 1;">
+                                    <button type="button" id="btn-texture-scale-inc" class="size-step-btn" title="Más repeticiones">+</button>
+                                </div>
+                            </div>
+
+                            <div class="floating-panel-divider"></div>
+
+                            <span class="floating-panel-section-title">¿Cómo aplicar?</span>
+                            <button type="button" id="btn-texture-fill-layer" class="texture-action-btn primary" title="Rellena la capa activa entera con este patrón en mosaico">
+                                🪣 Llenar Toda la Capa
+                            </button>
+
+                            <button type="button" id="btn-texture-mode-fill" class="texture-action-btn secondary" data-mode="texture_fill" title="Pinta con textura: haz clic en cualquier zona o cara para rellenarla">
+                                🖌️ Pintar con Textura
+                            </button>
+
+                            <div class="texture-tip-box">
+                                💡 <b>Llenar Toda la Capa:</b> Rellena la capa activa con el mosaico (ej: crea una pared o fuselaje de ladrillo).<br>
+                                💡 <b>Pintar con Textura:</b> Haz clic en cualquier cara del modelo 3D o pieza 2D para pintarla.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
             <!-- Grupo: Visualización / Extras -->
             <div class="ribbon-group">
-                <div class="ribbon-items-vertical" style="height: 60px; justify-content: center;">
-                    <label style="font-size: 0.85em; display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                <div class="ribbon-items-vertical" style="height: 60px; justify-content: center; gap: 4px;">
+                    <label style="font-size: 0.8em; display: flex; align-items: center; gap: 5px; cursor: pointer;">
                         <input type="checkbox" id="toggle-wireframe" checked> Malla UV
                     </label>
+                    <!-- Selector de Color de Fondo -->
+                    <div style="display: flex; align-items: center; gap: 4px;" title="Color de fondo de las vistas 3D y 2D">
+                        <span style="font-size: 0.75em; color: #ccc;">Fondo:</span>
+                        <select id="viewport-bg-preset" class="ribbon-select" style="height: 20px; font-size: 0.75em; width: 75px;">
+                            <option value="#222222" selected>Oscuro</option>
+                            <option value="#444444">Estudio</option>
+                            <option value="#888888">Gris</option>
+                            <option value="#dcdcdc">Claro</option>
+                            <option value="#ffffff">Blanco</option>
+                            <option value="custom">Color...</option>
+                        </select>
+                        <input type="color" id="viewport-bg-color" value="#222222" style="width: 18px; height: 18px; padding: 0; border: 1px solid #555; cursor: pointer; display: none;" title="Elegir color exacto de fondo">
+                    </div>
                 </div>
                 <span class="ribbon-label">Vista</span>
             </div>
@@ -458,14 +704,32 @@
                             </div>
                         </div>
 
-                        <!-- Sección: Control de Líneas de Pliegue -->
+                        <!-- Sección: Control de Líneas de Pliegue y Corte -->
                         <div class="unfold-section">
                             <div class="unfold-section-title">
                                 <span>✂️ Líneas de Corte y Pliegue</span>
                             </div>
                             <div class="unfold-row">
+                                <label>Línea de corte:</label>
+                                <select id="unfold-cut-color" class="ribbon-select" style="width: 125px;" title="Color del borde de corte para impresión">
+                                    <option value="#666666" selected>Gris tenue (Pro)</option>
+                                    <option value="#333333">Gris oscuro</option>
+                                    <option value="#000000">Negro clásico</option>
+                                    <option value="#0055bb">Azul guía</option>
+                                </select>
+                            </div>
+                            <div class="unfold-row">
+                                <label>Grosor contorno:</label>
+                                <select id="unfold-cut-width" class="ribbon-select" style="width: 125px;" title="Grosor de la línea perimetral en PDF">
+                                    <option value="0.07">0.07 mm (Ultrafino)</option>
+                                    <option value="0.10" selected>0.10 mm (Hairline)</option>
+                                    <option value="0.15">0.15 mm (Medio)</option>
+                                    <option value="0.22">0.22 mm (Grueso)</option>
+                                </select>
+                            </div>
+                            <div class="unfold-row">
                                 <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;" title="Elimina las líneas punteadas feas dentro de conos y cilindros">
-                                    <input type="checkbox" id="unfold-check-hide-smooth" checked> Limpiar curvas (< 25°)
+                                    <input type="checkbox" id="unfold-check-hide-smooth" checked> Limpiar curvas (&lt; 25°)
                                 </label>
                             </div>
                         </div>
@@ -517,6 +781,6 @@
         </main>
     </div>
     
-    <script type="module" src="main.js?v=3.0"></script>
+    <script type="module" src="main.js?v=3.4"></script>
 </body>
 </html>

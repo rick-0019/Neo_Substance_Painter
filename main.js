@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=2.6';
-import { DecalSystem } from './decals.js?v=2.6';
-import { LayerManager } from './layers.js?v=2.6';
-import { PapercraftEngine } from './papercraft.js?v=2.6';
+import { Painter } from './painter.js?v=3.4';
+import { DecalSystem } from './decals.js?v=3.4';
+import { LayerManager } from './layers.js?v=3.4';
+import { PapercraftEngine } from './papercraft.js?v=3.4';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -69,6 +69,13 @@ renderer.setSize(view3d.clientWidth, view3d.clientHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 view3d.appendChild(renderer.domElement);
 
+// Configuración de máxima fidelidad y filtrado anisotrópico para evitar efecto serrucho
+const maxAniso = renderer.capabilities.getMaxAnisotropy();
+canvasTexture.anisotropy = maxAniso;
+canvasTexture.minFilter = THREE.LinearMipmapLinearFilter;
+canvasTexture.magFilter = THREE.LinearFilter;
+canvasTexture.generateMipmaps = true;
+
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.screenSpacePanning = true; // Paneo relativo al plano de la pantalla (suave y natural)
@@ -129,6 +136,10 @@ papercraft.setRedrawCallback(() => {
 const canvasUI = document.getElementById('canvas-ui');
 const textureUI = new THREE.CanvasTexture(canvasUI);
 textureUI.colorSpace = THREE.SRGBColorSpace;
+textureUI.anisotropy = maxAniso;
+textureUI.minFilter = THREE.LinearMipmapLinearFilter;
+textureUI.magFilter = THREE.LinearFilter;
+textureUI.generateMipmaps = true;
 state.textureUI = textureUI;
 
 // Material por defecto (Cubo inicial)
@@ -246,6 +257,7 @@ function renderUnfoldWorkbench() {
     }
     papercraft.renderUnfoldWorkbench(ctxUnfold, canvasUnfold.width, canvasUnfold.height, canvas2d);
 }
+window.renderUnfoldWorkbench = renderUnfoldWorkbench;
 
 // Eventos del Panel Lateral (Tabs: Capas vs Unfold)
 const tabBtnLayers = document.getElementById('tab-btn-layers');
@@ -393,18 +405,19 @@ window.addEventListener('mousemove', (e) => {
         const mmToPx = 4.0;
         const dx_mm = e.movementX / (papercraft.zoom * mmToPx);
         const dy_mm = e.movementY / (papercraft.zoom * mmToPx);
-        papercraft.selectedPart.layout.x = Math.round((papercraft.selectedPart.layout.x + dx_mm) * 10) / 10;
+
+        const sheetGapMm = 20.0;
+        const pagePitchMm = papercraft.A4_W + sheetGapMm;
+
+        // Calcular posición global continua en el banco de trabajo
+        let curWorkbenchX = papercraft.selectedPart.layout.pageIndex * pagePitchMm + papercraft.selectedPart.layout.x;
+        curWorkbenchX += dx_mm;
         papercraft.selectedPart.layout.y = Math.round((papercraft.selectedPart.layout.y + dy_mm) * 10) / 10;
 
-        // Detectar cambio de hoja si se arrastra hacia otra hoja A4
-        const rect = canvasUnfold.getBoundingClientRect();
-        const canvasX = e.clientX - rect.left;
-        const sheetGapMm = 20.0;
-        const mouseMmX = (canvasX - papercraft.panX) / (papercraft.zoom * mmToPx);
-        const newPage = Math.max(0, Math.min(papercraft.pagesCount - 1, Math.floor(mouseMmX / (papercraft.A4_W + sheetGapMm))));
-        if (newPage !== papercraft.selectedPart.layout.pageIndex) {
-            papercraft.selectedPart.layout.pageIndex = newPage;
-        }
+        // Determinar dinámicamente a qué hoja corresponde sin saltos ni cortes
+        const newPage = Math.max(0, Math.min(papercraft.pagesCount - 1, Math.floor(curWorkbenchX / pagePitchMm)));
+        papercraft.selectedPart.layout.pageIndex = newPage;
+        papercraft.selectedPart.layout.x = Math.round((curWorkbenchX - newPage * pagePitchMm) * 10) / 10;
 
         renderUnfoldWorkbench();
     } else if (isPanningWorkbench) {
@@ -587,6 +600,19 @@ tabAngleSlider?.addEventListener('input', (e) => {
     renderUnfoldWorkbench();
 });
 
+// Control de estilo de líneas de corte (Color y Grosor)
+const unfoldCutColor = document.getElementById('unfold-cut-color');
+unfoldCutColor?.addEventListener('change', (e) => {
+    papercraft.cutLineColor = e.target.value;
+    renderUnfoldWorkbench();
+});
+
+const unfoldCutWidth = document.getElementById('unfold-cut-width');
+unfoldCutWidth?.addEventListener('change', (e) => {
+    papercraft.cutLineWidthMm = parseFloat(e.target.value);
+    renderUnfoldWorkbench();
+});
+
 // Control de longitud del modelo armado (mm)
 const modelLenInput = document.getElementById('unfold-model-length');
 modelLenInput?.addEventListener('change', (e) => {
@@ -668,9 +694,24 @@ toolButtons.forEach(btn => {
             return;
         }
 
+        if (mode === 'text') {
+            toolButtons.forEach(b => b.classList.remove('active'));
+            targetBtn.classList.add('active');
+            brushModeInput.value = 'text';
+            if (window.decalSystem) {
+                window.decalSystem.startTextMode();
+            }
+            return;
+        }
+
         // Si se cambia de herramienta mientras se transformaba una capa, aplicar cambios
         if (window.painter && window.painter.transformState && window.painter.transformState.active) {
             window.painter.commitLayerTransform();
+        }
+
+        // Si se cambia de herramienta mientras se editaba texto o calcomanía, cancelar
+        if (window.decalSystem && window.decalSystem.isTextMode && mode !== 'text') {
+            window.decalSystem.cancelDecal();
         }
         
         toolButtons.forEach(b => b.classList.remove('active'));
@@ -693,12 +734,541 @@ document.getElementById('btn-transform-cancel')?.addEventListener('click', () =>
     window.painter?.cancelLayerTransform();
 });
 
-// Color palette
+// --- Controles de Modo Texto (Sincronizado 3D y 2D) ---
+const textInputVal = document.getElementById('text-input-value');
+const textFontFamily = document.getElementById('text-font-family');
+const textFontSize = document.getElementById('text-font-size');
+const textSizeVal = document.getElementById('text-size-val');
+const textRotation = document.getElementById('text-rotation');
+const textRotVal = document.getElementById('text-rot-val');
+const textColor = document.getElementById('text-color');
+const btnTextBold = document.getElementById('btn-text-bold');
+const btnTextItalic = document.getElementById('btn-text-italic');
+
+textInputVal?.addEventListener('input', (e) => {
+    window.decalSystem?.updateTextDecal({ text: e.target.value });
+});
+
+textFontFamily?.addEventListener('change', (e) => {
+    window.decalSystem?.updateTextDecal({ fontFamily: e.target.value });
+});
+
+textColor?.addEventListener('input', (e) => {
+    window.decalSystem?.updateTextDecal({ color: e.target.value });
+});
+
+textFontSize?.addEventListener('input', (e) => {
+    const size = parseInt(e.target.value, 10);
+    if (textSizeVal) textSizeVal.textContent = `${size} px`;
+    window.decalSystem?.updateTextDecal({ fontSize: size });
+});
+
+document.getElementById('btn-text-size-dec')?.addEventListener('click', () => {
+    if (!textFontSize) return;
+    const cur = parseInt(textFontSize.value, 10);
+    const next = Math.max(14, cur - 2);
+    textFontSize.value = next;
+    if (textSizeVal) textSizeVal.textContent = `${next} px`;
+    window.decalSystem?.updateTextDecal({ fontSize: next });
+});
+
+document.getElementById('btn-text-size-inc')?.addEventListener('click', () => {
+    if (!textFontSize) return;
+    const cur = parseInt(textFontSize.value, 10);
+    const next = Math.min(250, cur + 2);
+    textFontSize.value = next;
+    if (textSizeVal) textSizeVal.textContent = `${next} px`;
+    window.decalSystem?.updateTextDecal({ fontSize: next });
+});
+
+textRotation?.addEventListener('input', (e) => {
+    const deg = parseInt(e.target.value, 10);
+    if (textRotVal) textRotVal.textContent = `${deg}°`;
+    window.decalSystem?.updateTextDecal({ rotation: deg });
+});
+
+document.getElementById('btn-text-rot-dec')?.addEventListener('click', () => {
+    if (!textRotation) return;
+    let cur = parseInt(textRotation.value, 10) - 1; // Paso exacto de 1° en 1°
+    if (cur < -180) cur = 180;
+    textRotation.value = cur;
+    if (textRotVal) textRotVal.textContent = `${cur}°`;
+    window.decalSystem?.updateTextDecal({ rotation: cur });
+});
+
+document.getElementById('btn-text-rot-inc')?.addEventListener('click', () => {
+    if (!textRotation) return;
+    let cur = parseInt(textRotation.value, 10) + 1; // Paso exacto de 1° en 1°
+    if (cur > 180) cur = -180;
+    textRotation.value = cur;
+    if (textRotVal) textRotVal.textContent = `${cur}°`;
+    window.decalSystem?.updateTextDecal({ rotation: cur });
+});
+
+btnTextBold?.addEventListener('click', () => {
+    btnTextBold.classList.toggle('active');
+    window.decalSystem?.updateTextDecal({ isBold: btnTextBold.classList.contains('active') });
+});
+
+btnTextItalic?.addEventListener('click', () => {
+    btnTextItalic.classList.toggle('active');
+    window.decalSystem?.updateTextDecal({ isItalic: btnTextItalic.classList.contains('active') });
+});
+
+// --- Menú Archivo Desplegable (Estilo MS Paint) ---
+const btnPaintFileMenu = document.getElementById('btn-paint-file-menu');
+const paintFileDropdown = document.getElementById('paint-file-dropdown');
+
+btnPaintFileMenu?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!paintFileDropdown) return;
+    const isVisible = paintFileDropdown.style.display === 'flex';
+    if (isVisible) {
+        paintFileDropdown.style.display = 'none';
+    } else {
+        const rect = btnPaintFileMenu.getBoundingClientRect();
+        paintFileDropdown.style.top = `${rect.bottom + 2}px`;
+        paintFileDropdown.style.left = `${rect.left}px`;
+        paintFileDropdown.style.display = 'flex';
+    }
+});
+
+// Cerrar menú archivo al hacer clic en cualquier opción
+paintFileDropdown?.querySelectorAll('.paint-menu-item').forEach(item => {
+    item.addEventListener('click', () => {
+        if (paintFileDropdown) paintFileDropdown.style.display = 'none';
+    });
+});
+
+// Cerrar menús flotantes al hacer clic afuera
+document.addEventListener('click', (e) => {
+    if (paintFileDropdown && paintFileDropdown.style.display !== 'none') {
+        if (!e.target.closest('#btn-paint-file-menu') && !e.target.closest('#paint-file-dropdown')) {
+            paintFileDropdown.style.display = 'none';
+        }
+    }
+    if (texturePopupPanel && texturePopupPanel.style.display !== 'none') {
+        if (!e.target.closest('#btn-toggle-textures') && !e.target.closest('#texture-preview-thumb') && !e.target.closest('#texture-popup-panel')) {
+            texturePopupPanel.style.display = 'none';
+        }
+    }
+});
+
+// --- Panel Flotante de Texturas y Patrones (Estilo Popover) ---
+const btnToggleTextures = document.getElementById('btn-toggle-textures');
+const texturePopupPanel = document.getElementById('texture-popup-panel');
+const btnCloseTexturePanel = document.getElementById('btn-close-texture-panel');
+const inputTexture = document.getElementById('input-texture');
+const textureThumb = document.getElementById('texture-preview-thumb');
+const textureScale = document.getElementById('texture-scale');
+const textureScaleLabel = document.getElementById('texture-scale-label');
+const btnTextureFillLayer = document.getElementById('btn-texture-fill-layer');
+const btnTextureModeFill = document.getElementById('btn-texture-mode-fill');
+
+function updateTexturePreview(patCanvas) {
+    if (!textureThumb || !patCanvas) return;
+    textureThumb.style.display = 'block';
+    if (patCanvas.toDataURL) {
+        textureThumb.style.backgroundImage = `url(${patCanvas.toDataURL()})`;
+    }
+}
+
+// Generar miniaturas para las tarjetas visuales del catálogo
+const presetThumbnails = {
+    brick: Painter.createProceduralPattern('brick'),
+    camo_woodland: Painter.createProceduralPattern('camo_woodland'),
+    camo_desert: Painter.createProceduralPattern('camo_desert'),
+    metal_plates: Painter.createProceduralPattern('metal_plates'),
+    wood: Painter.createProceduralPattern('wood'),
+    carbon: Painter.createProceduralPattern('carbon')
+};
+
+Object.entries(presetThumbnails).forEach(([name, canvas]) => {
+    const el = document.getElementById(`thumb-preset-${name}`);
+    if (el && canvas) {
+        el.style.backgroundImage = `url(${canvas.toDataURL()})`;
+    }
+});
+
+// Inicializar textura de ladrillo por defecto
+const initialPat = presetThumbnails.brick;
+window.painter.setPattern(initialPat);
+updateTexturePreview(initialPat);
+
+function toggleTexturePanel(e) {
+    if (e) e.stopPropagation();
+    if (!texturePopupPanel) return;
+    const isVisible = texturePopupPanel.style.display === 'block';
+    if (isVisible) {
+        texturePopupPanel.style.display = 'none';
+    } else {
+        const rect = (btnToggleTextures || textureThumb).getBoundingClientRect();
+        texturePopupPanel.style.top = `${rect.bottom + 6}px`;
+        const panelWidth = 500;
+        let left = rect.left - 120;
+        if (left + panelWidth > window.innerWidth - 10) {
+            left = window.innerWidth - panelWidth - 10;
+        }
+        if (left < 10) left = 10;
+        texturePopupPanel.style.left = `${left}px`;
+        texturePopupPanel.style.display = 'block';
+    }
+}
+
+btnToggleTextures?.addEventListener('click', toggleTexturePanel);
+textureThumb?.addEventListener('click', toggleTexturePanel);
+btnCloseTexturePanel?.addEventListener('click', () => {
+    if (texturePopupPanel) texturePopupPanel.style.display = 'none';
+});
+
+// Selección de tarjetas de texturas
+document.querySelectorAll('.texture-card[data-preset]').forEach(card => {
+    card.addEventListener('click', () => {
+        document.querySelectorAll('.texture-card').forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        const preset = card.getAttribute('data-preset');
+
+        if (preset === 'custom') {
+            inputTexture?.click();
+        } else {
+            const pat = presetThumbnails[preset] || Painter.createProceduralPattern(preset);
+            window.painter.setPattern(pat);
+            updateTexturePreview(pat);
+        }
+    });
+});
+
+inputTexture?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+            window.painter.setPattern(img);
+            if (textureThumb) {
+                textureThumb.style.display = 'block';
+                textureThumb.style.backgroundImage = `url(${ev.target.result})`;
+            }
+            const customThumb = document.getElementById('thumb-preset-custom');
+            if (customThumb) {
+                customThumb.style.backgroundImage = `url(${ev.target.result})`;
+                customThumb.textContent = '';
+            }
+            document.querySelectorAll('.texture-card').forEach(c => c.classList.remove('active'));
+            document.getElementById('card-custom-upload')?.classList.add('active');
+        };
+        img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+});
+
+textureScale?.addEventListener('input', (e) => {
+    const val = parseInt(e.target.value, 10);
+    if (textureScaleLabel) textureScaleLabel.textContent = `${val}x`;
+});
+
+document.getElementById('btn-texture-scale-dec')?.addEventListener('click', () => {
+    if (!textureScale) return;
+    const cur = parseInt(textureScale.value, 10);
+    const next = Math.max(1, cur - 1);
+    textureScale.value = next;
+    if (textureScaleLabel) textureScaleLabel.textContent = `${next}x`;
+});
+
+document.getElementById('btn-texture-scale-inc')?.addEventListener('click', () => {
+    if (!textureScale) return;
+    const cur = parseInt(textureScale.value, 10);
+    const next = Math.min(16, cur + 1);
+    textureScale.value = next;
+    if (textureScaleLabel) textureScaleLabel.textContent = `${next}x`;
+});
+
+btnTextureFillLayer?.addEventListener('click', () => {
+    const tiling = parseInt(textureScale?.value || 4, 10);
+    window.painter?.fillLayerWithPattern(window.painter.getActivePatternCanvas(), tiling);
+});
+
+btnTextureModeFill?.addEventListener('click', () => {
+    toolButtons.forEach(b => b.classList.remove('active'));
+    btnTextureModeFill.classList.add('active');
+    brushModeInput.value = 'texture_fill';
+    if (texturePopupPanel) texturePopupPanel.style.display = 'none'; // cerrar para pintar libremente
+});
+
+// --- Fondo de Color Personalizable (Vista 3D y 2D) ---
+function setViewportBackground(colorHex) {
+    if (!colorHex) return;
+    scene.background = new THREE.Color(colorHex);
+    if (view3d) view3d.style.backgroundColor = colorHex;
+    const v2d = document.getElementById('view-2d');
+    if (v2d) v2d.style.backgroundColor = colorHex;
+}
+
+const bgPresetSelect = document.getElementById('viewport-bg-preset');
+const bgColorPicker = document.getElementById('viewport-bg-color');
+
+bgPresetSelect?.addEventListener('change', (e) => {
+    const val = e.target.value;
+    if (val === 'custom') {
+        if (bgColorPicker) {
+            bgColorPicker.style.display = 'inline-block';
+            bgColorPicker.click();
+        }
+    } else {
+        if (bgColorPicker) bgColorPicker.style.display = 'none';
+        setViewportBackground(val);
+    }
+});
+
+bgColorPicker?.addEventListener('input', (e) => {
+    setViewportBackground(e.target.value);
+});
+
+// --- Ranuras de Colores Rápidos (Color 1, Color 2, Color 3) ---
 const colorInput = document.getElementById('brush-color');
+let activeQuickSlot = document.getElementById('slot-color-1');
+const quickSlots = document.querySelectorAll('.quick-color-slot');
+
+quickSlots.forEach(slot => {
+    slot.addEventListener('click', () => {
+        quickSlots.forEach(s => s.classList.remove('active'));
+        slot.classList.add('active');
+        activeQuickSlot = slot;
+        const color = slot.getAttribute('data-color');
+        if (color && colorInput) {
+            colorInput.value = color;
+            if (window.decalSystem && window.decalSystem.isTextMode) {
+                window.decalSystem.updateTextDecal({ color });
+                const textColorInput = document.getElementById('text-color');
+                if (textColorInput) textColorInput.value = color;
+            }
+        }
+    });
+
+    slot.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const curColor = colorInput ? colorInput.value : '#ff0000';
+        slot.setAttribute('data-color', curColor);
+        slot.style.backgroundColor = curColor;
+        quickSlots.forEach(s => s.classList.remove('active'));
+        slot.classList.add('active');
+        activeQuickSlot = slot;
+    });
+});
+
+function updateActiveQuickColor(newColor) {
+    if (activeQuickSlot) {
+        activeQuickSlot.setAttribute('data-color', newColor);
+        activeQuickSlot.style.backgroundColor = newColor;
+    }
+    if (window.decalSystem && window.decalSystem.isTextMode) {
+        window.decalSystem.updateTextDecal({ color: newColor });
+        const textColorInput = document.getElementById('text-color');
+        if (textColorInput) textColorInput.value = newColor;
+    }
+}
+
+colorInput?.addEventListener('input', (e) => {
+    updateActiveQuickColor(e.target.value);
+});
+
 document.querySelectorAll('.palette-swatch').forEach(swatch => {
     swatch.addEventListener('click', (e) => {
-        colorInput.value = e.target.getAttribute('data-color');
+        const col = e.target.getAttribute('data-color');
+        if (colorInput) colorInput.value = col;
+        updateActiveQuickColor(col);
     });
+});
+
+// --- Sistema de Guardado y Carga de Proyecto Completo (.nsp) ---
+function saveProjectNSP() {
+    try {
+        const layersData = layerManager.layers.map(layer => ({
+            id: layer.id,
+            name: layer.name,
+            visible: layer.visible,
+            opacity: layer.opacity,
+            blendMode: layer.blendMode,
+            isBackground: layer.isBackground,
+            imageData: layer.canvas.toDataURL('image/png')
+        }));
+
+        const slots = [
+            document.getElementById('slot-color-1')?.getAttribute('data-color') || '#ff0000',
+            document.getElementById('slot-color-2')?.getAttribute('data-color') || '#00ff00',
+            document.getElementById('slot-color-3')?.getAttribute('data-color') || '#0000ff'
+        ];
+
+        const project = {
+            format: 'NeoSubstancePainter',
+            version: '1.0',
+            date: new Date().toISOString(),
+            resolution: TEX_SIZE,
+            backgroundColor: bgPresetSelect?.value || '#222222',
+            quickColors: slots,
+            layers: layersData,
+            papercraft: {
+                modelLengthMm: papercraft.modelLengthMm,
+                scalePreset: document.getElementById('unfold-scale-preset')?.value || '1:33',
+                showFlaps: papercraft.showFlaps,
+                tabHeightMm: papercraft.tabHeightMm,
+                tabAngleDeg: papercraft.tabAngleDeg,
+                hideSmoothLines: papercraft.hideSmoothLines,
+                showTabNumbers: papercraft.showTabNumbers,
+                numberPlacement: papercraft.numberPlacement,
+                cutLineColor: papercraft.cutLineColor,
+                cutLineWidthMm: papercraft.cutLineWidthMm,
+                foldLineColor: papercraft.foldLineColor,
+                foldLineWidthMm: papercraft.foldLineWidthMm,
+                a4Orientation: papercraft.a4Orientation,
+                pagesCount: papercraft.pagesCount,
+                partsLayout: papercraft.parts.map(p => ({
+                    id: p.id,
+                    layout: { ...p.layout }
+                }))
+            }
+        };
+
+        const jsonStr = JSON.stringify(project);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'proyecto_substance.nsp';
+        link.click();
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        console.error('Error guardando proyecto .nsp:', err);
+        alert('Error al guardar el proyecto: ' + err.message);
+    }
+}
+
+async function loadProjectNSP(file) {
+    try {
+        const text = await file.text();
+        const project = JSON.parse(text);
+
+        if (!project.format || project.format !== 'NeoSubstancePainter') {
+            if (!confirm('El archivo no parece ser un proyecto .nsp válido. ¿Deseas intentar cargarlo de todos modos?')) {
+                return;
+            }
+        }
+
+        // 1. Restaurar resolución si cambió
+        if (project.resolution && project.resolution !== TEX_SIZE) {
+            TEX_SIZE = project.resolution;
+            layerManager.resize(TEX_SIZE, TEX_SIZE);
+            canvasUV.width = TEX_SIZE;
+            canvasUV.height = TEX_SIZE;
+            if (canvasUI) {
+                canvasUI.width = TEX_SIZE;
+                canvasUI.height = TEX_SIZE;
+            }
+            const resSelect = document.getElementById('doc-resolution');
+            if (resSelect) resSelect.value = String(TEX_SIZE);
+        }
+
+        // 2. Restaurar Colores Rápidos
+        if (project.quickColors && Array.isArray(project.quickColors)) {
+            project.quickColors.forEach((col, idx) => {
+                const slot = document.getElementById(`slot-color-${idx + 1}`);
+                if (slot && col) {
+                    slot.setAttribute('data-color', col);
+                    slot.style.backgroundColor = col;
+                }
+            });
+        }
+
+        // 3. Restaurar Color de Fondo
+        if (project.backgroundColor) {
+            setViewportBackground(project.backgroundColor);
+            if (bgPresetSelect) bgPresetSelect.value = project.backgroundColor;
+        }
+
+        // 4. Restaurar Capas
+        if (project.layers && Array.isArray(project.layers)) {
+            layerManager.layers = [];
+
+            for (const lData of project.layers) {
+                const layer = layerManager.createLayer(lData.name, lData.isBackground);
+                layer.id = lData.id;
+                layer.visible = lData.visible !== undefined ? lData.visible : true;
+                layer.opacity = lData.opacity !== undefined ? lData.opacity : 1;
+                layer.blendMode = lData.blendMode || 'source-over';
+
+                if (lData.imageData) {
+                    await new Promise(resolve => {
+                        const img = new Image();
+                        img.onload = () => {
+                            layer.ctx.drawImage(img, 0, 0);
+                            resolve();
+                        };
+                        img.onerror = resolve;
+                        img.src = lData.imageData;
+                    });
+                }
+                layerManager.layers.push(layer);
+            }
+
+            layerManager.activeLayerId = layerManager.layers[layerManager.layers.length - 1]?.id || null;
+            layerManager.recomposite();
+            layerManager.renderUI();
+        }
+
+        // 5. Restaurar Configuración de Papercraft y Disposición de Piezas
+        if (project.papercraft) {
+            const pp = project.papercraft;
+            if (pp.cutLineColor) {
+                papercraft.cutLineColor = pp.cutLineColor;
+                const sel = document.getElementById('unfold-cut-color');
+                if (sel) sel.value = pp.cutLineColor;
+            }
+            if (pp.cutLineWidthMm) {
+                papercraft.cutLineWidthMm = pp.cutLineWidthMm;
+                const sel = document.getElementById('unfold-cut-width');
+                if (sel) sel.value = String(pp.cutLineWidthMm);
+            }
+            if (pp.tabHeightMm) updateTabHeight(pp.tabHeightMm);
+            if (pp.tabAngleDeg) {
+                papercraft.tabAngleDeg = pp.tabAngleDeg;
+                if (tabAngleSlider) tabAngleSlider.value = pp.tabAngleDeg;
+                if (tabAngleLabel) tabAngleLabel.textContent = `${pp.tabAngleDeg}°`;
+            }
+            if (pp.showFlaps !== undefined) syncFlaps(pp.showFlaps);
+            if (pp.hideSmoothLines !== undefined) syncHideSmooth(pp.hideSmoothLines);
+            if (pp.showTabNumbers !== undefined) syncNumbers(pp.showTabNumbers, pp.numberPlacement || 'flaps');
+            if (pp.pagesCount) papercraft.pagesCount = pp.pagesCount;
+
+            if (pp.partsLayout && Array.isArray(pp.partsLayout)) {
+                pp.partsLayout.forEach(pl => {
+                    const part = papercraft.parts.find(p => p.id === pl.id);
+                    if (part && pl.layout) {
+                        Object.assign(part.layout, pl.layout);
+                    }
+                });
+            }
+        }
+
+        drawUVWireframe();
+        if (typeof renderUnfoldWorkbench === 'function') renderUnfoldWorkbench();
+        if (state.texture) state.texture.needsUpdate = true;
+
+        alert('¡Proyecto cargado exitosamente!');
+    } catch (err) {
+        console.error('Error cargando proyecto .nsp:', err);
+        alert('Error al abrir el proyecto: ' + err.message);
+    }
+}
+
+document.getElementById('btn-save-project')?.addEventListener('click', saveProjectNSP);
+document.getElementById('btn-load-project')?.addEventListener('click', () => {
+    document.getElementById('input-project')?.click();
+});
+document.getElementById('input-project')?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) loadProjectNSP(file);
+    e.target.value = '';
 });
 
 // Brush size controls & persistence (Guarda el último tamaño usado)

@@ -30,6 +30,12 @@ export class Painter {
 
         // Editor de Transformación de Capas (Mover / Escalar / Rotar / Espejar)
         this.transformState = null;
+
+        // Editor de Texto (Ab)
+        this.textState = null;
+
+        // Patrón / Textura activa
+        this.currentPatternCanvas = null;
         
         // Interpolación
         this.lastU = null;
@@ -42,16 +48,28 @@ export class Painter {
         this.maxUndo = 15;
         
         window.addEventListener('keydown', (e) => {
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) {
+                if (e.key === 'Enter' && e.target.id === 'text-input-value') {
+                    if (this.textState && this.textState.active) {
+                        this.commitText();
+                    }
+                }
+                return;
+            }
             if (e.ctrlKey && e.key === 'z') {
                 this.undo();
             } else if (e.key === 'Enter') {
-                if (this.transformState && this.transformState.active) {
+                if (this.textState && this.textState.active) {
+                    this.commitText();
+                } else if (this.transformState && this.transformState.active) {
                     this.commitLayerTransform();
                 } else if (this.editingShape) {
                     this.commitShape();
                 }
             } else if (e.key === 'Escape') {
-                if (this.transformState && this.transformState.active) {
+                if (this.textState && this.textState.active) {
+                    this.cancelText();
+                } else if (this.transformState && this.transformState.active) {
                     this.cancelLayerTransform();
                 }
             }
@@ -124,7 +142,7 @@ export class Painter {
         
         view3d.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
-            if (window.decalSystem && window.decalSystem.isActive) return;
+            if (window.decalSystem && (window.decalSystem.isActive || window.decalSystem.isTextMode)) return;
             if (this.editingShape) this.commitShape();
             if (!this.mesh) return; // Must have a mesh loaded
             
@@ -132,6 +150,43 @@ export class Painter {
             
             const mode = document.getElementById('brush-mode').value;
             
+            if (mode === 'text') {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && i.uv);
+                if (hit) {
+                    if (!this.textState || !this.textState.active) {
+                        this.startTextTool();
+                    }
+                    this.textState.x = hit.uv.x * this.canvas.width;
+                    this.textState.y = (1 - hit.uv.y) * this.canvas.height;
+                    this.renderTextUI();
+                }
+                return;
+            }
+
+            if (mode === 'texture_fill') {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && i.uv);
+                if (hit) {
+                    this.saveUndoState();
+                    const tiling = parseInt(document.getElementById('texture-scale')?.value || 4, 10);
+                    if (hit.face) {
+                        this.fillFaceWithPattern(hit.object, hit.face.a, hit.face.b, hit.face.c, this.getActivePatternCanvas(), tiling);
+                    } else {
+                        this.floodFillTexture(hit.uv.x * this.canvas.width, (1 - hit.uv.y) * this.canvas.height, this.getActivePatternCanvas(), tiling);
+                    }
+                }
+                return;
+            }
+
             if (mode === 'fill' || mode === 'erase_face') {
                 const rect = this.renderer.domElement.getBoundingClientRect();
                 this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -219,6 +274,31 @@ export class Painter {
         });
 
         window.addEventListener('pointermove', (e) => {
+            if (this.textState && this.textState.active && this.textState.isDragging) {
+                const rect = this.canvas.getBoundingClientRect();
+                const scaleX = this.canvas.width / rect.width;
+                const scaleY = this.canvas.height / rect.height;
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+
+                if (this.textState.dragHandle === 'move') {
+                    this.textState.x = x - this.textState.dragOffset.x;
+                    this.textState.y = y - this.textState.dragOffset.y;
+                } else if (this.textState.dragHandle === 'rotate') {
+                    const angleRad = Math.atan2(y - this.textState.y, x - this.textState.x) + Math.PI / 2;
+                    let deg = Math.round(angleRad * 180 / Math.PI);
+                    while (deg > 180) deg -= 360;
+                    while (deg < -180) deg += 360;
+                    this.textState.rotation = deg;
+                    const rotInput = document.getElementById('text-rotation');
+                    const rotVal = document.getElementById('text-rot-val');
+                    if (rotInput) rotInput.value = deg;
+                    if (rotVal) rotVal.textContent = `${deg}°`;
+                }
+                this.renderTextUI();
+                return;
+            }
+
             if (this.transformState && this.transformState.active && this.transformState.isDragging) {
                 const rect = this.canvas.getBoundingClientRect();
                 const scaleX = this.canvas.width / rect.width;
@@ -319,12 +399,16 @@ export class Painter {
                     this.transformState.isDragging = false;
                     this.transformState.dragHandle = null;
                 }
+                if (this.textState && this.textState.isDragging) {
+                    this.textState.isDragging = false;
+                    this.textState.dragHandle = null;
+                }
             }
         });
         
         this.canvas.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
-            if (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '2d') return;
+            if (window.decalSystem && (window.decalSystem.isActive || window.decalSystem.isTextMode)) return;
             
             const rect = this.canvas.getBoundingClientRect();
             // Obtener coordenadas locales al canvas (resolución)
@@ -346,6 +430,30 @@ export class Painter {
             }
 
             const mode = document.getElementById('brush-mode').value;
+
+            if (mode === 'text' || (this.textState && this.textState.active)) {
+                if (!this.textState || !this.textState.active) {
+                    this.startTextTool();
+                }
+                const hit = this.hitTestText(x, y);
+                if (hit) {
+                    this.textState.isDragging = true;
+                    this.textState.dragHandle = hit;
+                    this.textState.dragOffset = { x: x - this.textState.x, y: y - this.textState.y };
+                } else {
+                    this.textState.x = x;
+                    this.textState.y = y;
+                    this.renderTextUI();
+                }
+                return;
+            }
+
+            if (mode === 'texture_fill') {
+                this.saveUndoState();
+                const tiling = parseInt(document.getElementById('texture-scale')?.value || 4, 10);
+                this.floodFillTexture(x, y, this.getActivePatternCanvas(), tiling);
+                return;
+            }
             
             if (this.editingShape) {
                 const hit = this.hitTestShape(x, y);
@@ -395,6 +503,14 @@ export class Painter {
             const x = (e.clientX - rect.left) * scaleX;
             const y = (e.clientY - rect.top) * scaleY;
             
+            if (this.textState && this.textState.active && !this.textState.isDragging) {
+                const hit = this.hitTestText(x, y);
+                if (hit === 'rotate') this.canvas.style.cursor = 'grab';
+                else if (hit === 'move') this.canvas.style.cursor = 'move';
+                else this.canvas.style.cursor = 'crosshair';
+                return;
+            }
+
             if (this.transformState && this.transformState.active) {
                 if (!this.transformState.isDragging) {
                     const hit = this.hitTestTransform(x, y);
@@ -988,6 +1104,573 @@ export class Painter {
         const controls = document.getElementById('transform-controls');
         if (controls) controls.style.display = 'none';
         this.canvas.style.cursor = 'default';
+    }
+
+    // --- Modo Texto (Ab) ---
+
+    startTextTool() {
+        const textVal = document.getElementById('text-input-value')?.value || 'TEXTO';
+        const fontFamily = document.getElementById('text-font-family')?.value || 'Arial';
+        const fontSize = parseInt(document.getElementById('text-font-size')?.value || 64, 10);
+        const rotation = parseInt(document.getElementById('text-rotation')?.value || 0, 10);
+        const isBold = document.getElementById('btn-text-bold')?.classList.contains('active') ?? true;
+        const isItalic = document.getElementById('btn-text-italic')?.classList.contains('active') ?? false;
+        const color = document.getElementById('brush-color')?.value || '#ff0000';
+
+        if (!this.textState || !this.textState.active) {
+            this.textState = {
+                active: true,
+                x: this.canvas.width / 2,
+                y: this.canvas.height / 2,
+                text: textVal,
+                fontFamily: fontFamily,
+                fontSize: fontSize,
+                rotation: rotation,
+                isBold: isBold,
+                isItalic: isItalic,
+                color: color,
+                isDragging: false,
+                dragHandle: null,
+                dragOffset: { x: 0, y: 0 }
+            };
+        } else {
+            this.textState.text = textVal;
+            this.textState.fontFamily = fontFamily;
+            this.textState.fontSize = fontSize;
+            this.textState.rotation = rotation;
+            this.textState.isBold = isBold;
+            this.textState.isItalic = isItalic;
+            this.textState.color = color;
+        }
+
+        const textControls = document.getElementById('text-controls');
+        if (textControls) textControls.style.display = 'flex';
+
+        this.renderTextUI();
+    }
+
+    updateTextSettings(opts = {}) {
+        if (!this.textState) return;
+        Object.assign(this.textState, opts);
+        this.renderTextUI();
+    }
+
+    renderTextUI() {
+        if (!this.textState || !this.textState.active || !this.ctxUI) return;
+        this.clearUI();
+
+        const s = this.textState;
+        const ctx = this.ctxUI;
+
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(s.rotation * Math.PI / 180);
+
+        let fontStyle = '';
+        if (s.isItalic) fontStyle += 'italic ';
+        if (s.isBold) fontStyle += 'bold ';
+        ctx.font = `${fontStyle}${s.fontSize}px "${s.fontFamily}", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Medir ancho para cuadro delimitador
+        const metrics = ctx.measureText(s.text);
+        const w = Math.max(20, metrics.width);
+        const h = Math.max(16, s.fontSize * 1.15);
+        s.boxWidth = w;
+        s.boxHeight = h;
+
+        // Cuadro delimitador interactivo
+        ctx.strokeStyle = '#00f3ff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(-w / 2 - 8, -h / 2 - 4, w + 16, h + 8);
+        ctx.setLineDash([]);
+
+        // Mástil y asa de rotación
+        ctx.beginPath();
+        ctx.moveTo(0, -h / 2 - 4);
+        ctx.lineTo(0, -h / 2 - 28);
+        ctx.strokeStyle = '#00f3ff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(0, -h / 2 - 28, 6, 0, Math.PI * 2);
+        ctx.fillStyle = '#00f3ff';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Texto renderizado
+        ctx.fillStyle = s.color;
+        ctx.fillText(s.text, 0, 0);
+
+        ctx.restore();
+        this.uiNeedsUpdate = true;
+    }
+
+    hitTestText(canvasX, canvasY) {
+        if (!this.textState || !this.textState.active) return null;
+        const s = this.textState;
+        const dx = canvasX - s.x;
+        const dy = canvasY - s.y;
+        const rad = -s.rotation * Math.PI / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const lx = dx * cos - dy * sin;
+        const ly = dx * sin + dy * cos;
+
+        const w = s.boxWidth || 100;
+        const h = s.boxHeight || 40;
+
+        // Asa de rotación
+        if (Math.hypot(lx, ly - (-h / 2 - 28)) <= 16) {
+            return 'rotate';
+        }
+
+        // Dentro del cuadro de texto (mover)
+        if (Math.abs(lx) <= w / 2 + 16 && Math.abs(ly) <= h / 2 + 12) {
+            return 'move';
+        }
+
+        return null;
+    }
+
+    commitText() {
+        if (!this.textState || !this.textState.active) return;
+        const s = this.textState;
+        const activeCtx = this.getActiveCtx();
+
+        this.saveUndoState();
+
+        activeCtx.save();
+        activeCtx.translate(s.x, s.y);
+        activeCtx.rotate(s.rotation * Math.PI / 180);
+
+        let fontStyle = '';
+        if (s.isItalic) fontStyle += 'italic ';
+        if (s.isBold) fontStyle += 'bold ';
+        activeCtx.font = `${fontStyle}${s.fontSize}px "${s.fontFamily}", sans-serif`;
+        activeCtx.textAlign = 'center';
+        activeCtx.textBaseline = 'middle';
+        activeCtx.fillStyle = s.color;
+        activeCtx.fillText(s.text, 0, 0);
+        activeCtx.restore();
+
+        this.textState.active = false;
+        this.clearUI();
+        const textControls = document.getElementById('text-controls');
+        if (textControls) textControls.style.display = 'none';
+
+        if (this.layerManager) this.layerManager.recomposite();
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
+    }
+
+    cancelText() {
+        if (!this.textState) return;
+        this.textState.active = false;
+        this.clearUI();
+        const textControls = document.getElementById('text-controls');
+        if (textControls) textControls.style.display = 'none';
+        this.canvas.style.cursor = 'default';
+    }
+
+    // --- Generador de Texturas y Patrones Repetibles ---
+
+    static createProceduralPattern(type, customImg = null) {
+        if (type === 'custom' && customImg) {
+            return customImg;
+        }
+
+        const patCanvas = document.createElement('canvas');
+        patCanvas.width = 256;
+        patCanvas.height = 256;
+        const pctx = patCanvas.getContext('2d');
+
+        if (type === 'brick') {
+            // Ladrillo a la vista con juntas de mortero
+            pctx.fillStyle = '#b5ad9e'; // Mortero
+            pctx.fillRect(0, 0, 256, 256);
+
+            const rowH = 32;
+            const brickW = 64;
+            const mortar = 3;
+            const colors = ['#9c3422', '#a83c27', '#8e2e1d', '#b3432d', '#99301f'];
+
+            for (let y = 0; y < 256; y += rowH) {
+                const rowIndex = Math.floor(y / rowH);
+                const offsetX = (rowIndex % 2 === 1) ? brickW / 2 : 0;
+                for (let x = -brickW; x < 256 + brickW; x += brickW) {
+                    const bx = x + offsetX + mortar;
+                    const by = y + mortar;
+                    const bw = brickW - mortar * 2;
+                    const bh = rowH - mortar * 2;
+
+                    // Color de ladrillo con variación sutil
+                    const cIdx = Math.abs(Math.sin(x * 12.9898 + y * 78.233)) * colors.length | 0;
+                    pctx.fillStyle = colors[cIdx % colors.length];
+                    pctx.fillRect(bx, by, bw, bh);
+
+                    // Sombra y bisel 3D suave en ladrillos
+                    pctx.fillStyle = 'rgba(255,255,255,0.12)';
+                    pctx.fillRect(bx, by, bw, 2);
+                    pctx.fillRect(bx, by, 2, bh);
+                    pctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    pctx.fillRect(bx, by + bh - 2, bw, 2);
+                    pctx.fillRect(bx + bw - 2, by, 2, bh);
+                }
+            }
+        } else if (type === 'camo_woodland') {
+            // Camuflaje Militar Bosque
+            pctx.fillStyle = '#4b552b'; // Verde base oliva
+            pctx.fillRect(0, 0, 256, 256);
+
+            const drawBlobs = (color, count, minR, maxR) => {
+                pctx.fillStyle = color;
+                for (let i = 0; i < count; i++) {
+                    const cx = ((i * 73 + 29) % 256);
+                    const cy = ((i * 127 + 53) % 256);
+                    const r = minR + ((i * 37) % (maxR - minR));
+
+                    const offsets = [
+                        [0, 0], [256, 0], [-256, 0], [0, 256], [0, -256],
+                        [256, 256], [-256, -256], [256, -256], [-256, 256]
+                    ];
+                    offsets.forEach(([ox, oy]) => {
+                        pctx.beginPath();
+                        pctx.arc(cx + ox, cy + oy, r, 0, Math.PI * 2);
+                        pctx.arc(cx + ox + r * 0.5, cy + oy - r * 0.3, r * 0.7, 0, Math.PI * 2);
+                        pctx.arc(cx + ox - r * 0.4, cy + oy + r * 0.4, r * 0.6, 0, Math.PI * 2);
+                        pctx.fill();
+                    });
+                }
+            };
+
+            drawBlobs('#2a3818', 7, 30, 65); // Verde oscuro militar
+            drawBlobs('#523d24', 6, 25, 55); // Marrón tierra
+            drawBlobs('#191919', 5, 20, 45); // Negro carbón
+        } else if (type === 'camo_desert') {
+            // Camuflaje Desierto
+            pctx.fillStyle = '#d8be93'; // Tan arena base
+            pctx.fillRect(0, 0, 256, 256);
+
+            const drawBlobs = (color, count, minR, maxR) => {
+                pctx.fillStyle = color;
+                for (let i = 0; i < count; i++) {
+                    const cx = ((i * 83 + 41) % 256);
+                    const cy = ((i * 139 + 67) % 256);
+                    const r = minR + ((i * 31) % (maxR - minR));
+                    const offsets = [
+                        [0, 0], [256, 0], [-256, 0], [0, 256], [0, -256],
+                        [256, 256], [-256, -256], [256, -256], [-256, 256]
+                    ];
+                    offsets.forEach(([ox, oy]) => {
+                        pctx.beginPath();
+                        pctx.arc(cx + ox, cy + oy, r, 0, Math.PI * 2);
+                        pctx.arc(cx + ox + r * 0.4, cy + oy + r * 0.4, r * 0.65, 0, Math.PI * 2);
+                        pctx.fill();
+                    });
+                }
+            };
+
+            drawBlobs('#be9965', 7, 30, 60); // Ocre arena
+            drawBlobs('#825d36', 5, 22, 45); // Marrón arcilla
+            drawBlobs('#efe1c6', 6, 25, 50); // Arena clara
+        } else if (type === 'metal_plates') {
+            // Planchas de acero remachadas
+            pctx.fillStyle = '#7a8288';
+            pctx.fillRect(0, 0, 256, 256);
+
+            const pSize = 128;
+            for (let py = 0; py < 256; py += pSize) {
+                for (let px = 0; px < 256; px += pSize) {
+                    const grad = pctx.createLinearGradient(px, py, px + pSize, py + pSize);
+                    grad.addColorStop(0, '#8c959b');
+                    grad.addColorStop(1, '#6c7379');
+                    pctx.fillStyle = grad;
+                    pctx.fillRect(px + 2, py + 2, pSize - 4, pSize - 4);
+
+                    pctx.fillStyle = '#3a3e42';
+                    pctx.fillRect(px, py, pSize, 2);
+                    pctx.fillRect(px, py, 2, pSize);
+                    pctx.fillStyle = '#a6b0b8';
+                    pctx.fillRect(px + 2, py + 2, pSize - 2, 1);
+                    pctx.fillRect(px + 2, py + 2, 1, pSize - 2);
+
+                    const rivetCoords = [
+                        [px + 14, py + 14], [px + pSize / 2, py + 14], [px + pSize - 14, py + 14],
+                        [px + 14, py + pSize - 14], [px + pSize / 2, py + pSize - 14], [px + pSize - 14, py + pSize - 14],
+                        [px + 14, py + pSize / 2], [px + pSize - 14, py + pSize / 2]
+                    ];
+                    rivetCoords.forEach(([rx, ry]) => {
+                        pctx.beginPath();
+                        pctx.arc(rx, ry, 3.5, 0, Math.PI * 2);
+                        pctx.fillStyle = '#222';
+                        pctx.fill();
+                        pctx.beginPath();
+                        pctx.arc(rx - 0.7, ry - 0.7, 2.8, 0, Math.PI * 2);
+                        pctx.fillStyle = '#9aa3ab';
+                        pctx.fill();
+                        pctx.beginPath();
+                        pctx.arc(rx - 1.2, ry - 1.2, 1, 0, Math.PI * 2);
+                        pctx.fillStyle = '#ffffff';
+                        pctx.fill();
+                    });
+                }
+            }
+        } else if (type === 'wood') {
+            // Vetas de madera
+            pctx.fillStyle = '#9e6231';
+            pctx.fillRect(0, 0, 256, 256);
+
+            const plankH = 64;
+            for (let y = 0; y < 256; y += plankH) {
+                pctx.fillStyle = '#3e1e07';
+                pctx.fillRect(0, y, 256, 3);
+                pctx.fillStyle = '#bd7e47';
+                pctx.fillRect(0, y + 3, 256, 1);
+
+                for (let i = 0; i < 18; i++) {
+                    const vy = y + (i * plankH / 18);
+                    pctx.strokeStyle = (i % 2 === 0) ? 'rgba(70, 32, 10, 0.4)' : 'rgba(195, 134, 78, 0.3)';
+                    pctx.lineWidth = 1 + (i % 3);
+                    pctx.beginPath();
+                    for (let x = 0; x <= 256; x += 16) {
+                        const wave = Math.sin((x / 256) * Math.PI * 2 * 2 + i) * 3 + Math.cos((x / 256) * Math.PI * 2 + i * 2) * 2;
+                        if (x === 0) pctx.moveTo(x, vy + wave);
+                        else pctx.lineTo(x, vy + wave);
+                    }
+                    pctx.stroke();
+                }
+            }
+        } else if (type === 'carbon') {
+            // Fibra de carbono 2x2
+            pctx.fillStyle = '#111111';
+            pctx.fillRect(0, 0, 256, 256);
+
+            const cSize = 16;
+            for (let y = 0; y < 256; y += cSize) {
+                for (let x = 0; x < 256; x += cSize) {
+                    const isEven = ((x / cSize + y / cSize) % 2 === 0);
+                    const grad = pctx.createLinearGradient(x, y, x + cSize, y + cSize);
+                    if (isEven) {
+                        grad.addColorStop(0, '#2b2b2b');
+                        grad.addColorStop(0.5, '#444444');
+                        grad.addColorStop(1, '#1a1a1a');
+                    } else {
+                        grad.addColorStop(0, '#161616');
+                        grad.addColorStop(0.5, '#282828');
+                        grad.addColorStop(1, '#111111');
+                    }
+                    pctx.fillStyle = grad;
+                    pctx.fillRect(x, y, cSize, cSize);
+                    pctx.strokeStyle = '#0a0a0a';
+                    pctx.lineWidth = 0.5;
+                    pctx.strokeRect(x, y, cSize, cSize);
+                }
+            }
+        }
+
+        return patCanvas;
+    }
+
+    getActivePatternCanvas() {
+        if (this.currentPatternCanvas) return this.currentPatternCanvas;
+        this.currentPatternCanvas = Painter.createProceduralPattern('brick');
+        return this.currentPatternCanvas;
+    }
+
+    setPattern(canvasOrImg) {
+        this.currentPatternCanvas = canvasOrImg;
+    }
+
+    fillLayerWithPattern(patternCanvas, tiling = 4) {
+        if (!this.layerManager) return;
+        const activeLayer = this.layerManager.getActiveLayer();
+        if (!activeLayer) return;
+
+        this.saveUndoState();
+        const ctx = activeLayer.ctx;
+        const patCanvas = document.createElement('canvas');
+        const patSize = Math.max(16, Math.floor(activeLayer.width / tiling));
+        patCanvas.width = patSize;
+        patCanvas.height = patSize;
+        const pCtx = patCanvas.getContext('2d');
+        pCtx.drawImage(patternCanvas, 0, 0, patSize, patSize);
+
+        const pattern = ctx.createPattern(patCanvas, 'repeat');
+        ctx.fillStyle = pattern;
+        ctx.fillRect(0, 0, activeLayer.width, activeLayer.height);
+
+        this.layerManager.recomposite();
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
+    }
+
+    fillFaceWithPattern(meshObj, a, b, c, patternCanvas, tiling = 4) {
+        const targetMesh = (meshObj && meshObj.geometry) ? meshObj : (this.mesh && this.mesh.geometry ? this.mesh : null);
+        if (!targetMesh || !targetMesh.geometry || !targetMesh.geometry.attributes || !targetMesh.geometry.attributes.uv) return;
+        const uvs = targetMesh.geometry.attributes.uv;
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        const uA = uvs.getX(a) * w, vA = (1 - uvs.getY(a)) * h;
+        const uB = uvs.getX(b) * w, vB = (1 - uvs.getY(b)) * h;
+        const uC = uvs.getX(c) * w, vC = (1 - uvs.getY(c)) * h;
+
+        const activeCtx = this.getActiveCtx();
+        const patCanvas = document.createElement('canvas');
+        const patSize = Math.max(16, Math.floor(w / tiling));
+        patCanvas.width = patSize;
+        patCanvas.height = patSize;
+        const pCtx = patCanvas.getContext('2d');
+        pCtx.drawImage(patternCanvas, 0, 0, patSize, patSize);
+
+        const pattern = activeCtx.createPattern(patCanvas, 'repeat');
+        activeCtx.save();
+        activeCtx.fillStyle = pattern;
+        activeCtx.strokeStyle = pattern;
+        activeCtx.lineWidth = 2.5;
+        activeCtx.lineJoin = 'round';
+        activeCtx.beginPath();
+        activeCtx.moveTo(uA, vA);
+        activeCtx.lineTo(uB, vB);
+        activeCtx.lineTo(uC, vC);
+        activeCtx.closePath();
+        activeCtx.fill();
+        activeCtx.stroke();
+        activeCtx.restore();
+
+        if (this.layerManager) this.layerManager.recomposite();
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
+    }
+
+    floodFillTexture(startX, startY, patternCanvas, tiling = 4) {
+        if (!patternCanvas) return;
+        const activeCanvas = this.getActiveCanvas();
+        const activeCtx = this.getActiveCtx();
+        const w = activeCanvas.width;
+        const h = activeCanvas.height;
+        startX = Math.floor(startX);
+        startY = Math.floor(startY);
+        if (startX < 0 || startX >= w || startY < 0 || startY >= h) return;
+
+        const imgData = activeCtx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+        const startPos = (startY * w + startX) * 4;
+        const startR = data[startPos];
+        const startG = data[startPos+1];
+        const startB = data[startPos+2];
+        const startA = data[startPos+3];
+
+        const tol = 60;
+        const matchStartColor = (pos) => {
+            return Math.abs(data[pos] - startR) <= tol &&
+                   Math.abs(data[pos+1] - startG) <= tol &&
+                   Math.abs(data[pos+2] - startB) <= tol &&
+                   Math.abs(data[pos+3] - startA) <= tol;
+        };
+
+        const maskCanvas = document.createElement('canvas');
+        maskCanvas.width = w;
+        maskCanvas.height = h;
+        const mctx = maskCanvas.getContext('2d');
+        const maskImg = mctx.createImageData(w, h);
+        const maskData = maskImg.data;
+
+        const stack = [[startX, startY]];
+        const visited = new Uint8Array(w * h);
+
+        while (stack.length > 0) {
+            const [curX, curY] = stack.pop();
+            let y = curY;
+            let pos = (y * w + curX) * 4;
+
+            while (y >= 0 && matchStartColor(pos)) {
+                y--;
+                pos -= w * 4;
+            }
+            // DILATACIÓN: borde superior
+            if (y >= 0) {
+                maskData[pos] = 255; maskData[pos+1] = 255; maskData[pos+2] = 255; maskData[pos+3] = 255;
+            }
+            y++;
+            pos += w * 4;
+
+            let reachLeft = false;
+            let reachRight = false;
+
+            while (y < h && matchStartColor(pos)) {
+                const pixelIdx = y * w + curX;
+                if (visited[pixelIdx]) break;
+                visited[pixelIdx] = 1;
+
+                maskData[pos] = 255;
+                maskData[pos+1] = 255;
+                maskData[pos+2] = 255;
+                maskData[pos+3] = 255;
+
+                if (curX > 0) {
+                    if (matchStartColor(pos - 4)) {
+                        if (!reachLeft) {
+                            stack.push([curX - 1, y]);
+                            reachLeft = true;
+                        }
+                    } else {
+                        if (reachLeft) reachLeft = false;
+                        // DILATACIÓN: borde izquierdo
+                        maskData[pos - 4] = 255; maskData[pos - 3] = 255; maskData[pos - 2] = 255; maskData[pos - 1] = 255;
+                    }
+                }
+
+                if (curX < w - 1) {
+                    if (matchStartColor(pos + 4)) {
+                        if (!reachRight) {
+                            stack.push([curX + 1, y]);
+                            reachRight = true;
+                        }
+                    } else {
+                        if (reachRight) reachRight = false;
+                        // DILATACIÓN: borde derecho
+                        maskData[pos + 4] = 255; maskData[pos + 5] = 255; maskData[pos + 6] = 255; maskData[pos + 7] = 255;
+                    }
+                }
+
+                y++;
+                pos += w * 4;
+            }
+            // DILATACIÓN: borde inferior
+            if (y < h) {
+                maskData[pos] = 255; maskData[pos+1] = 255; maskData[pos+2] = 255; maskData[pos+3] = 255;
+            }
+        }
+
+        mctx.putImageData(maskImg, 0, 0);
+
+        const patCanvas = document.createElement('canvas');
+        const patSize = Math.max(16, Math.floor(w / tiling));
+        patCanvas.width = patSize;
+        patCanvas.height = patSize;
+        const pctx = patCanvas.getContext('2d');
+        pctx.drawImage(patternCanvas, 0, 0, patSize, patSize);
+
+        mctx.globalCompositeOperation = 'source-in';
+        const pat = mctx.createPattern(patCanvas, 'repeat');
+        mctx.fillStyle = pat;
+        mctx.fillRect(0, 0, w, h);
+
+        activeCtx.drawImage(maskCanvas, 0, 0);
+
+        if (this.layerManager) this.layerManager.recomposite();
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
     }
 
 

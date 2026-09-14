@@ -14,6 +14,12 @@ export class PapercraftEngine {
         this.numberPlacement = 'none'; // 'none' (limpio), 'flaps' (solo en solapas ocultas), 'outside' (fuera en descarte)
         this.hideSmoothLines = true;
         this.creaseThresholdDeg = 25.0;
+
+        // Configuración de líneas de corte y pliegue profesionales (Hairline fino / tono tenue)
+        this.cutLineWidthMm = 0.10; // Hairline 0.10 mm para corte limpio sin bordes negros gruesos
+        this.cutLineColor = '#666666'; // Gris tenue profesional
+        this.foldLineWidthMm = 0.08;
+        this.foldLineColor = '#999999';
         
         // Dimensiones físicas del modelo armado
         this.modelLengthMm = 200.0;
@@ -459,41 +465,40 @@ export class PapercraftEngine {
         if (!this.parts || this.parts.length === 0) return null;
 
         const sheetGapMm = 20.0;
-        const totalW_mm = this.pagesCount * this.A4_W + (this.pagesCount - 1) * sheetGapMm;
+        const pagePitchMm = this.A4_W + sheetGapMm;
 
-        // Convertir de coordenadas del canvas a mm del banco de trabajo
+        // Convertir de coordenadas del canvas a mm continuos del banco de trabajo
         const mouseMmX = (canvasX - this.panX) / (this.zoom * viewScale);
         const mouseMmY = (canvasY - this.panY) / (this.zoom * viewScale);
 
-        // Detectar en qué página está el ratón
-        for (let p = 0; p < this.pagesCount; p++) {
-            const pageOffsetMmX = p * (this.A4_W + sheetGapMm);
-            const pageOffsetMmY = 0;
+        // Buscar piezas en orden visual inverso (la pieza seleccionada se chequea primero por estar arriba)
+        const searchOrder = [...this.parts];
+        if (this.selectedPart) {
+            const idx = searchOrder.indexOf(this.selectedPart);
+            if (idx > -1) {
+                searchOrder.splice(idx, 1);
+                searchOrder.push(this.selectedPart);
+            }
+        }
 
-            if (mouseMmX >= pageOffsetMmX && mouseMmX <= pageOffsetMmX + this.A4_W &&
-                mouseMmY >= pageOffsetMmY && mouseMmY <= pageOffsetMmY + this.A4_H) {
-                
-                const pageMmX = mouseMmX - pageOffsetMmX;
-                const pageMmY = mouseMmY - pageOffsetMmY;
+        for (let i = searchOrder.length - 1; i >= 0; i--) {
+            const part = searchOrder[i];
+            const p = part.layout.pageIndex;
+            const pageOffsetMmX = p * pagePitchMm;
+            const pageMmX = mouseMmX - pageOffsetMmX;
+            const pageMmY = mouseMmY;
 
-                // Buscar piezas en esta página (de arriba a abajo en orden visual inverso)
-                for (let i = this.parts.length - 1; i >= 0; i--) {
-                    const part = this.parts[i];
-                    if (part.layout.pageIndex !== p) continue;
+            // Proyectar el punto al espacio local rotado de la pieza
+            const dx = pageMmX - part.layout.x;
+            const dy = pageMmY - part.layout.y;
+            const rad = (-part.layout.rotation * Math.PI) / 180;
+            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
 
-                    // Proyectar el punto al espacio local rotado de la pieza
-                    const dx = pageMmX - part.layout.x;
-                    const dy = pageMmY - part.layout.y;
-                    const rad = (-part.layout.rotation * Math.PI) / 180;
-                    const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
-                    const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
-
-                    // Comprobar bounding box con holgura
-                    const b = part.bounds;
-                    if (lx >= b.minX - 2 && lx <= b.maxX + 2 && ly >= b.minY - 2 && ly <= b.maxY + 2) {
-                        return { part, pageIndex: p, localX: lx, localY: ly };
-                    }
-                }
+            // Comprobar bounding box con holgura para seleccionar fácilmente
+            const b = part.bounds;
+            if (lx >= b.minX - 3 && lx <= b.maxX + 3 && ly >= b.minY - 3 && ly <= b.maxY + 3) {
+                return { part, pageIndex: p, localX: lx, localY: ly };
             }
         }
         return null;
@@ -543,6 +548,7 @@ export class PapercraftEngine {
         const mmToPx = 4.0;
         const sheetGapMm = 20.0;
 
+        // PASADA 1: Dibujar los fondos, marcos y reglas de TODAS las hojas A4
         for (let p = 0; p < this.pagesCount; p++) {
             const pageX_px = p * (this.A4_W + sheetGapMm) * mmToPx;
             const pageY_px = 0;
@@ -576,142 +582,147 @@ export class PapercraftEngine {
 
             // 5. Regla de calibración de 50 mm en cada hoja
             this.drawRulerOnCanvas(ctx, pageX_px + margin_px + 4, pageY_px + 32, mmToPx);
+        }
 
-            // 6. Dibujar las piezas asignadas a esta página
-            for (const part of this.parts) {
-                if (part.layout.pageIndex !== p) continue;
+        // PASADA 2: Dibujar todas las piezas (la pieza seleccionada o arrastrada va al final para estar siempre encima)
+        const partsToDraw = this.parts.filter(pt => pt !== this.selectedPart);
+        if (this.selectedPart) {
+            partsToDraw.push(this.selectedPart);
+        }
 
-                const originPxX = pageX_px + part.layout.x * mmToPx;
-                const originPxY = pageY_px + part.layout.y * mmToPx;
-                const rotRad = (part.layout.rotation * Math.PI) / 180;
+        for (const part of partsToDraw) {
+            const pageX_px = part.layout.pageIndex * (this.A4_W + sheetGapMm) * mmToPx;
+            const pageY_px = 0;
+            const originPxX = pageX_px + part.layout.x * mmToPx;
+            const originPxY = pageY_px + part.layout.y * mmToPx;
+            const rotRad = (part.layout.rotation * Math.PI) / 180;
 
+            ctx.save();
+            ctx.translate(originPxX, originPxY);
+            ctx.rotate(rotRad);
+
+            // A) Recorte y pintura de la textura
+            if (canvas2d) {
                 ctx.save();
-                ctx.translate(originPxX, originPxY);
-                ctx.rotate(rotRad);
-
-                // A) Recorte y pintura de la textura
-                if (canvas2d) {
-                    ctx.save();
-                    ctx.beginPath();
-                    for (const tri of part.localTriangles) {
-                        ctx.moveTo(tri[0].x * mmToPx, tri[0].y * mmToPx);
-                        ctx.lineTo(tri[1].x * mmToPx, tri[1].y * mmToPx);
-                        ctx.lineTo(tri[2].x * mmToPx, tri[2].y * mmToPx);
-                    }
-                    ctx.clip();
-
-                    // Mapear textura centrada
-                    const ratio = mmToPx / this.pixelsPerMm;
-                    ctx.drawImage(
-                        canvas2d,
-                        -part.centerU * this.texSize * ratio,
-                        -(1 - part.centerV) * this.texSize * ratio,
-                        this.texSize * ratio,
-                        this.texSize * ratio
-                    );
-                    ctx.restore();
-                }
-
-                // B) Líneas de pliegue interiores vivas
-                if (part.internalEdges && part.internalEdges.length > 0) {
-                    ctx.strokeStyle = 'rgba(80, 80, 80, 0.8)';
-                    ctx.lineWidth = 1.0;
-                    ctx.setLineDash([3, 2]);
-                    ctx.beginPath();
-                    for (const edge of part.internalEdges) {
-                        ctx.moveTo(edge.p1.x * mmToPx, edge.p1.y * mmToPx);
-                        ctx.lineTo(edge.p2.x * mmToPx, edge.p2.y * mmToPx);
-                    }
-                    ctx.stroke();
-                    ctx.setLineDash([]);
-                }
-
-                // C) Solapas de pegado (Flaps)
-                if (this.showFlaps && part.tabs && part.tabs.length > 0) {
-                    for (const tab of part.tabs) {
-                        // Relleno suave de la pestaña
-                        ctx.fillStyle = 'rgba(230, 230, 230, 0.6)';
-                        ctx.beginPath();
-                        ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
-                        ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
-                        ctx.lineTo(tab.tabP2.x * mmToPx, tab.tabP2.y * mmToPx);
-                        ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
-                        ctx.closePath();
-                        ctx.fill();
-
-                        // Línea exterior de corte
-                        ctx.strokeStyle = '#000000';
-                        ctx.lineWidth = 1.2;
-                        ctx.beginPath();
-                        ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
-                        ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
-                        ctx.lineTo(tab.tabP2.x * mmToPx, tab.tabP2.y * mmToPx);
-                        ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
-                        ctx.stroke();
-
-                        // Línea de base (doblez)
-                        ctx.strokeStyle = 'rgba(100, 100, 100, 0.8)';
-                        ctx.lineWidth = 0.8;
-                        ctx.setLineDash([2, 2]);
-                        ctx.beginPath();
-                        ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
-                        ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
-                        ctx.stroke();
-                        ctx.setLineDash([]);
-
-                        // Número verde en la solapa (solo si mide al menos 4mm para no desbordar)
-                        if (this.showTabNumbers && this.numberPlacement !== 'none' && tab.seamNumber && (tab.baseLen || 10) >= 4.0) {
-                            ctx.font = 'bold 9px sans-serif';
-                            ctx.fillStyle = '#1b5e20';
-                            ctx.textAlign = 'center';
-                            ctx.textBaseline = 'middle';
-                            ctx.fillText(`${tab.seamNumber}`, tab.tabCenter.x * mmToPx, tab.tabCenter.y * mmToPx);
-                        }
-                    }
-                }
-
-                // D) Líneas de corte perimetrales
-                ctx.strokeStyle = '#000000';
-                ctx.lineWidth = 1.6;
                 ctx.beginPath();
-                for (const cut of part.boundaryEdges) {
-                    ctx.moveTo(cut.p1.x * mmToPx, cut.p1.y * mmToPx);
-                    ctx.lineTo(cut.p2.x * mmToPx, cut.p2.y * mmToPx);
+                for (const tri of part.localTriangles) {
+                    ctx.moveTo(tri[0].x * mmToPx, tri[0].y * mmToPx);
+                    ctx.lineTo(tri[1].x * mmToPx, tri[1].y * mmToPx);
+                    ctx.lineTo(tri[2].x * mmToPx, tri[2].y * mmToPx);
                 }
-                ctx.stroke();
+                ctx.clip();
 
-                // Números rojos en bordes receptores (SOLO si se elije 'outside' y colocado FUERA de la pieza)
-                if (this.showTabNumbers && this.numberPlacement === 'outside') {
-                    ctx.font = 'bold 8px sans-serif';
-                    ctx.fillStyle = '#b71c1c';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    for (const cut of part.boundaryEdges) {
-                        if (cut.isTarget && cut.seamNumber && (cut.len || 10) >= 5.0) {
-                            const distMm = 2.5;
-                            const midX = cut.mid ? cut.mid.x : (cut.p1.x + cut.p2.x) * 0.5;
-                            const midY = cut.mid ? cut.mid.y : (cut.p1.y + cut.p2.y) * 0.5;
-                            const nx = cut.nx || 0;
-                            const ny = cut.ny || 0;
-                            const ox = (midX + nx * distMm) * mmToPx;
-                            const oy = (midY + ny * distMm) * mmToPx;
-                            ctx.fillText(`[${cut.seamNumber}]`, ox, oy);
-                        }
-                    }
-                }
-
-                // E) Indicador de pieza seleccionada (Caja cian de selección)
-                if (this.selectedPart === part) {
-                    const b = part.bounds;
-                    ctx.strokeStyle = '#00e5ff';
-                    ctx.lineWidth = 1.5;
-                    ctx.setLineDash([4, 2]);
-                    ctx.strokeRect(b.minX * mmToPx - 4, b.minY * mmToPx - 4, part.wMm * mmToPx + 8, part.hMm * mmToPx + 8);
-                    ctx.setLineDash([]);
-                }
-
+                // Mapear textura centrada
+                const ratio = mmToPx / this.pixelsPerMm;
+                ctx.drawImage(
+                    canvas2d,
+                    -part.centerU * this.texSize * ratio,
+                    -(1 - part.centerV) * this.texSize * ratio,
+                    this.texSize * ratio,
+                    this.texSize * ratio
+                );
                 ctx.restore();
             }
+
+            // B) Líneas de pliegue interiores vivas
+            if (part.internalEdges && part.internalEdges.length > 0) {
+                ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
+                ctx.lineWidth = 0.6;
+                ctx.setLineDash([3, 2]);
+                ctx.beginPath();
+                for (const edge of part.internalEdges) {
+                    ctx.moveTo(edge.p1.x * mmToPx, edge.p1.y * mmToPx);
+                    ctx.lineTo(edge.p2.x * mmToPx, edge.p2.y * mmToPx);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // C) Solapas de pegado (Flaps)
+            if (this.showFlaps && part.tabs && part.tabs.length > 0) {
+                for (const tab of part.tabs) {
+                    // Relleno suave de la pestaña
+                    ctx.fillStyle = 'rgba(235, 235, 235, 0.7)';
+                    ctx.beginPath();
+                    ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
+                    ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
+                    ctx.lineTo(tab.tabP2.x * mmToPx, tab.tabP2.y * mmToPx);
+                    ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Línea exterior de corte de solapa
+                    ctx.strokeStyle = this.cutLineColor || '#666666';
+                    ctx.lineWidth = 0.7;
+                    ctx.beginPath();
+                    ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
+                    ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
+                    ctx.lineTo(tab.tabP2.x * mmToPx, tab.tabP2.y * mmToPx);
+                    ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
+                    ctx.stroke();
+
+                    // Línea de base (doblez)
+                    ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
+                    ctx.lineWidth = 0.6;
+                    ctx.setLineDash([2, 2]);
+                    ctx.beginPath();
+                    ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
+                    ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // Número verde en la solapa (solo si mide al menos 4mm para no desbordar)
+                    if (this.showTabNumbers && this.numberPlacement !== 'none' && tab.seamNumber && (tab.baseLen || 10) >= 4.0) {
+                        ctx.font = 'bold 9px sans-serif';
+                        ctx.fillStyle = '#1b5e20';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(`${tab.seamNumber}`, tab.tabCenter.x * mmToPx, tab.tabCenter.y * mmToPx);
+                    }
+                }
+            }
+
+            // D) Líneas de corte perimetrales (Línea fina y tono tenue profesional)
+            ctx.strokeStyle = this.cutLineColor || '#666666';
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            for (const cut of part.boundaryEdges) {
+                ctx.moveTo(cut.p1.x * mmToPx, cut.p1.y * mmToPx);
+                ctx.lineTo(cut.p2.x * mmToPx, cut.p2.y * mmToPx);
+            }
+            ctx.stroke();
+
+            // Números rojos en bordes receptores (SOLO si se elije 'outside' y colocado FUERA de la pieza)
+            if (this.showTabNumbers && this.numberPlacement === 'outside') {
+                ctx.font = 'bold 8px sans-serif';
+                ctx.fillStyle = '#b71c1c';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                for (const cut of part.boundaryEdges) {
+                    if (cut.isTarget && cut.seamNumber && (cut.len || 10) >= 5.0) {
+                        const distMm = 2.5;
+                        const midX = cut.mid ? cut.mid.x : (cut.p1.x + cut.p2.x) * 0.5;
+                        const midY = cut.mid ? cut.mid.y : (cut.p1.y + cut.p2.y) * 0.5;
+                        const nx = cut.nx || 0;
+                        const ny = cut.ny || 0;
+                        const ox = (midX + nx * distMm) * mmToPx;
+                        const oy = (midY + ny * distMm) * mmToPx;
+                        ctx.fillText(`[${cut.seamNumber}]`, ox, oy);
+                    }
+                }
+            }
+
+            // E) Indicador de pieza seleccionada (Caja cian de selección)
+            if (this.selectedPart === part) {
+                const b = part.bounds;
+                ctx.strokeStyle = '#00e5ff';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 2]);
+                ctx.strokeRect(b.minX * mmToPx - 4, b.minY * mmToPx - 4, part.wMm * mmToPx + 8, part.hMm * mmToPx + 8);
+                ctx.setLineDash([]);
+            }
+
+            ctx.restore();
         }
 
         ctx.restore();
@@ -826,6 +837,8 @@ export class PapercraftEngine {
                     tempCanvas.width = bW_px;
                     tempCanvas.height = bH_px;
                     const tCtx = tempCanvas.getContext('2d');
+                    tCtx.imageSmoothingEnabled = true;
+                    tCtx.imageSmoothingQuality = 'high';
 
                     tCtx.translate(bW_px / 2, bH_px / 2);
                     tCtx.beginPath();
@@ -873,6 +886,11 @@ export class PapercraftEngine {
                     }
                 }
 
+                const hex = this.cutLineColor || '#666666';
+                const r = parseInt(hex.slice(1, 3), 16) || 100;
+                const g = parseInt(hex.slice(3, 5), 16) || 100;
+                const b = parseInt(hex.slice(5, 7), 16) || 100;
+
                 // C) Solapas vectoriales
                 if (this.showFlaps && part.tabs && part.tabs.length > 0) {
                     for (const tab of part.tabs) {
@@ -882,15 +900,15 @@ export class PapercraftEngine {
                         const b2 = toPageMm(tab.baseP2);
                         const tc = toPageMm(tab.tabCenter);
 
-                        doc.setDrawColor(0, 0, 0);
-                        doc.setLineWidth(0.18);
+                        doc.setDrawColor(r, g, b);
+                        doc.setLineWidth(this.cutLineWidthMm || 0.10);
                         doc.setLineDash([], 0);
                         doc.line(b1.x, b1.y, t1.x, t1.y);
                         doc.line(t1.x, t1.y, t2.x, t2.y);
                         doc.line(t2.x, t2.y, b2.x, b2.y);
 
-                        doc.setDrawColor(100, 100, 100);
-                        doc.setLineWidth(0.10);
+                        doc.setDrawColor(140, 140, 140);
+                        doc.setLineWidth(this.foldLineWidthMm || 0.08);
                         doc.setLineDash([1.5, 1], 0);
                         doc.line(b1.x, b1.y, b2.x, b2.y);
 
@@ -903,9 +921,9 @@ export class PapercraftEngine {
                     }
                 }
 
-                // D) Cortes exteriores
-                doc.setDrawColor(0, 0, 0);
-                doc.setLineWidth(0.22);
+                // D) Cortes exteriores (Hairline ultra-fino y tono tenue profesional)
+                doc.setDrawColor(r, g, b);
+                doc.setLineWidth(this.cutLineWidthMm || 0.10);
                 doc.setLineDash([], 0);
                 for (const cut of part.boundaryEdges) {
                     const pA = toPageMm(cut.p1);

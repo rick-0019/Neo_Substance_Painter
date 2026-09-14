@@ -22,6 +22,8 @@ export class DecalSystem {
         this.decalTexture = null;
         this.isActive = false;
         this.isLocked = false;
+        this.isTextMode = false;
+        this.textOptions = null;
 
         // Parámetros del proyector 3D
         this.projectorPosition = new THREE.Vector3();
@@ -34,6 +36,7 @@ export class DecalSystem {
 
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
+        this.lastHit = null;
 
         // Parámetros de la calcomanía en Modo 2D
         this.decal2D = {
@@ -77,6 +80,12 @@ export class DecalSystem {
         const btnMode2D = document.getElementById('btn-decal-mode-2d');
         if (btnMode3D) btnMode3D.classList.toggle('active', mode === '3d');
         if (btnMode2D) btnMode2D.classList.toggle('active', mode === '2d');
+
+        const btnTextMode3D = document.getElementById('btn-text-mode-3d');
+        const btnTextMode2D = document.getElementById('btn-text-mode-2d');
+        if (btnTextMode3D) btnTextMode3D.classList.toggle('active', mode === '3d');
+        if (btnTextMode2D) btnTextMode2D.classList.toggle('active', mode === '2d');
+
         const passGroup = document.getElementById('decal-passthrough-group');
         if (passGroup) passGroup.style.display = mode === '3d' ? 'flex' : 'none';
 
@@ -93,10 +102,18 @@ export class DecalSystem {
                 const normDeg = deg > 180 ? deg - 360 : (deg < -180 ? deg + 360 : deg);
                 if (rotInput) rotInput.value = normDeg;
                 if (rotLabel) rotLabel.textContent = `${normDeg}°`;
+
+                if (this.isTextMode) {
+                    const textRot = document.getElementById('text-rotation');
+                    const textRotLabel = document.getElementById('text-rot-val');
+                    if (textRot) textRot.value = normDeg;
+                    if (textRotLabel) textRotLabel.textContent = `${normDeg}°`;
+                    if (this.textOptions) this.textOptions.rotation = normDeg;
+                }
+
                 this.render2DPreview();
             }
         } else {
-            this.clear2DUI();
             if (this.isActive) {
                 this.previewGroup.visible = true;
                 const scaleInput = document.getElementById('decal-scale');
@@ -106,7 +123,17 @@ export class DecalSystem {
                 const deg = Math.round((this.projectorRotation * 180 / Math.PI) % 360);
                 if (rotInput) rotInput.value = deg;
                 if (rotLabel) rotLabel.textContent = `${deg}°`;
+
+                if (this.isTextMode) {
+                    const textRot = document.getElementById('text-rotation');
+                    const textRotLabel = document.getElementById('text-rot-val');
+                    if (textRot) textRot.value = deg;
+                    if (textRotLabel) textRotLabel.textContent = `${deg}°`;
+                    if (this.textOptions) this.textOptions.rotation = deg;
+                }
+
                 this.updatePreviewTransform();
+                this.render2DPreview();
             }
         }
     }
@@ -144,6 +171,8 @@ export class DecalSystem {
         const inputDecal = document.getElementById('input-decal');
         const btnLoad = document.getElementById('btn-load-decal');
         const btnBake = document.getElementById('btn-bake-decal');
+        const btnBake2D = document.getElementById('btn-bake-decal-2d');
+        const btnBake3D = document.getElementById('btn-bake-decal-3d');
         const btnCancel = document.getElementById('btn-cancel-decal');
         const scaleInput = document.getElementById('decal-scale');
         const rotInput = document.getElementById('decal-rotation');
@@ -184,6 +213,7 @@ export class DecalSystem {
             } else {
                 this.projectorScale = parseFloat(e.target.value);
                 this.updatePreviewTransform();
+                if (this.lastHit) this.sync2DFrom3D(this.lastHit);
             }
         });
 
@@ -198,6 +228,7 @@ export class DecalSystem {
             } else {
                 this.projectorScale = parseFloat(scaleInput.value);
                 this.updatePreviewTransform();
+                if (this.lastHit) this.sync2DFrom3D(this.lastHit);
             }
         });
 
@@ -212,6 +243,7 @@ export class DecalSystem {
             } else {
                 this.projectorScale = parseFloat(scaleInput.value);
                 this.updatePreviewTransform();
+                if (this.lastHit) this.sync2DFrom3D(this.lastHit);
             }
         });
 
@@ -228,6 +260,7 @@ export class DecalSystem {
             } else {
                 this.projectorRotation = (deg * Math.PI) / 180;
                 this.updatePreviewTransform();
+                if (this.lastHit) this.sync2DFrom3D(this.lastHit);
             }
         };
 
@@ -236,16 +269,14 @@ export class DecalSystem {
             updateRotation(deg);
         });
 
-        btnRotDec?.addEventListener('click', (e) => {
-            const step = e.shiftKey ? 5 : 1;
+        btnRotDec?.addEventListener('click', () => {
             const current = parseInt(rotInput?.value || 0, 10);
-            updateRotation(current - step);
+            updateRotation(current - 1);
         });
 
-        btnRotInc?.addEventListener('click', (e) => {
-            const step = e.shiftKey ? 5 : 1;
+        btnRotInc?.addEventListener('click', () => {
             const current = parseInt(rotInput?.value || 0, 10);
-            updateRotation(current + step);
+            updateRotation(current + 1);
         });
 
         const chkPassthrough = document.getElementById('decal-passthrough');
@@ -260,9 +291,30 @@ export class DecalSystem {
             this.bakeToActiveLayer();
         });
 
+        btnBake2D?.addEventListener('click', () => {
+            this.bake2DToActiveLayer();
+        });
+
+        btnBake3D?.addEventListener('click', () => {
+            this.bake3DToActiveLayer();
+        });
+
         btnCancel?.addEventListener('click', () => {
             this.cancelDecal();
         });
+
+        // Controles de Modo Texto integrados
+        const btnTextMode3D = document.getElementById('btn-text-mode-3d');
+        const btnTextMode2D = document.getElementById('btn-text-mode-2d');
+        btnTextMode3D?.addEventListener('click', () => this.setMode('3d'));
+        btnTextMode2D?.addEventListener('click', () => this.setMode('2d'));
+
+        const btnTextBake2D = document.getElementById('btn-text-bake-2d');
+        const btnTextBake3D = document.getElementById('btn-text-bake-3d');
+        const btnTextCancel = document.getElementById('btn-text-cancel');
+        btnTextBake2D?.addEventListener('click', () => this.bake2DToActiveLayer());
+        btnTextBake3D?.addEventListener('click', () => this.bake3DToActiveLayer());
+        btnTextCancel?.addEventListener('click', () => this.cancelDecal());
 
         // Eventos del Viewport 3D para posicionar la calcomanía
         const view3d = this.renderer.domElement;
@@ -274,11 +326,8 @@ export class DecalSystem {
 
         view3d.addEventListener('pointerdown', (e) => {
             if (!this.isActive || this.mode === '2d' || e.button !== 0) return;
-            // Alternar fijar / liberar calcomanía al hacer clic en 3D
+            this.raycastSurface(e);
             this.isLocked = !this.isLocked;
-            if (!this.isLocked) {
-                this.raycastSurface(e);
-            }
         });
 
         // Eventos del Canvas 2D para interactuar con la calcomanía en Modo 2D
@@ -291,6 +340,12 @@ export class DecalSystem {
         this.currentDecalImage = img;
         this.decalTexture = new THREE.Texture(img);
         this.decalTexture.colorSpace = THREE.SRGBColorSpace;
+        this.decalTexture.minFilter = THREE.LinearMipmapLinearFilter;
+        this.decalTexture.magFilter = THREE.LinearFilter;
+        this.decalTexture.generateMipmaps = true;
+        if (this.renderer && this.renderer.capabilities) {
+            this.decalTexture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+        }
         this.decalTexture.needsUpdate = true;
 
         this.previewMaterial.map = this.decalTexture;
@@ -326,6 +381,10 @@ export class DecalSystem {
         };
 
         // Mostrar controles en UI
+        this.isTextMode = false;
+        const textControls = document.getElementById('text-controls');
+        if (textControls) textControls.style.display = 'none';
+
         const controls = document.getElementById('decal-controls');
         const thumb = document.getElementById('decal-preview-thumb');
         if (controls) controls.style.display = 'flex';
@@ -353,16 +412,161 @@ export class DecalSystem {
             const size = box.getSize(new THREE.Vector3());
             this.projectorPosition.set(center.x, center.y, center.z + size.z * 0.5);
             this.projectorNormal.set(0, 0, 1);
+
+            // Raycast automático frontal para registrar en 2D desde el primer milisegundo
+            const rayOrigin = new THREE.Vector3(center.x, center.y + size.y * 0.3, center.z + size.z * 1.5);
+            const rayDir = new THREE.Vector3(0, 0, -1);
+            this.raycaster.set(rayOrigin, rayDir);
+            const intersects = this.raycaster.intersectObject(this.mesh, true);
+            const hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
+            if (hit) {
+                this.lastHit = hit;
+                this.projectorPosition.copy(hit.point);
+                const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+                this.projectorNormal.copy(worldNormal);
+                this.sync2DFrom3D(hit);
+            }
         }
 
         if (this.mode === '2d') {
             this.previewGroup.visible = false;
-            this.render2DPreview();
         } else {
-            this.clear2DUI();
             this.previewGroup.visible = true;
             this.updatePreviewTransform();
         }
+        this.render2DPreview();
+    }
+
+    startTextMode(opts = {}) {
+        this.isTextMode = true;
+        this.textOptions = Object.assign({
+            text: document.getElementById('text-input-value')?.value || 'TEXTO',
+            fontFamily: document.getElementById('text-font-family')?.value || 'Arial',
+            fontSize: parseInt(document.getElementById('text-font-size')?.value || 48, 10),
+            rotation: parseInt(document.getElementById('text-rotation')?.value || 0, 10),
+            isBold: document.getElementById('btn-text-bold')?.classList.contains('active') ?? true,
+            isItalic: document.getElementById('btn-text-italic')?.classList.contains('active') ?? false,
+            color: document.getElementById('text-color')?.value || '#111111',
+            mode: '3d'
+        }, opts);
+
+        const decalControls = document.getElementById('decal-controls');
+        if (decalControls) decalControls.style.display = 'none';
+        const textControls = document.getElementById('text-controls');
+        if (textControls) textControls.style.display = 'flex';
+
+        this.updateTextDecal();
+    }
+
+    updateTextDecal(opts = {}) {
+        if (!this.isTextMode) return;
+        if (opts) Object.assign(this.textOptions, opts);
+        const o = this.textOptions;
+
+        // Renderizado vectorial de texto en canvas offscreen de alta fidelidad
+        const offscreen = document.createElement('canvas');
+        const ctx = offscreen.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        const renderFontSize = 256;
+        let style = '';
+        if (o.isItalic) style += 'italic ';
+        if (o.isBold) style += 'bold ';
+        ctx.font = `${style}${renderFontSize}px "${o.fontFamily}", sans-serif`;
+
+        const txt = (o.text !== undefined && o.text !== null && o.text.length > 0) ? o.text : ' ';
+        const metrics = ctx.measureText(txt);
+        const textW = Math.max(20, Math.ceil(metrics.width));
+        const textH = Math.max(20, Math.ceil(renderFontSize * 1.25));
+        const pad = 24;
+        offscreen.width = textW + pad * 2;
+        offscreen.height = textH + pad * 2;
+
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.font = `${style}${renderFontSize}px "${o.fontFamily}", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = o.color || '#111111';
+        ctx.fillText(txt, offscreen.width / 2, offscreen.height / 2);
+
+        this.currentDecalImage = offscreen;
+
+        if (this.decalTexture) {
+            this.decalTexture.dispose();
+        }
+        this.decalTexture = new THREE.CanvasTexture(offscreen);
+        this.decalTexture.colorSpace = THREE.SRGBColorSpace;
+        this.decalTexture.minFilter = THREE.LinearMipmapLinearFilter;
+        this.decalTexture.magFilter = THREE.LinearFilter;
+        this.decalTexture.generateMipmaps = true;
+        if (this.renderer && this.renderer.capabilities) {
+            this.decalTexture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+        }
+        this.decalTexture.needsUpdate = true;
+        this.previewMaterial.map = this.decalTexture;
+        this.previewMaterial.needsUpdate = true;
+
+        this.isActive = true;
+
+        // Dimensiones proporcionales en 2D
+        const aspect = offscreen.width / offscreen.height;
+        const target2DHeight = Math.max(20, o.fontSize * 2.5);
+        const target2DWidth = target2DHeight * aspect;
+
+        if (!this.decal2D || !this.decal2D.x) {
+            this.decal2D = {
+                x: this.canvas.width / 2,
+                y: this.canvas.height / 2,
+                width: target2DWidth,
+                height: target2DHeight,
+                baseWidth: target2DWidth,
+                baseHeight: target2DHeight,
+                rotation: (o.rotation * Math.PI) / 180,
+                isDragging: false,
+                dragHandle: null,
+                dragOffset: { x: 0, y: 0 },
+                initialDecal: null
+            };
+        } else {
+            this.decal2D.width = target2DWidth;
+            this.decal2D.height = target2DHeight;
+            this.decal2D.baseWidth = target2DWidth;
+            this.decal2D.baseHeight = target2DHeight;
+            this.decal2D.rotation = (o.rotation * Math.PI) / 180;
+        }
+
+        this.projectorRotation = (o.rotation * Math.PI) / 180;
+        this.projectorScale = Math.max(10, Math.min(300, (o.fontSize / 48) * 100));
+
+        // Posicionamiento 3D inicial si aún no se ha proyectado
+        if (!this.lastHit && this.mesh) {
+            const box = new THREE.Box3().setFromObject(this.mesh);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            this.projectorPosition.set(center.x, center.y, center.z + size.z * 0.5);
+            this.projectorNormal.set(0, 0, 1);
+
+            const rayOrigin = new THREE.Vector3(center.x, center.y + size.y * 0.3, center.z + size.z * 1.5);
+            const rayDir = new THREE.Vector3(0, 0, -1);
+            this.raycaster.set(rayOrigin, rayDir);
+            const intersects = this.raycaster.intersectObject(this.mesh, true);
+            const hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
+            if (hit) {
+                this.lastHit = hit;
+                this.projectorPosition.copy(hit.point);
+                const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+                this.projectorNormal.copy(worldNormal);
+                this.sync2DFrom3D(hit);
+            }
+        } else if (this.lastHit) {
+            this.sync2DFrom3D(this.lastHit);
+        }
+
+        this.setMode(this.textOptions.mode || this.mode || '3d');
+        this.updatePreviewTransform();
+        this.render2DPreview();
     }
 
     cancelDecal() {
@@ -374,6 +578,18 @@ export class DecalSystem {
         const thumb = document.getElementById('decal-preview-thumb');
         if (controls) controls.style.display = 'none';
         if (thumb) thumb.style.display = 'none';
+
+        if (this.isTextMode) {
+            this.isTextMode = false;
+            const textControls = document.getElementById('text-controls');
+            if (textControls) textControls.style.display = 'none';
+            document.querySelectorAll('.tool-btn[data-mode]').forEach(b => b.classList.remove('active'));
+            const paintBtn = document.querySelector('.tool-btn[data-mode="paint"]');
+            if (paintBtn) paintBtn.classList.add('active');
+            const brushMode = document.getElementById('brush-mode');
+            if (brushMode) brushMode.value = 'paint';
+        }
+
         this.canvas.style.cursor = 'default';
     }
 
@@ -389,11 +605,90 @@ export class DecalSystem {
         const hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
 
         if (hit) {
+            this.lastHit = hit;
             this.projectorPosition.copy(hit.point);
             const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
             this.projectorNormal.copy(worldNormal);
             this.updatePreviewTransform();
+            this.sync2DFrom3D(hit);
         }
+    }
+
+    sync2DFrom3D(hit) {
+        if (!hit || !hit.uv || !this.currentDecalImage) return;
+
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        this.decal2D.x = hit.uv.x * w;
+        this.decal2D.y = (1 - hit.uv.y) * h;
+
+        let syncDone = false;
+
+        if (hit.face && hit.object && hit.object.geometry) {
+            const geom = hit.object.geometry;
+            const pos = geom.attributes.position;
+            const uvs = geom.attributes.uv;
+            const a = hit.face.a, b = hit.face.b, c = hit.face.c;
+
+            if (pos && uvs && a !== undefined && b !== undefined && c !== undefined) {
+                const pA = new THREE.Vector3().fromBufferAttribute(pos, a).applyMatrix4(hit.object.matrixWorld);
+                const pB = new THREE.Vector3().fromBufferAttribute(pos, b).applyMatrix4(hit.object.matrixWorld);
+                const pC = new THREE.Vector3().fromBufferAttribute(pos, c).applyMatrix4(hit.object.matrixWorld);
+
+                const uvA = new THREE.Vector2(uvs.getX(a) * w, (1 - uvs.getY(a)) * h);
+                const uvB = new THREE.Vector2(uvs.getX(b) * w, (1 - uvs.getY(b)) * h);
+                const uvC = new THREE.Vector2(uvs.getX(c) * w, (1 - uvs.getY(c)) * h);
+
+                const e1 = new THREE.Vector3().subVectors(pB, pA);
+                const e2 = new THREE.Vector3().subVectors(pC, pA);
+
+                const u1 = new THREE.Vector2().subVectors(uvB, uvA);
+                const u2 = new THREE.Vector2().subVectors(uvC, uvA);
+
+                const orientation = this.currentProjectorOrientation || new THREE.Euler();
+                const projX = new THREE.Vector3(1, 0, 0).applyEuler(orientation);
+
+                const e11 = e1.dot(e1);
+                const e12 = e1.dot(e2);
+                const e22 = e2.dot(e2);
+                const det = e11 * e22 - e12 * e12;
+
+                if (Math.abs(det) > 1e-8) {
+                    const d1 = projX.dot(e1);
+                    const d2 = projX.dot(e2);
+                    const alpha = (d1 * e22 - d2 * e12) / det;
+                    const beta = (e11 * d2 - e12 * d1) / det;
+
+                    const v2D = new THREE.Vector2(
+                        alpha * u1.x + beta * u2.x,
+                        alpha * u1.y + beta * u2.y
+                    );
+
+                    const len2D = v2D.length();
+                    if (len2D > 0.0001) {
+                        this.decal2D.rotation = Math.atan2(v2D.y, v2D.x);
+
+                        const size3DX = this.currentProjectorSize ? this.currentProjectorSize.x : (this.getModelBaseSize() * (this.projectorScale / 100));
+                        const pxWidth = size3DX * len2D;
+                        if (pxWidth > 15 && pxWidth < w * 0.9) {
+                            const aspect = (this.decal2D.baseWidth && this.decal2D.baseHeight) ? (this.decal2D.baseWidth / this.decal2D.baseHeight) : 1;
+                            this.decal2D.width = Math.round(pxWidth);
+                            this.decal2D.height = Math.round(pxWidth / aspect);
+                            syncDone = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!syncDone) {
+            const scale = (this.projectorScale || 100) / 100;
+            this.decal2D.width = this.decal2D.baseWidth * scale;
+            this.decal2D.height = this.decal2D.baseHeight * scale;
+            this.decal2D.rotation = this.projectorRotation || 0;
+        }
+
+        this.render2DPreview();
     }
 
     getModelBaseSize() {
@@ -576,7 +871,7 @@ export class DecalSystem {
     }
 
     render2DPreview() {
-        if (!this.isActive || this.mode !== '2d' || !this.currentDecalImage || !this.ctxUI) return;
+        if (!this.isActive || !this.currentDecalImage || !this.ctxUI) return;
         this.clear2DUI();
 
         const d = this.decal2D;
@@ -585,60 +880,84 @@ export class DecalSystem {
         const halfH = d.height / 2;
 
         ctx.save();
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         ctx.translate(d.x, d.y);
         ctx.rotate(d.rotation);
 
-        // 1. Dibujar imagen de calcomanía
+        // 1. Dibujar imagen de calcomanía nítida
         ctx.drawImage(this.currentDecalImage, -halfW, -halfH, d.width, d.height);
 
-        // 2. Rectángulo de selección punteado
-        ctx.strokeStyle = '#00a2ff';
-        ctx.setLineDash([6, 6]);
-        ctx.lineWidth = 2;
-        ctx.strokeRect(-halfW, -halfH, d.width, d.height);
-        ctx.setLineDash([]);
+        if (this.mode === '3d') {
+            // Modo 3D: Mostrar caja y cruceta de REGISTRO simultáneo en 2D
+            ctx.strokeStyle = '#00f3ff';
+            ctx.setLineDash([6, 4]);
+            ctx.lineWidth = 2.5;
+            ctx.strokeRect(-halfW, -halfH, d.width, d.height);
+            ctx.setLineDash([]);
 
-        // 3. Nodos de control
-        const maxDim = Math.max(d.width, d.height);
-        const handleRadius = Math.max(6, Math.min(12, maxDim / 15));
-
-        const drawHandle = (hx, hy, isRotate = false, isEdge = false) => {
-            ctx.fillStyle = isRotate ? '#00e5ff' : (isEdge ? '#ffffff' : '#00a2ff');
-            ctx.strokeStyle = isRotate ? '#0078d7' : (isEdge ? '#00a2ff' : '#ffffff');
+            // Cruceta de centro de impacto
+            ctx.strokeStyle = '#00f3ff';
             ctx.lineWidth = 2;
-            if (isRotate) {
-                ctx.beginPath();
-                ctx.arc(hx, hy, handleRadius + 2, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.stroke();
-            } else {
-                ctx.fillRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
-                ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
-            }
-        };
+            ctx.beginPath();
+            ctx.moveTo(-14, 0); ctx.lineTo(14, 0);
+            ctx.moveTo(0, -14); ctx.lineTo(0, 14);
+            ctx.stroke();
 
-        // Esquinas (escala proporcional)
-        drawHandle(-halfW, -halfH);
-        drawHandle( halfW, -halfH);
-        drawHandle(-halfW,  halfH);
-        drawHandle( halfW,  halfH);
+            // Etiqueta indicadora
+            ctx.fillStyle = '#00f3ff';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('📍 Registro 3D (2D Listo)', 0, halfH + 18);
+        } else {
+            // Modo 2D: Controles interactivos con nodos de escala y rotación
+            ctx.strokeStyle = '#00a2ff';
+            ctx.setLineDash([6, 6]);
+            ctx.lineWidth = 2;
+            ctx.strokeRect(-halfW, -halfH, d.width, d.height);
+            ctx.setLineDash([]);
 
-        // Bordes (ajuste de anchura o altura)
-        drawHandle(0, -halfH, false, true);
-        drawHandle(0,  halfH, false, true);
-        drawHandle(-halfW, 0, false, true);
-        drawHandle( halfW, 0, false, true);
+            const maxDim = Math.max(d.width, d.height);
+            const handleRadius = Math.max(6, Math.min(12, maxDim / 15));
 
-        // Palo de rotación
-        const stemLength = Math.max(30, handleRadius * 3);
-        ctx.beginPath();
-        ctx.moveTo(0, -halfH);
-        ctx.lineTo(0, -halfH - stemLength);
-        ctx.strokeStyle = '#00a2ff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
+            const drawHandle = (hx, hy, isRotate = false, isEdge = false) => {
+                ctx.fillStyle = isRotate ? '#00e5ff' : (isEdge ? '#ffffff' : '#00a2ff');
+                ctx.strokeStyle = isRotate ? '#0078d7' : (isEdge ? '#00a2ff' : '#ffffff');
+                ctx.lineWidth = 2;
+                if (isRotate) {
+                    ctx.beginPath();
+                    ctx.arc(hx, hy, handleRadius + 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                } else {
+                    ctx.fillRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
+                    ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
+                }
+            };
 
-        drawHandle(0, -halfH - stemLength, true);
+            // Esquinas (escala proporcional)
+            drawHandle(-halfW, -halfH);
+            drawHandle( halfW, -halfH);
+            drawHandle(-halfW,  halfH);
+            drawHandle( halfW,  halfH);
+
+            // Bordes (ajuste de anchura o altura)
+            drawHandle(0, -halfH, false, true);
+            drawHandle(0,  halfH, false, true);
+            drawHandle(-halfW, 0, false, true);
+            drawHandle( halfW, 0, false, true);
+
+            // Palo de rotación
+            const stemLength = Math.max(30, handleRadius * 3);
+            ctx.beginPath();
+            ctx.moveTo(0, -halfH);
+            ctx.lineTo(0, -halfH - stemLength);
+            ctx.strokeStyle = '#00a2ff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            drawHandle(0, -halfH - stemLength, true);
+        }
 
         ctx.restore();
     }
@@ -732,6 +1051,14 @@ export class DecalSystem {
             const rotLabel = document.getElementById('decal-rot-label');
             if (rotInput) rotInput.value = normDeg;
             if (rotLabel) rotLabel.textContent = `${normDeg}°`;
+
+            if (this.isTextMode) {
+                const textRot = document.getElementById('text-rotation');
+                const textRotLabel = document.getElementById('text-rot-val');
+                if (textRot) textRot.value = normDeg;
+                if (textRotLabel) textRotLabel.textContent = `${normDeg}°`;
+                if (this.textOptions) this.textOptions.rotation = normDeg;
+            }
         } else if (['nw', 'ne', 'sw', 'se'].includes(h)) {
             const dx = x - init.x;
             const dy = y - init.y;
@@ -754,6 +1081,15 @@ export class DecalSystem {
             const scalePct = Math.round((d.width / d.baseWidth) * 100);
             const scaleInput = document.getElementById('decal-scale');
             if (scaleInput) scaleInput.value = Math.min(300, Math.max(10, scalePct));
+
+            if (this.isTextMode) {
+                const textFontSize = document.getElementById('text-font-size');
+                const textSizeVal = document.getElementById('text-size-val');
+                const approxFont = Math.max(14, Math.min(250, Math.round(d.height / 2.5)));
+                if (textFontSize) textFontSize.value = approxFont;
+                if (textSizeVal) textSizeVal.textContent = `${approxFont} px`;
+                if (this.textOptions) this.textOptions.fontSize = approxFont;
+            }
         } else if (['n', 's'].includes(h)) {
             const dx = x - init.x;
             const dy = y - init.y;
@@ -790,7 +1126,7 @@ export class DecalSystem {
 
     bake2DToActiveLayer() {
         if (!this.isActive || !this.currentDecalImage) {
-            alert('Carga primero una imagen de calcomanía.');
+            alert(this.isTextMode ? 'Introduce un texto para estampar.' : 'Carga primero una imagen de calcomanía.');
             return;
         }
 
@@ -805,6 +1141,8 @@ export class DecalSystem {
         // 2. Dibujar directamente en la capa activa con máxima fidelidad 1:1
         const d = this.decal2D;
         targetCtx.save();
+        targetCtx.imageSmoothingEnabled = true;
+        targetCtx.imageSmoothingQuality = 'high';
         targetCtx.translate(d.x, d.y);
         targetCtx.rotate(d.rotation);
         targetCtx.drawImage(this.currentDecalImage, -d.width / 2, -d.height / 2, d.width, d.height);
@@ -822,6 +1160,18 @@ export class DecalSystem {
             this.texture.needsUpdate = true;
         }
 
+        // Feedback visual en botón
+        const btn2D = this.isTextMode ? document.getElementById('btn-text-bake-2d') : document.getElementById('btn-bake-decal-2d');
+        if (btn2D) {
+            const oldText = btn2D.textContent;
+            btn2D.textContent = '✅ ¡Estampado!';
+            btn2D.style.backgroundColor = '#1e7e34';
+            setTimeout(() => { 
+                btn2D.textContent = oldText; 
+                btn2D.style.backgroundColor = '#28a745';
+            }, 1200);
+        }
+
         // Dejar la calca visible para seguir editando o estampando más copias
         this.render2DPreview();
     }
@@ -832,7 +1182,7 @@ export class DecalSystem {
      */
     bake3DToActiveLayer() {
         if (!this.isActive || !this.currentDecalImage || !this.mesh) {
-            alert('Carga primero una imagen de calcomanía.');
+            alert(this.isTextMode ? 'Introduce un texto para estampar.' : 'Carga primero una imagen de calcomanía.');
             return;
         }
 
@@ -923,10 +1273,11 @@ export class DecalSystem {
             transparent: true
         });
 
-        // 5. Renderizar en WebGLRenderTarget
+        // 5. Renderizar en WebGLRenderTarget con antialiasing MSAA (4x)
         const renderTarget = new THREE.WebGLRenderTarget(width, height, {
             format: THREE.RGBAFormat,
-            type: THREE.UnsignedByteType
+            type: THREE.UnsignedByteType,
+            samples: 4
         });
 
         const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -966,6 +1317,8 @@ export class DecalSystem {
         offCtx.putImageData(imgData, 0, 0);
 
         targetCtx.save();
+        targetCtx.imageSmoothingEnabled = true;
+        targetCtx.imageSmoothingQuality = 'high';
         targetCtx.globalCompositeOperation = 'source-over';
         targetCtx.drawImage(offscreen, 0, 0);
         targetCtx.restore();
@@ -984,6 +1337,18 @@ export class DecalSystem {
         }
         if (this.texture) {
             this.texture.needsUpdate = true;
+        }
+
+        // Feedback visual en botón
+        const btn3D = this.isTextMode ? document.getElementById('btn-text-bake-3d') : document.getElementById('btn-bake-decal-3d');
+        if (btn3D) {
+            const oldText = btn3D.textContent;
+            btn3D.textContent = '✅ ¡Estampado!';
+            btn3D.style.backgroundColor = '#0a58ca';
+            setTimeout(() => { 
+                btn3D.textContent = oldText; 
+                btn3D.style.backgroundColor = '#0d6efd';
+            }, 1200);
         }
 
         // Dejar fijada la calca por si quiere moverla o estampar en otro lugar

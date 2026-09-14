@@ -691,3 +691,314 @@ input[type=range]::-webkit-slider-runnable-track {
 .brush-tip-btn:active {
     transform: scale(0.92);
 }
+
+/* Ranuras de Colores Rápidos (Color 1, Color 2, Color 3) */
+.quick-color-slot {
+    width: 22px;
+    height: 18px;
+    border-radius: 3px;
+    border: 1px solid #777;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 0 2px #000, 0 0 2px #000;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.1s, border-color 0.15s, box-shadow 0.15s;
+    box-sizing: border-box;
+}
+
+.quick-color-slot:hover {
+    transform: scale(1.15);
+    border-color: #ffffff;
+    box-shadow: 0 0 4px rgba(255,255,255,0.6);
+}
+
+.quick-color-slot.active {
+    border: 2px solid #00f3ff;
+    box-shadow: 0 0 6px #00f3ff;
+    transform: scale(1.1);
+}
+
+/* Muestra de Textura en Ribbon */
+.texture-thumb {
+    width: 32px;
+    height: 32px;
+    border: 1px solid #666;
+    border-radius: 4px;
+    background-size: cover;
+    background-position: center;
+    background-repeat: repeat;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+    transition: transform 0.1s, border-color 0.15s;
+}
+.texture-thumb:hover {
+    transform: scale(1.1);
+    border-color: #00f3ff;
+}
+
+/* Menú Archivo Estilo MS Paint */
+.paint-file-menu-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 6px;
+}
+
+.paint-file-menu-btn {
+    background-color: #1976d2;
+    color: #ffffff;
+    border: 1px solid #1565c0;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 8px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    transition: background-color 0.15s, transform 0.1s;
+}
+
+.paint-file-menu-btn:hover {
+    background-color: #1565c0;
+}
+
+.paint-file-menu-btn:active {
+    transform: scale(0.97);
+}
+
+.paint-dropdown-menu {
+    position: fixed;
+    width: 250px;
+    background: #252525;
+    border: 1px solid #555;
+    border-radius: 6px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.85);
+    z-index: 10000;
+    padding: 6px 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.paint-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: background-color 0.12s;
+}
+
+.paint-menu-item:hover {
+    background-color: #383838;
+}
+
+.paint-menu-icon {
+    font-size: 18px;
+    width: 24px;
+    text-align: center;
+}
+
+.paint-menu-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.paint-menu-text span {
+    font-size: 12px;
+    font-weight: 500;
+    color: #eee;
+}
+
+.paint-menu-text small {
+    color: #888;
+    font-size: 10px;
+}
+
+.paint-menu-divider {
+    height: 1px;
+    background-color: #3a3a3a;
+    margin: 5px 0;
+}
+
+/* Panel Popover Flotante de Texturas */
+.paint-floating-panel {
+    position: fixed;
+    background: #252525;
+    border: 1px solid #555;
+    border-radius: 8px;
+    box-shadow: 0 12px 35px rgba(0,0,0,0.9);
+    z-index: 10000;
+    padding: 12px 14px;
+    width: 500px;
+    box-sizing: border-box;
+    color: #eee;
+}
+
+.floating-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #3a3a3a;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #ff9800;
+}
+
+.floating-panel-close {
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.floating-panel-close:hover {
+    background: #444;
+    color: #fff;
+}
+
+.floating-panel-body {
+    display: flex;
+    gap: 14px;
+}
+
+.texture-gallery-col {
+    flex: 1;
+}
+
+.floating-panel-section-title {
+    font-size: 11px;
+    font-weight: bold;
+    color: #aaa;
+    display: block;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.texture-grid-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.texture-card {
+    background: #333;
+    border: 1.5px solid #444;
+    border-radius: 5px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: transform 0.1s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.texture-card:hover {
+    transform: translateY(-2px);
+    border-color: #888;
+}
+
+.texture-card.active {
+    border-color: #00f3ff;
+    box-shadow: 0 0 8px rgba(0, 243, 255, 0.4);
+    background: #233440;
+}
+
+.texture-card-img {
+    width: 100%;
+    height: 48px;
+    border-radius: 3px;
+    background-size: cover;
+    background-position: center;
+    background-repeat: repeat;
+    background-color: #222;
+}
+
+.texture-card-img.upload-slot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    color: #aaa;
+    border: 1px dashed #666;
+}
+
+.texture-card-name {
+    font-size: 10px;
+    color: #eee;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.texture-actions-col {
+    width: 185px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-left: 1px solid #3a3a3a;
+    padding-left: 12px;
+}
+
+.texture-action-btn {
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    font-weight: bold;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: filter 0.15s, transform 0.1s;
+    text-align: center;
+}
+
+.texture-action-btn:hover {
+    filter: brightness(1.15);
+}
+
+.texture-action-btn:active {
+    transform: scale(0.97);
+}
+
+.texture-action-btn.primary {
+    background: #0288d1;
+    border-color: #0277bd;
+    color: white;
+}
+
+.texture-action-btn.secondary {
+    background: #2e7d32;
+    border-color: #1b5e20;
+    color: white;
+}
+
+.texture-tip-box {
+    background: #1c1c1c;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 9.5px;
+    color: #aaa;
+    line-height: 1.4;
+}
+
+.floating-panel-divider {
+    height: 1px;
+    background: #3a3a3a;
+    margin: 2px 0;
+}
+
+
