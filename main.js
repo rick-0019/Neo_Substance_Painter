@@ -4,6 +4,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { Painter } from './painter.js?v=2.6';
 import { DecalSystem } from './decals.js?v=2.6';
 import { LayerManager } from './layers.js?v=2.6';
+import { PapercraftEngine } from './papercraft.js?v=2.6';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -70,14 +71,38 @@ view3d.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-// REASIGNAR BOTONES: Izquierdo para pintar, Derecho para rotar, Rueda para zoom
+controls.screenSpacePanning = true; // Paneo relativo al plano de la pantalla (suave y natural)
+
+// ASIGNACIÓN DE CONTROLES EN VISTA 3D:
+// Botón Izquierdo: Pintar directamente sobre el modelo 3D / Calcomanías
+// Botón Central / Rueda presionada: Mover / Panear la vista del modelo
+// Botón Derecho: Rotar / Orbitar la cámara alrededor del modelo
+// Giro de Rueda: Zoom in / Zoom out
 controls.mouseButtons = {
     LEFT: THREE.MOUSE.NONE,
-    MIDDLE: THREE.MOUSE.DOLLY,
+    MIDDLE: THREE.MOUSE.PAN,
     RIGHT: THREE.MOUSE.ROTATE
 };
-// Evitar que el clic derecho abra el menú del navegador
+
+// Evitar menú contextual en clic derecho y autoscroll nativo en clic central
 view3d.addEventListener('contextmenu', e => e.preventDefault());
+view3d.addEventListener('mousedown', e => {
+    if (e.button === 1) e.preventDefault();
+});
+view3d.addEventListener('auxclick', e => {
+    if (e.button === 1) e.preventDefault();
+});
+view3d.addEventListener('pointerdown', e => {
+    if (e.button === 1) {
+        e.preventDefault();
+        view3d.style.cursor = 'grab';
+    }
+});
+window.addEventListener('pointerup', e => {
+    if (e.button === 1) {
+        view3d.style.cursor = '';
+    }
+});
 
 // Lighting
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -91,6 +116,14 @@ const painter = new Painter(scene, camera, renderer, canvas2d, canvasTexture, la
 window.painter = painter;
 const decalSystem = new DecalSystem(scene, camera, renderer, canvas2d, canvasTexture, layerManager, painter);
 window.decalSystem = decalSystem;
+
+// Papercraft Engine (Unfold, Solapas, A4 1:1, PDF)
+const papercraft = new PapercraftEngine();
+window.papercraft = papercraft;
+papercraft.setRedrawCallback(() => {
+    drawUVWireframe();
+    if (typeof renderUnfoldWorkbench === 'function') renderUnfoldWorkbench();
+});
 
 // UI Texture para previsualizar formas en 3D
 const canvasUI = document.getElementById('canvas-ui');
@@ -112,8 +145,134 @@ state.mesh.add(line);
 scene.add(state.mesh);
 painter.setMesh(state.mesh);
 decalSystem.setMesh(state.mesh);
-drawUVWireframe();
 layerManager.renderUI();
+
+// Helper para sincronizar valores visuales del panel Papercraft
+function updatePapercraftUI() {
+    const badge = document.getElementById('unfold-scale-badge');
+    if (badge) badge.textContent = papercraft.currentScale;
+    const wingspanVal = document.getElementById('unfold-wingspan-val');
+    if (wingspanVal) wingspanVal.textContent = papercraft.wingspanMm;
+    const heightVal = document.getElementById('unfold-height-val');
+    if (heightVal) heightVal.textContent = papercraft.heightMm;
+    const lengthInput = document.getElementById('unfold-model-length');
+    if (lengthInput) lengthInput.value = papercraft.modelLengthMm;
+    const partsCount = document.getElementById('unfold-parts-count');
+    if (partsCount) partsCount.textContent = `${papercraft.parts.length} piezas (${papercraft.pagesCount} Hojas A4)`;
+}
+
+// Carga y procesamiento de modelos OBJ
+function loadOBJContents(contents) {
+    try {
+        const loader = new OBJLoader();
+        const object = loader.parse(contents);
+
+        if (state.mesh) scene.remove(state.mesh);
+
+        let hasUVs = false;
+        const meshes = [];
+        object.traverse((child) => {
+            if (child.isMesh) {
+                if (child.geometry && child.geometry.attributes && child.geometry.attributes.uv) {
+                    hasUVs = true;
+                }
+                child.material = new THREE.MeshBasicMaterial({
+                    map: state.texture,
+                    side: THREE.DoubleSide
+                });
+                
+                // Wireframe sutil sobre cada parte
+                const childEdges = new THREE.EdgesGeometry(child.geometry);
+                const childLine = new THREE.LineSegments(childEdges, new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.2, transparent: true }));
+                child.add(childLine);
+                
+                meshes.push(child);
+            }
+        });
+
+        if (!hasUVs || meshes.length === 0) {
+            alert('El modelo no tiene coordenadas UV (vt) o no contiene mallas válidas.');
+            return;
+        }
+
+        state.mesh = object;
+        scene.add(state.mesh);
+        
+        // Encuadrar cámara automáticamente según el tamaño real del modelo
+        frameModel(state.mesh);
+        
+        painter.setMesh(state.mesh);
+        decalSystem.setMesh(state.mesh);
+        
+        // Analizar topología Papercraft (separación de piezas y auto-acomodo en hojas A4)
+        papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+        updatePapercraftUI();
+        
+        // Dibujar vista UV / Papercraft
+        drawUVWireframe();
+        renderUnfoldWorkbench();
+    } catch (err) {
+        console.error('Error cargando OBJ:', err);
+        alert('Error al procesar el archivo OBJ: ' + err.message);
+    }
+}
+
+// Intentar cargar modelo bomba_v1.obj automáticamente al iniciar
+fetch('models/bomba_v1.obj')
+    .then(r => { if (r.ok) return r.text(); throw new Error('Not found'); })
+    .then(txt => loadOBJContents(txt))
+    .catch(() => {
+        papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+        updatePapercraftUI();
+        drawUVWireframe();
+        renderUnfoldWorkbench();
+    });
+
+// Banco de Trabajo Interactivo A4 (Unfold Workbench)
+const canvasUnfold = document.getElementById('canvas-unfold');
+const ctxUnfold = canvasUnfold?.getContext('2d');
+const unfoldWorkbench = document.getElementById('unfold-workbench');
+const canvasContainer = document.querySelector('.canvas-container');
+const view2dLabel = document.getElementById('view-2d-label');
+
+function renderUnfoldWorkbench() {
+    if (!canvasUnfold || !ctxUnfold || !papercraft.active) return;
+    const rect = unfoldWorkbench.getBoundingClientRect();
+    if (rect.width > 10 && rect.height > 10) {
+        if (canvasUnfold.width !== rect.width || canvasUnfold.height !== rect.height) {
+            canvasUnfold.width = rect.width;
+            canvasUnfold.height = rect.height;
+        }
+    }
+    papercraft.renderUnfoldWorkbench(ctxUnfold, canvasUnfold.width, canvasUnfold.height, canvas2d);
+}
+
+// Eventos del Panel Lateral (Tabs: Capas vs Unfold)
+const tabBtnLayers = document.getElementById('tab-btn-layers');
+const tabBtnUnfold = document.getElementById('tab-btn-unfold');
+const tabContentLayers = document.getElementById('tab-content-layers');
+const tabContentUnfold = document.getElementById('tab-content-unfold');
+
+function switchSidebarTab(tab) {
+    if (tab === 'layers') {
+        tabBtnLayers?.classList.add('active');
+        tabBtnUnfold?.classList.remove('active');
+        tabContentLayers?.classList.add('active');
+        tabContentUnfold?.classList.remove('active');
+    } else {
+        tabBtnUnfold?.classList.add('active');
+        tabBtnLayers?.classList.remove('active');
+        tabContentUnfold?.classList.add('active');
+        tabContentLayers?.classList.remove('active');
+    }
+}
+tabBtnLayers?.addEventListener('click', () => switchSidebarTab('layers'));
+tabBtnUnfold?.addEventListener('click', () => {
+    switchSidebarTab('unfold');
+    if (!papercraft.active) {
+        btnRibbonUnfold?.click();
+    }
+});
 
 // Eventos del Panel de Capas (Layers)
 document.getElementById('btn-add-layer')?.addEventListener('click', () => {
@@ -150,7 +309,7 @@ document.getElementById('btn-toggle-layers')?.addEventListener('click', () => {
     btn.textContent = panel.classList.contains('collapsed') ? '📑' : '✖';
 });
 
-// Load OBJ
+// Load OBJ manual (botón Archivo)
 document.getElementById('btn-load-obj').addEventListener('click', () => document.getElementById('input-obj').click());
 document.getElementById('input-obj').addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -158,78 +317,319 @@ document.getElementById('input-obj').addEventListener('change', (e) => {
 
     const reader = new FileReader();
     reader.onload = (event) => {
-        try {
-            const contents = event.target.result;
-            const loader = new OBJLoader();
-            const object = loader.parse(contents);
-
-            if (state.mesh) scene.remove(state.mesh);
-
-            let hasUVs = false;
-            const meshes = [];
-            object.traverse((child) => {
-                if (child.isMesh) {
-                    if (child.geometry && child.geometry.attributes && child.geometry.attributes.uv) {
-                        hasUVs = true;
-                    }
-                    child.material = new THREE.MeshBasicMaterial({
-                        map: state.texture,
-                        side: THREE.DoubleSide
-                    });
-                    
-                    // Wireframe sutil sobre cada parte
-                    const childEdges = new THREE.EdgesGeometry(child.geometry);
-                    const childLine = new THREE.LineSegments(childEdges, new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.2, transparent: true }));
-                    child.add(childLine);
-                    
-                    meshes.push(child);
-                }
-            });
-
-            if (!hasUVs || meshes.length === 0) {
-                alert('El modelo no tiene coordenadas UV (vt) o no contiene mallas válidas.');
-                return;
-            }
-
-            // Usar el objeto completo o la malla única
-            state.mesh = object;
-            scene.add(state.mesh);
-            
-            // Encuadrar cámara automáticamente según el tamaño real del modelo
-            const box = new THREE.Box3().setFromObject(state.mesh);
-            const center = box.getCenter(new THREE.Vector3());
-            const size = box.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z);
-            
-            controls.target.copy(center);
-            if (maxDim > 0) {
-                const fov = camera.fov * (Math.PI / 180);
-                const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
-                camera.position.set(center.x + dist * 0.7, center.y + dist * 0.5, center.z + dist * 0.7);
-                camera.near = Math.max(0.01, maxDim / 100);
-                camera.far = Math.max(1000, maxDim * 100);
-                camera.updateProjectionMatrix();
-            }
-            controls.update();
-            
-            painter.setMesh(state.mesh);
-            decalSystem.setMesh(state.mesh);
-            
-            // Dibujar wireframe
-            drawUVWireframe();
-        } catch (err) {
-            console.error('Error cargando OBJ:', err);
-            alert('Error al procesar el archivo OBJ: ' + err.message);
-        }
+        loadOBJContents(event.target.result);
     };
     reader.readAsText(file);
 });
 
-// UI Event Listeners
+// Botón Ribbon Modo Papercraft / Unfold
+const btnRibbonUnfold = document.getElementById('btn-ribbon-unfold-mode');
+btnRibbonUnfold?.addEventListener('click', () => {
+    papercraft.active = !papercraft.active;
+    if (papercraft.active) {
+        btnRibbonUnfold.style.background = '#e65100';
+        btnRibbonUnfold.textContent = '✂️ Unfold (ON)';
+        if (unfoldWorkbench) unfoldWorkbench.style.display = 'block';
+        if (canvasContainer) canvasContainer.style.display = 'none';
+        if (view2dLabel) view2dLabel.style.display = 'none';
+        switchSidebarTab('unfold');
+        const panel = document.getElementById('panel-layers');
+        if (panel?.classList.contains('collapsed')) {
+            panel.classList.remove('collapsed');
+        }
+        renderUnfoldWorkbench();
+    } else {
+        btnRibbonUnfold.style.background = '#555';
+        btnRibbonUnfold.textContent = '✂️ Modo Unfold';
+        if (unfoldWorkbench) unfoldWorkbench.style.display = 'none';
+        if (canvasContainer) canvasContainer.style.display = 'block';
+        if (view2dLabel) {
+            view2dLabel.style.display = 'block';
+            view2dLabel.textContent = 'Vista 2D (UV)';
+        }
+        drawUVWireframe();
+    }
+});
+
+// Interacción de Arrastre y Rotación en el Banco de Hojas A4
+let isPanningWorkbench = false;
+let startPanX = 0, startPanY = 0;
+
+canvasUnfold?.addEventListener('mousedown', (e) => {
+    if (e.button === 0) { // Clic izquierdo: arrastrar pieza o mover mesa
+        const hit = papercraft.getPartAt(e.offsetX, e.offsetY);
+        if (hit) {
+            papercraft.selectedPart = hit.part;
+            papercraft.isDraggingPart = true;
+            canvasUnfold.style.cursor = 'grabbing';
+            renderUnfoldWorkbench();
+        } else {
+            papercraft.selectedPart = null;
+            isPanningWorkbench = true;
+            startPanX = e.clientX - papercraft.panX;
+            startPanY = e.clientY - papercraft.panY;
+            canvasUnfold.style.cursor = 'move';
+            renderUnfoldWorkbench();
+        }
+    } else if (e.button === 2) { // Clic derecho: rotar pieza o mover mesa
+        const hit = papercraft.getPartAt(e.offsetX, e.offsetY);
+        if (hit) {
+            papercraft.selectedPart = hit.part;
+            papercraft.rotateSelectedPart(45);
+            renderUnfoldWorkbench();
+        } else {
+            isPanningWorkbench = true;
+            startPanX = e.clientX - papercraft.panX;
+            startPanY = e.clientY - papercraft.panY;
+            canvasUnfold.style.cursor = 'move';
+        }
+    }
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (!papercraft.active || !canvasUnfold) return;
+
+    if (papercraft.isDraggingPart && papercraft.selectedPart) {
+        const mmToPx = 4.0;
+        const dx_mm = e.movementX / (papercraft.zoom * mmToPx);
+        const dy_mm = e.movementY / (papercraft.zoom * mmToPx);
+        papercraft.selectedPart.layout.x = Math.round((papercraft.selectedPart.layout.x + dx_mm) * 10) / 10;
+        papercraft.selectedPart.layout.y = Math.round((papercraft.selectedPart.layout.y + dy_mm) * 10) / 10;
+
+        // Detectar cambio de hoja si se arrastra hacia otra hoja A4
+        const rect = canvasUnfold.getBoundingClientRect();
+        const canvasX = e.clientX - rect.left;
+        const sheetGapMm = 20.0;
+        const mouseMmX = (canvasX - papercraft.panX) / (papercraft.zoom * mmToPx);
+        const newPage = Math.max(0, Math.min(papercraft.pagesCount - 1, Math.floor(mouseMmX / (papercraft.A4_W + sheetGapMm))));
+        if (newPage !== papercraft.selectedPart.layout.pageIndex) {
+            papercraft.selectedPart.layout.pageIndex = newPage;
+        }
+
+        renderUnfoldWorkbench();
+    } else if (isPanningWorkbench) {
+        papercraft.panX = e.clientX - startPanX;
+        papercraft.panY = e.clientY - startPanY;
+        renderUnfoldWorkbench();
+    } else {
+        const rect = canvasUnfold.getBoundingClientRect();
+        const hit = papercraft.getPartAt(e.clientX - rect.left, e.clientY - rect.top);
+        canvasUnfold.style.cursor = hit ? 'grab' : 'default';
+    }
+});
+
+window.addEventListener('mouseup', () => {
+    if (!papercraft.active) return;
+    papercraft.isDraggingPart = false;
+    isPanningWorkbench = false;
+    if (canvasUnfold) canvasUnfold.style.cursor = 'default';
+    renderUnfoldWorkbench();
+});
+
+canvasUnfold?.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const zoomFactor = e.deltaY < 0 ? 1.15 : (1 / 1.15);
+    const oldZoom = papercraft.zoom;
+    papercraft.zoom = Math.max(0.2, Math.min(5.0, papercraft.zoom * zoomFactor));
+    papercraft.panX = e.offsetX - (e.offsetX - papercraft.panX) * (papercraft.zoom / oldZoom);
+    papercraft.panY = e.offsetY - (e.offsetY - papercraft.panY) * (papercraft.zoom / oldZoom);
+    renderUnfoldWorkbench();
+});
+
+canvasUnfold?.addEventListener('contextmenu', e => e.preventDefault());
+
+// Botones de zoom para Unfold
+document.getElementById('btn-unfold-zoom-in')?.addEventListener('click', () => {
+    papercraft.zoom = Math.min(5.0, papercraft.zoom * 1.25);
+    renderUnfoldWorkbench();
+});
+document.getElementById('btn-unfold-zoom-out')?.addEventListener('click', () => {
+    papercraft.zoom = Math.max(0.2, papercraft.zoom / 1.25);
+    renderUnfoldWorkbench();
+});
+document.getElementById('btn-unfold-zoom-reset')?.addEventListener('click', () => {
+    papercraft.zoom = 1.0;
+    papercraft.panX = 40;
+    papercraft.panY = 40;
+    renderUnfoldWorkbench();
+});
+
+// Botones Auto-Acomodar, Rotar, +Hoja A4
+function handleAutoPack() {
+    papercraft.autoPackA4();
+    renderUnfoldWorkbench();
+}
+document.getElementById('btn-unfold-autopack')?.addEventListener('click', handleAutoPack);
+document.getElementById('btn-unfold-autopack-side')?.addEventListener('click', handleAutoPack);
+
+function handleRotatePart() {
+    papercraft.rotateSelectedPart(45);
+    renderUnfoldWorkbench();
+}
+document.getElementById('btn-unfold-rotate')?.addEventListener('click', handleRotatePart);
+document.getElementById('btn-unfold-rotate-side')?.addEventListener('click', handleRotatePart);
+
+function handleAddPage() {
+    papercraft.addPage();
+    renderUnfoldWorkbench();
+}
+document.getElementById('btn-unfold-add-page')?.addEventListener('click', handleAddPage);
+document.getElementById('btn-unfold-add-page-side')?.addEventListener('click', handleAddPage);
+
+// Exportar PDF A4 1:1 (Ribbon y Panel Unfold)
+function triggerPdfExport() {
+    papercraft.exportA4PDF(canvas2d, 'Neo_Papercraft_A4_1-1.pdf');
+}
+document.getElementById('btn-ribbon-export-pdf-a4')?.addEventListener('click', triggerPdfExport);
+document.getElementById('btn-unfold-export-pdf')?.addEventListener('click', triggerPdfExport);
+
+// Sincronización Checkbox: Solapas
+const ribbonCheckFlaps = document.getElementById('ribbon-toggle-flaps');
+const unfoldCheckFlaps = document.getElementById('unfold-check-flaps');
+function syncFlaps(val) {
+    papercraft.showFlaps = val;
+    if (ribbonCheckFlaps) ribbonCheckFlaps.checked = val;
+    if (unfoldCheckFlaps) unfoldCheckFlaps.checked = val;
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+}
+ribbonCheckFlaps?.addEventListener('change', (e) => syncFlaps(e.target.checked));
+unfoldCheckFlaps?.addEventListener('change', (e) => syncFlaps(e.target.checked));
+
+// Sincronización Checkbox: Limpiar curvas
+const ribbonCheckSmooth = document.getElementById('ribbon-toggle-hide-smooth');
+const unfoldCheckSmooth = document.getElementById('unfold-check-hide-smooth');
+function syncHideSmooth(val) {
+    papercraft.hideSmoothLines = val;
+    if (ribbonCheckSmooth) ribbonCheckSmooth.checked = val;
+    if (unfoldCheckSmooth) unfoldCheckSmooth.checked = val;
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+}
+ribbonCheckSmooth?.addEventListener('change', (e) => syncHideSmooth(e.target.checked));
+unfoldCheckSmooth?.addEventListener('change', (e) => syncHideSmooth(e.target.checked));
+
+// Sincronización Checkbox: Guía A4
+const ribbonCheckA4 = document.getElementById('ribbon-toggle-a4-guide');
+const unfoldCheckA4 = document.getElementById('unfold-check-a4-guide');
+function syncA4Guide(val) {
+    papercraft.showA4Guide = val;
+    if (ribbonCheckA4) ribbonCheckA4.checked = val;
+    if (unfoldCheckA4) unfoldCheckA4.checked = val;
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+}
+ribbonCheckA4?.addEventListener('change', (e) => syncA4Guide(e.target.checked));
+unfoldCheckA4?.addEventListener('change', (e) => syncA4Guide(e.target.checked));
+
+// Numeración de piezas (Sincronización Ribbon y Panel Lateral)
+const ribbonCheckNumbers = document.getElementById('ribbon-toggle-numbers');
+const ribbonNumbersMode = document.getElementById('ribbon-numbers-mode');
+const unfoldCheckNumbers = document.getElementById('unfold-check-numbers');
+const unfoldNumbersMode = document.getElementById('unfold-numbers-mode');
+const unfoldNumbersModeRow = document.getElementById('unfold-numbers-mode-row');
+
+let currentNumberMode = 'flaps';
+
+function syncNumbers(enabled, mode = currentNumberMode) {
+    currentNumberMode = mode;
+    papercraft.showTabNumbers = enabled;
+    papercraft.numberPlacement = enabled ? mode : 'none';
+
+    if (ribbonCheckNumbers) ribbonCheckNumbers.checked = enabled;
+    if (unfoldCheckNumbers) unfoldCheckNumbers.checked = enabled;
+
+    if (ribbonNumbersMode) {
+        ribbonNumbersMode.style.display = enabled ? 'block' : 'none';
+        ribbonNumbersMode.value = mode;
+    }
+    if (unfoldNumbersModeRow) {
+        unfoldNumbersModeRow.style.display = enabled ? 'flex' : 'none';
+    }
+    if (unfoldNumbersMode) {
+        unfoldNumbersMode.value = mode;
+    }
+
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+}
+
+ribbonCheckNumbers?.addEventListener('change', (e) => syncNumbers(e.target.checked));
+unfoldCheckNumbers?.addEventListener('change', (e) => syncNumbers(e.target.checked));
+ribbonNumbersMode?.addEventListener('change', (e) => syncNumbers(true, e.target.value));
+unfoldNumbersMode?.addEventListener('change', (e) => syncNumbers(true, e.target.value));
+
+// Control de altura de solapas (mm)
+const tabHSlider = document.getElementById('unfold-tab-height');
+const tabHLabel = document.getElementById('unfold-tab-h-val');
+function updateTabHeight(val) {
+    const clamped = Math.max(2, Math.min(15, parseFloat(val) || 5));
+    papercraft.tabHeightMm = clamped;
+    if (tabHSlider) tabHSlider.value = clamped;
+    if (tabHLabel) tabHLabel.textContent = `${clamped} mm`;
+    if (state.mesh) papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+}
+tabHSlider?.addEventListener('input', (e) => updateTabHeight(e.target.value));
+document.getElementById('btn-tab-h-dec')?.addEventListener('click', () => updateTabHeight(papercraft.tabHeightMm - 0.5));
+document.getElementById('btn-tab-h-inc')?.addEventListener('click', () => updateTabHeight(papercraft.tabHeightMm + 0.5));
+
+// Control de ángulo de solapas
+const tabAngleSlider = document.getElementById('unfold-tab-angle');
+const tabAngleLabel = document.getElementById('unfold-tab-angle-val');
+tabAngleSlider?.addEventListener('input', (e) => {
+    const val = parseInt(e.target.value, 10);
+    papercraft.tabAngleDeg = val;
+    if (tabAngleLabel) tabAngleLabel.textContent = `${val}°`;
+    if (state.mesh) papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
+// Control de longitud del modelo armado (mm)
+const modelLenInput = document.getElementById('unfold-model-length');
+modelLenInput?.addEventListener('change', (e) => {
+    const val = parseFloat(e.target.value) || 200;
+    papercraft.currentScale = 'custom';
+    papercraft.setModelLength(val);
+    updatePapercraftUI();
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
+// Selector de Escala Preset
+document.getElementById('unfold-scale-preset')?.addEventListener('change', (e) => {
+    const preset = e.target.value;
+    papercraft.currentScale = preset;
+    const realV1Length = 7900;
+    if (preset === '1:33') {
+        papercraft.setModelLength(Math.round(realV1Length / 33));
+    } else if (preset === '1:24') {
+        papercraft.setModelLength(Math.round(realV1Length / 24));
+    } else if (preset === '1:48') {
+        papercraft.setModelLength(Math.round(realV1Length / 48));
+    } else if (preset === '1:72') {
+        papercraft.setModelLength(Math.round(realV1Length / 72));
+    }
+    updatePapercraftUI();
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
+// Orientación de la hoja A4
+document.getElementById('unfold-a4-orient')?.addEventListener('change', (e) => {
+    papercraft.a4Orientation = e.target.value;
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
+// UI Event Listeners para Malla UV clásica
 document.getElementById('toggle-wireframe').addEventListener('change', (e) => {
     state.uvWireframeVisible = e.target.checked;
     drawUVWireframe();
 });
+
 // Export texture (PNG)
 document.getElementById('btn-export').addEventListener('click', () => {
     const link = document.createElement('a');
@@ -238,47 +638,17 @@ document.getElementById('btn-export').addEventListener('click', () => {
     link.click();
 });
 
-// Export PDF (A4) con Malla UV combinada
+// Export PDF (A4) rápido desde Archivo
 document.getElementById('btn-export-pdf').addEventListener('click', () => {
-    const canvas2d = document.getElementById('canvas-2d');
-    const canvasUV = document.getElementById('canvas-uv');
-    
-    // Crear un canvas temporal para combinar pintura + malla UV
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvas2d.width;
-    tempCanvas.height = canvas2d.height;
-    const ctx = tempCanvas.getContext('2d');
-    
-    // Fondo blanco
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-    
-    // Dibujar pintura
-    ctx.drawImage(canvas2d, 0, 0);
-    
-    // Dibujar malla UV encima
-    ctx.drawImage(canvasUV, 0, 0);
-    
-    const imgData = tempCanvas.toDataURL('image/png', 1.0);
-    
-    // Crear PDF formato A4
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const margin = 10;
-    const size = pageWidth - margin * 2; // El canvas es cuadrado, limitamos al ancho de la hoja
-    
-    pdf.addImage(imgData, 'PNG', margin, margin, size, size);
-    pdf.save('Plantilla_Pepakura.pdf');
+    triggerPdfExport();
 });
 
 // Toolbar buttons logic
-const toolButtons = document.querySelectorAll('.tool-btn');
+const toolButtons = document.querySelectorAll('.tool-btn[data-mode]');
 const brushModeInput = document.getElementById('brush-mode');
 toolButtons.forEach(btn => {
     btn.addEventListener('click', (e) => {
-        const targetBtn = e.target.closest('.tool-btn');
+        const targetBtn = e.target.closest('.tool-btn[data-mode]');
         if (!targetBtn) return;
         
         if (window.painter && window.painter.editingShape) {
@@ -286,6 +656,7 @@ toolButtons.forEach(btn => {
         }
 
         const mode = targetBtn.getAttribute('data-mode');
+        if (!mode) return;
 
         if (mode === 'transform') {
             toolButtons.forEach(b => b.classList.remove('active'));
@@ -433,6 +804,50 @@ function applyZoom2D(factor) {
     updateTransform2D();
 }
 
+// Encuadrar / Centrar la cámara sobre el modelo 3D
+function frameModel(mesh = state.mesh) {
+    if (!mesh) return;
+    const box = new THREE.Box3().setFromObject(mesh);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    
+    controls.target.copy(center);
+    if (maxDim > 0) {
+        const fov = camera.fov * (Math.PI / 180);
+        const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
+        camera.position.set(center.x + dist * 0.7, center.y + dist * 0.5, center.z + dist * 0.7);
+        camera.near = Math.max(0.01, maxDim / 100);
+        camera.far = Math.max(1000, maxDim * 100);
+        camera.updateProjectionMatrix();
+    }
+    controls.update();
+}
+window.frameModel = frameModel;
+
+// Controles de Cámara Vista 3D (+, -, Centrar y atajo tecla F)
+document.getElementById('btn-3d-zoom-in')?.addEventListener('click', () => {
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    camera.position.addScaledVector(dir, 0.5);
+    controls.update();
+});
+document.getElementById('btn-3d-zoom-out')?.addEventListener('click', () => {
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    camera.position.addScaledVector(dir, -0.5);
+    controls.update();
+});
+document.getElementById('btn-3d-reset')?.addEventListener('click', () => {
+    frameModel();
+});
+window.addEventListener('keydown', (e) => {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+    if (e.key === 'f' || e.key === 'F') {
+        frameModel();
+    }
+});
+
 // Resize Handling
 window.addEventListener('resize', () => {
     camera.aspect = view3d.clientWidth / view3d.clientHeight;
@@ -451,10 +866,20 @@ document.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('mouseup', () => { isResizing = false; });
 
-// UV Wireframe Draw Logic
+// UV Wireframe & Papercraft Draw Logic
 function drawUVWireframe() {
     ctxUV.clearRect(0, 0, canvasUV.width, canvasUV.height);
-    if (!state.mesh || !state.uvWireframeVisible) return;
+    if (!state.mesh) return;
+
+    // Si el modo Papercraft está activo, dibujar vista técnica Papercraft (solapas, líneas limpias y A4)
+    if (window.papercraft && window.papercraft.active) {
+        if (typeof window.papercraft.renderOverlay === 'function') {
+            window.papercraft.renderOverlay(ctxUV, canvasUV.width, canvasUV.height);
+        }
+        return;
+    }
+
+    if (!state.uvWireframeVisible) return;
     
     ctxUV.strokeStyle = 'rgba(0, 0, 0, 0.7)'; // Líneas negras/oscuras para fondo blanco
     ctxUV.lineWidth = 1;
@@ -520,6 +945,7 @@ function animate(time) {
             painter.needsUpdate = false;
             painter.forceUpdate = false;
             lastTextureUpdate = time;
+            if (papercraft && papercraft.active) renderUnfoldWorkbench();
         }
     }
     

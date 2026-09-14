@@ -45,18 +45,20 @@ body, html {
     height: 100%;
     justify-content: flex-start;
     align-items: center;
-    padding: 10px 8px;
+    padding: 8px 8px 18px 8px;
     box-sizing: border-box;
     position: relative;
 }
 
 .ribbon-label {
     position: absolute;
-    bottom: 5px;
-    font-size: 0.75em;
-    color: #999;
+    bottom: 2px;
+    font-size: 0.72em;
+    color: #888;
     text-align: center;
     width: 100%;
+    pointer-events: none;
+    letter-spacing: 0.3px;
 }
 
 .ribbon-divider {
@@ -258,7 +260,7 @@ input[type=range]::-webkit-slider-runnable-track {
    Panel de Capas (Layers Panel)
    ========================================================================== */
 #panel-layers {
-    width: 240px;
+    width: 270px;
     background-color: var(--bg-ribbon);
     border-left: 1px solid var(--border);
     display: flex;
@@ -269,13 +271,74 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 #panel-layers.collapsed {
-    width: 32px;
+    width: 34px;
 }
 
-#panel-layers.collapsed .panel-layers-header span,
-#panel-layers.collapsed .layers-list,
+#panel-layers.collapsed .sidebar-tab-bar,
+#panel-layers.collapsed .sidebar-tab-content,
 #panel-layers.collapsed .panel-layers-actions {
     display: none;
+}
+
+.sidebar-tab-bar {
+    display: flex;
+    align-items: center;
+    background: #181818;
+    border-bottom: 1px solid var(--border);
+    height: 36px;
+    padding: 0 4px;
+    gap: 3px;
+}
+
+.sidebar-tab-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 0.82em;
+    font-weight: 600;
+    padding: 7px 4px;
+    border-radius: 4px 4px 0 0;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+}
+
+.sidebar-tab-btn:hover {
+    color: #eee;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-tab-btn.active {
+    color: #fff;
+    background: var(--bg-ribbon);
+    border-bottom: 2px solid var(--accent);
+}
+
+.sidebar-toggle-btn {
+    background: transparent;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 4px 6px;
+    border-radius: 3px;
+}
+.sidebar-toggle-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-tab-content {
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex-direction: column;
+}
+
+.sidebar-tab-content.active {
+    display: flex;
 }
 
 .panel-layers-header {
@@ -516,4 +579,115 @@ input[type=range]::-webkit-slider-runnable-track {
     background: var(--accent);
     color: #fff;
     box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+
+/* ==========================================================================
+   Panel de Papercraft / Unfold
+   ========================================================================== */
+.unfold-panel {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.unfold-section {
+    background: #252525;
+    border: 1px solid #383838;
+    border-radius: 5px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.unfold-section-title {
+    font-size: 0.76em;
+    font-weight: bold;
+    color: #00bcd4;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.unfold-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.82em;
+    gap: 6px;
+}
+
+.unfold-input {
+    background: #181818;
+    border: 1px solid #444;
+    color: #fff;
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 0.85em;
+    width: 65px;
+    text-align: right;
+}
+.unfold-input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.unfold-badge {
+    background: #333;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.75em;
+    color: #aaa;
+}
+
+.unfold-btn-primary {
+    background: #2e7d32;
+    color: white;
+    border: 1px solid #1b5e20;
+    padding: 8px;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: background 0.15s;
+}
+.unfold-btn-primary:hover {
+    background: #1b5e20;
+}
+
+/* Modal dialogs */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-overlay.hidden {
+    display: none;
+}
+
+/* Retícula y Puntero Dinámico de Pincel */
+#brush-cursor-2d {
+    pointer-events: none;
+    user-select: none;
+}
+
+.brush-tip-btn {
+    transition: transform 0.1s, background-color 0.15s;
+}
+
+.brush-tip-btn:active {
+    transform: scale(0.92);
 }

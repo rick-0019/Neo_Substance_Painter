@@ -58,6 +58,7 @@ export class Painter {
         });
         
         this.setupEvents();
+        this.setupBrushCursor();
     }
 
     setLayerManager(lm) {
@@ -536,7 +537,12 @@ export class Painter {
                 else if (hit) this.canvas.style.cursor = 'crosshair'; // TODO: flechas
                 else this.canvas.style.cursor = 'default';
             } else {
-                this.canvas.style.cursor = 'crosshair';
+                const curMode = document.getElementById('brush-mode')?.value;
+                if (['paint', 'erase'].includes(curMode)) {
+                    this.canvas.style.cursor = 'none';
+                } else {
+                    this.canvas.style.cursor = 'crosshair';
+                }
             }
             
             if (this.isPainting) {
@@ -987,10 +993,12 @@ export class Painter {
 
     // --- Paint 2D y 3D ---
     getBrushSettings() {
+        const tipEl = document.getElementById('brush-tip');
         return {
             color: document.getElementById('brush-color').value,
             size: parseInt(document.getElementById('brush-size').value, 10),
-            mode: document.getElementById('brush-mode').value
+            mode: document.getElementById('brush-mode').value,
+            tip: tipEl ? tipEl.value : 'round'
         };
     }
 
@@ -1033,55 +1041,322 @@ export class Painter {
         const y = (1 - v) * this.canvas.height;
         const settings = this.getBrushSettings();
         const activeCtx = this.getActiveCtx();
+        const size = settings.size;
+        const tip = settings.tip || 'round';
         
-        activeCtx.lineWidth = settings.size * 2;
-        activeCtx.lineCap = 'round';
-        activeCtx.lineJoin = 'round';
-        
-        if (settings.mode === 'paint') {
-            activeCtx.globalCompositeOperation = 'source-over';
-            activeCtx.strokeStyle = settings.color;
-            activeCtx.fillStyle = settings.color;
-        } else if (settings.mode === 'erase') {
-            const layer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        let strokeColor = settings.color;
+        const isErase = (settings.mode === 'erase');
+        const layer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+
+        if (isErase) {
             if (layer && !layer.isBackground) {
                 activeCtx.globalCompositeOperation = 'destination-out';
-                activeCtx.strokeStyle = 'rgba(0,0,0,1)';
-                activeCtx.fillStyle = 'rgba(0,0,0,1)';
+                strokeColor = 'rgba(0,0,0,1)';
             } else {
                 activeCtx.globalCompositeOperation = 'source-over';
-                activeCtx.strokeStyle = '#FFFFFF';
-                activeCtx.fillStyle = '#FFFFFF';
+                strokeColor = '#FFFFFF';
             }
+        } else {
+            activeCtx.globalCompositeOperation = 'source-over';
         }
 
+        activeCtx.strokeStyle = strokeColor;
+        activeCtx.fillStyle = strokeColor;
+
+        const hexToRgba = (hex, alpha) => {
+            if (hex.startsWith('rgba') || hex.startsWith('rgb')) return hex;
+            let clean = hex.replace('#', '');
+            if (clean.length === 3) clean = clean.split('').map(c => c + c).join('');
+            const n = parseInt(clean, 16) || 0;
+            return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+        };
+
+        const renderTipStamp = (px, py) => {
+            if (tip === 'round') {
+                activeCtx.beginPath();
+                activeCtx.arc(px, py, size, 0, Math.PI * 2);
+                activeCtx.fill();
+            } else if (tip === 'soft') {
+                const grad = activeCtx.createRadialGradient(px, py, 0, px, py, size);
+                if (isErase && layer && !layer.isBackground) {
+                    grad.addColorStop(0, 'rgba(0,0,0,0.5)');
+                    grad.addColorStop(0.5, 'rgba(0,0,0,0.25)');
+                    grad.addColorStop(1, 'rgba(0,0,0,0)');
+                } else {
+                    grad.addColorStop(0, hexToRgba(strokeColor, 0.45));
+                    grad.addColorStop(0.5, hexToRgba(strokeColor, 0.2));
+                    grad.addColorStop(1, hexToRgba(strokeColor, 0));
+                }
+                activeCtx.fillStyle = grad;
+                activeCtx.beginPath();
+                activeCtx.arc(px, py, size, 0, Math.PI * 2);
+                activeCtx.fill();
+                activeCtx.fillStyle = strokeColor;
+            } else if (tip === 'square') {
+                activeCtx.fillRect(px - size, py - size, size * 2, size * 2);
+            } else if (tip === 'chisel') {
+                activeCtx.save();
+                activeCtx.translate(px, py);
+                activeCtx.rotate(Math.PI / 4);
+                activeCtx.fillRect(-size, -size * 0.28, size * 2, size * 0.56);
+                activeCtx.restore();
+            } else if (tip === 'spray') {
+                const count = Math.max(10, Math.floor(size * 1.5));
+                for (let k = 0; k < count; k++) {
+                    const r = size * Math.sqrt(Math.random());
+                    const theta = Math.random() * Math.PI * 2;
+                    const dotR = 0.8 + Math.random() * 0.8;
+                    activeCtx.fillRect(px + r * Math.cos(theta), py + r * Math.sin(theta), dotR, dotR);
+                }
+            }
+        };
+
         if (isNewStroke) {
-            activeCtx.beginPath();
-            activeCtx.arc(x, y, settings.size, 0, Math.PI * 2);
-            activeCtx.fill();
+            renderTipStamp(x, y);
         } else {
             const distU = Math.abs(u - this.lastU);
             const distV = Math.abs(v - this.lastV);
             if (distU > 0.1 || distV > 0.1) {
-                activeCtx.beginPath();
-                activeCtx.arc(x, y, settings.size, 0, Math.PI * 2);
-                activeCtx.fill();
+                renderTipStamp(x, y);
             } else {
-                activeCtx.beginPath();
-                activeCtx.moveTo(this.lastDrawX, this.lastDrawY);
-                activeCtx.lineTo(x, y);
-                activeCtx.stroke();
+                if (tip === 'round') {
+                    activeCtx.lineWidth = size * 2;
+                    activeCtx.lineCap = 'round';
+                    activeCtx.lineJoin = 'round';
+                    activeCtx.beginPath();
+                    activeCtx.moveTo(this.lastDrawX, this.lastDrawY);
+                    activeCtx.lineTo(x, y);
+                    activeCtx.stroke();
+                } else {
+                    const dx = x - this.lastDrawX;
+                    const dy = y - this.lastDrawY;
+                    const dist = Math.hypot(dx, dy);
+                    const step = Math.max(2, tip === 'soft' ? size * 0.2 : (tip === 'spray' ? size * 0.35 : size * 0.25));
+                    const stepsCount = Math.max(1, Math.ceil(dist / step));
+                    for (let s = 1; s <= stepsCount; s++) {
+                        const t = s / stepsCount;
+                        renderTipStamp(this.lastDrawX + dx * t, this.lastDrawY + dy * t);
+                    }
+                }
             }
         }
-        
+
         activeCtx.globalCompositeOperation = 'source-over';
         this.lastDrawX = x;
         this.lastDrawY = y;
-        
+
         if (this.layerManager) {
             this.layerManager.recomposite();
         }
         this.needsUpdate = true;
+    }
+
+    setupBrushCursor() {
+        // 1. Puntero Dinámico 2D en #view-2d
+        this.cursor2D = document.getElementById('brush-cursor-2d');
+        const view2D = document.getElementById('view-2d');
+
+        const update2DCursor = (e) => {
+            if (!this.cursor2D || !view2D) return;
+            const settings = this.getBrushSettings();
+            if (!['paint', 'erase'].includes(settings.mode) || 
+                (this.transformState && this.transformState.active) || 
+                (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '2d')) {
+                this.cursor2D.style.display = 'none';
+                this.canvas.style.cursor = 'default';
+                return;
+            }
+
+            const canvasRect = this.canvas.getBoundingClientRect();
+            if (e.clientX < canvasRect.left || e.clientX > canvasRect.right || e.clientY < canvasRect.top || e.clientY > canvasRect.bottom) {
+                this.cursor2D.style.display = 'none';
+                this.canvas.style.cursor = 'default';
+                return;
+            }
+
+            this.cursor2D.style.display = 'block';
+            this.canvas.style.cursor = 'none'; // Ocultar cursor del SO para mostrar la retícula exacta
+
+            const viewRect = view2D.getBoundingClientRect();
+            const posX = e.clientX - viewRect.left;
+            const posY = e.clientY - viewRect.top;
+
+            const scale = canvasRect.width / this.canvas.width;
+            const diam = Math.max(4, settings.size * 2 * scale);
+
+            this.cursor2D.style.left = `${posX}px`;
+            this.cursor2D.style.top = `${posY}px`;
+            this.cursor2D.style.width = `${diam}px`;
+            this.cursor2D.style.height = `${diam}px`;
+
+            const tip = settings.tip || 'round';
+            if (tip === 'round') {
+                this.cursor2D.style.borderRadius = '50%';
+                this.cursor2D.style.border = '1.5px solid #ffffff';
+                this.cursor2D.style.boxShadow = '0 0 0 1px #000000, inset 0 0 0 1px #000000';
+                this.cursor2D.style.background = 'transparent';
+                this.cursor2D.style.transform = 'translate(-50%, -50%)';
+            } else if (tip === 'soft') {
+                this.cursor2D.style.borderRadius = '50%';
+                this.cursor2D.style.border = '1.5px dashed #ffffff';
+                this.cursor2D.style.boxShadow = '0 0 0 1px #000000';
+                this.cursor2D.style.background = 'radial-gradient(circle, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.05) 60%, transparent 100%)';
+                this.cursor2D.style.transform = 'translate(-50%, -50%)';
+            } else if (tip === 'square') {
+                this.cursor2D.style.borderRadius = '0px';
+                this.cursor2D.style.border = '1.5px solid #ffffff';
+                this.cursor2D.style.boxShadow = '0 0 0 1px #000000, inset 0 0 0 1px #000000';
+                this.cursor2D.style.background = 'transparent';
+                this.cursor2D.style.transform = 'translate(-50%, -50%)';
+            } else if (tip === 'chisel') {
+                this.cursor2D.style.borderRadius = '2px';
+                this.cursor2D.style.border = '1.5px solid #ffffff';
+                this.cursor2D.style.boxShadow = '0 0 0 1px #000000';
+                this.cursor2D.style.background = 'transparent';
+                this.cursor2D.style.transform = 'translate(-50%, -50%) rotate(45deg) scale(1, 0.28)';
+            } else if (tip === 'spray') {
+                this.cursor2D.style.borderRadius = '50%';
+                this.cursor2D.style.border = '1.5px dotted #00ffff';
+                this.cursor2D.style.boxShadow = '0 0 0 1px #000000';
+                this.cursor2D.style.background = 'radial-gradient(circle, rgba(0,255,255,0.25) 0%, transparent 80%)';
+                this.cursor2D.style.transform = 'translate(-50%, -50%)';
+            }
+        };
+
+        this.canvas.addEventListener('pointermove', update2DCursor);
+        this.canvas.addEventListener('pointerleave', () => {
+            if (this.cursor2D) this.cursor2D.style.display = 'none';
+            this.canvas.style.cursor = 'default';
+        });
+
+        // 2. Puntero Dinámico 3D proyectado sobre el modelo
+        const ringGeo = new THREE.RingGeometry(0.88, 1.0, 36);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color: 0x00f3ff,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.9,
+            depthTest: true,
+            polygonOffset: true,
+            polygonOffsetFactor: -4,
+            polygonOffsetUnits: -4
+        });
+        this.cursor3DMesh = new THREE.Mesh(ringGeo, ringMat);
+        this.cursor3DMesh.raycast = () => {};
+        this.cursor3DMesh.visible = false;
+        this.scene.add(this.cursor3DMesh);
+
+        const view3dContainer = document.getElementById('view-3d') || this.renderer.domElement;
+        const update3DCursor = (e) => {
+            if (!this.mesh || !this.cursor3DMesh) return;
+            const settings = this.getBrushSettings();
+            if (!['paint', 'erase'].includes(settings.mode) || 
+                (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '3d') ||
+                ((e.buttons & 2) || (e.buttons & 4))) {
+                this.cursor3DMesh.visible = false;
+                return;
+            }
+
+            const canvasRect = this.renderer.domElement.getBoundingClientRect();
+            this.mouse.x = ((e.clientX - canvasRect.left) / canvasRect.width) * 2 - 1;
+            this.mouse.y = -((e.clientY - canvasRect.top) / canvasRect.height) * 2 + 1;
+            this.raycaster.setFromCamera(this.mouse, this.camera);
+            const intersects = this.raycaster.intersectObject(this.mesh, true);
+            const hit = intersects.find(i => i.object.isMesh && i.uv);
+
+            if (hit && hit.face) {
+                this.cursor3DMesh.visible = true;
+                this.cursor3DMesh.position.copy(hit.point);
+
+                const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+                this.cursor3DMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+                this.cursor3DMesh.position.addScaledVector(normal, 0.012);
+
+                const geo = hit.object.geometry;
+                const posAttr = geo.attributes.position;
+                const uvAttr = geo.attributes.uv;
+                const idx = geo.index;
+                const f = hit.face;
+                const iA = idx ? idx.getX(f.a) : f.a;
+                const iB = idx ? idx.getX(f.b) : f.b;
+
+                const pA = new THREE.Vector3(posAttr.getX(iA), posAttr.getY(iA), posAttr.getZ(iA));
+                const pB = new THREE.Vector3(posAttr.getX(iB), posAttr.getY(iB), posAttr.getZ(iB));
+                const uA = new THREE.Vector2(uvAttr.getX(iA), uvAttr.getY(iA));
+                const uB = new THREE.Vector2(uvAttr.getX(iB), uvAttr.getY(iB));
+
+                const dist3D = pA.distanceTo(pB) * (hit.object.scale.x || 1.0);
+                const distUV = uA.distanceTo(uB);
+                const uvRatio = distUV > 1e-4 ? (dist3D / distUV) : 1.0;
+
+                const radiusUV = settings.size / this.canvas.width;
+                const radius3D = Math.max(0.02, radiusUV * uvRatio);
+
+                this.cursor3DMesh.scale.set(radius3D, radius3D, radius3D);
+
+                if (settings.mode === 'erase') {
+                    ringMat.color.setHex(0xff3366);
+                } else {
+                    ringMat.color.setHex(0x00f3ff);
+                }
+            } else {
+                this.cursor3DMesh.visible = false;
+            }
+        };
+
+        view3dContainer.addEventListener('pointermove', update3DCursor);
+        view3dContainer.addEventListener('pointerleave', () => {
+            if (this.cursor3DMesh) this.cursor3DMesh.visible = false;
+        });
+
+        // 3. Reacción inmediata al slider de tamaño
+        const sizeInput = document.getElementById('brush-size');
+        const onSizeChange = () => {
+            const size = parseInt(sizeInput.value, 10);
+            const label = document.getElementById('brush-size-label');
+            if (label) label.textContent = `${size} px`;
+            if (this.cursor2D && this.cursor2D.style.display !== 'none') {
+                const canvasRect = this.canvas.getBoundingClientRect();
+                const scale = canvasRect.width / this.canvas.width;
+                const diam = Math.max(4, size * 2 * scale);
+                this.cursor2D.style.width = `${diam}px`;
+                this.cursor2D.style.height = `${diam}px`;
+            }
+            if (this.cursor3DMesh && this.cursor3DMesh.visible) {
+                const baseScale = this.cursor3DMesh.scale.x;
+                const oldSize = this._lastSize || size;
+                const newScale = Math.max(0.02, (baseScale / oldSize) * size);
+                this.cursor3DMesh.scale.set(newScale, newScale, newScale);
+            }
+            this._lastSize = size;
+        };
+        sizeInput?.addEventListener('input', onSizeChange);
+
+        document.getElementById('btn-size-dec')?.addEventListener('click', () => {
+            sizeInput.value = Math.max(1, parseInt(sizeInput.value, 10) - 1);
+            onSizeChange();
+        });
+        document.getElementById('btn-size-inc')?.addEventListener('click', () => {
+            sizeInput.value = Math.min(100, parseInt(sizeInput.value, 10) + 1);
+            onSizeChange();
+        });
+
+        // 4. Selector de Puntas de Pincel
+        document.querySelectorAll('.brush-tip-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.brush-tip-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const tip = btn.getAttribute('data-tip');
+                const tipInput = document.getElementById('brush-tip');
+                if (tipInput) tipInput.value = tip;
+
+                const modeInput = document.getElementById('brush-mode');
+                if (modeInput && !['paint', 'erase'].includes(modeInput.value)) {
+                    const paintBtn = document.querySelector('.tool-btn[data-mode="paint"]');
+                    if (paintBtn) paintBtn.click();
+                }
+            });
+        });
     }
 
     // --- Flood Fill 2D Algoritmo (Bote de Pintura Clásico) ---
