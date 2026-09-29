@@ -23,9 +23,17 @@ export class PapercraftEngine {
         
         // Dimensiones físicas del modelo armado
         this.modelLengthMm = 200.0;
+        this.baseModelLengthMm = 200.0;
         this.wingspanMm = 134.0;
         this.heightMm = 38.0;
+        this.ratioX = 0.67;
+        this.ratioY = 0.19;
+        this.ratioZ = 1.0;
         this.currentScale = '1:33';
+
+        // Herramienta de medición interactiva (Regla 2D)
+        this.measureMode = false;
+        this.activeMeasurement = null;
 
         // Dimensiones estándar A4 en mm
         this.A4_W = 210.0;
@@ -77,7 +85,7 @@ export class PapercraftEngine {
         const faces = [];
 
         mesh.traverse(child => {
-            if (child.isMesh && child.geometry && child.geometry.attributes.position && child.geometry.attributes.uv) {
+            if (child.isMesh && !child.userData?.isSelectionOverlay && child.geometry && child.geometry.attributes.position && child.geometry.attributes.uv) {
                 const geo = child.geometry;
                 const posAttr = geo.attributes.position;
                 const uvAttr = geo.attributes.uv;
@@ -119,8 +127,17 @@ export class PapercraftEngine {
         const sizeZ = Math.max(0.001, maxZ - minZ);
         const ref3dLen = sizeZ > 0.01 ? sizeZ : Math.max(sizeX, sizeY);
 
-        this.wingspanMm = Math.round(this.modelLengthMm * (sizeX / ref3dLen) * 10) / 10;
-        this.heightMm = Math.round(this.modelLengthMm * (sizeY / ref3dLen) * 10) / 10;
+        this.raw3dSize = { sizeX, sizeY, sizeZ, ref3dLen };
+        this.ratioX = sizeX / ref3dLen;
+        this.ratioY = sizeY / ref3dLen;
+        this.ratioZ = sizeZ / ref3dLen;
+
+        if (!this.baseModelLengthMm) {
+            this.baseModelLengthMm = this.modelLengthMm || 200.0;
+        }
+
+        this.wingspanMm = Math.round(this.modelLengthMm * this.ratioX * 10) / 10;
+        this.heightMm = Math.round(this.modelLengthMm * this.ratioY * 10) / 10;
         const mmPer3D = this.modelLengthMm / ref3dLen;
 
         let tot3D = 0, totUV = 0;
@@ -252,21 +269,39 @@ export class PapercraftEngine {
         this.parts = rawIslands.map((faceIndices, islandIdx) => {
             let minU = Infinity, maxU = -Infinity;
             let minV = Infinity, maxV = -Infinity;
+            let islandTot3D = 0, islandTotUV = 0;
+
             faceIndices.forEach(fIdx => {
-                for (let v of faces[fIdx]) {
-                    const u = uvs[v][0];
-                    const vCoord = uvs[v][1];
-                    minU = Math.min(minU, u); maxU = Math.max(maxU, u);
-                    minV = Math.min(minV, vCoord); maxV = Math.max(maxV, vCoord);
+                for (let i = 0; i < 3; i++) {
+                    const next = (i + 1) % 3;
+                    const vA = faces[fIdx][i];
+                    const vB = faces[fIdx][next];
+                    const pA = positions[vA];
+                    const pB = positions[vB];
+                    const uA = uvs[vA];
+                    const uB = uvs[vB];
+                    const d3 = Math.hypot(pB[0] - pA[0], pB[1] - pA[1], pB[2] - pA[2]);
+                    const du = Math.hypot(uB[0] - uA[0], uB[1] - uA[1]);
+                    if (d3 > 1e-5 && du > 1e-5) {
+                        islandTot3D += d3;
+                        islandTotUV += du;
+                    }
+                    minU = Math.min(minU, uA[0]); maxU = Math.max(maxU, uA[0]);
+                    minV = Math.min(minV, uA[1]); maxV = Math.max(maxV, uA[1]);
                 }
             });
 
             const centerU = (minU + maxU) / 2;
             const centerV = (minV + maxV) / 2;
 
+            // Escala física real calculada individualmente por pieza desde sus caras 3D
+            const islandMmPerUV = (islandTotUV > 1e-5 && islandTot3D > 1e-5)
+                ? (islandTot3D / islandTotUV) * mmPer3D
+                : this.uvSheetSizeMm;
+
             const toLocalMm = (uv) => ({
-                x: (uv[0] - centerU) * this.uvSheetSizeMm,
-                y: (centerV - uv[1]) * this.uvSheetSizeMm
+                x: (uv[0] - centerU) * islandMmPerUV,
+                y: (centerV - uv[1]) * islandMmPerUV
             });
 
             const localTriangles = faceIndices.map(fIdx => {
@@ -368,6 +403,7 @@ export class PapercraftEngine {
                 faceIndices,
                 centerU,
                 centerV,
+                islandMmPerUV,
                 localTriangles,
                 boundaryEdges: islandBoundaryEdges,
                 internalEdges: islandInternalEdges,
@@ -447,6 +483,47 @@ export class PapercraftEngine {
     addPage() {
         this.pagesCount++;
         this.notifyChange();
+    }
+
+    /**
+     * Limpia y compacta las hojas A4 vacías o sobrantes que no contengan piezas
+     * @returns {number} Cantidad de hojas eliminadas
+     */
+    cleanEmptyPages() {
+        if (!this.parts || this.parts.length === 0) {
+            const removed = Math.max(0, this.pagesCount - 1);
+            this.pagesCount = 1;
+            this.notifyChange();
+            return removed;
+        }
+
+        const oldPagesCount = this.pagesCount;
+        // Identificar qué páginas contienen piezas
+        const usedPages = new Set();
+        this.parts.forEach(p => {
+            if (p.layout && typeof p.layout.pageIndex === 'number') {
+                usedPages.add(p.layout.pageIndex);
+            }
+        });
+
+        const sortedUsedPages = Array.from(usedPages).sort((a, b) => a - b);
+        
+        // Mapear páginas viejas a índices continuos 0, 1, 2...
+        const pageRemap = new Map();
+        sortedUsedPages.forEach((oldIdx, newIdx) => {
+            pageRemap.set(oldIdx, newIdx);
+        });
+
+        this.parts.forEach(p => {
+            if (p.layout) {
+                p.layout.pageIndex = pageRemap.get(p.layout.pageIndex) ?? 0;
+            }
+        });
+
+        this.pagesCount = Math.max(1, sortedUsedPages.length);
+        const removed = Math.max(0, oldPagesCount - this.pagesCount);
+        this.notifyChange();
+        return removed;
     }
 
     /**
@@ -624,18 +701,17 @@ export class PapercraftEngine {
                 ctx.restore();
             }
 
-            // B) Líneas de pliegue interiores vivas
+            // B) Líneas de pliegue interiores vivas (línea continua)
             if (part.internalEdges && part.internalEdges.length > 0) {
                 ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
                 ctx.lineWidth = 0.6;
-                ctx.setLineDash([3, 2]);
+                ctx.setLineDash([]);
                 ctx.beginPath();
                 for (const edge of part.internalEdges) {
                     ctx.moveTo(edge.p1.x * mmToPx, edge.p1.y * mmToPx);
                     ctx.lineTo(edge.p2.x * mmToPx, edge.p2.y * mmToPx);
                 }
                 ctx.stroke();
-                ctx.setLineDash([]);
             }
 
             // C) Solapas de pegado (Flaps)
@@ -654,6 +730,7 @@ export class PapercraftEngine {
                     // Línea exterior de corte de solapa
                     ctx.strokeStyle = this.cutLineColor || '#666666';
                     ctx.lineWidth = 0.7;
+                    ctx.setLineDash([]);
                     ctx.beginPath();
                     ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
                     ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
@@ -661,15 +738,14 @@ export class PapercraftEngine {
                     ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
                     ctx.stroke();
 
-                    // Línea de base (doblez)
+                    // Línea de base (doblez - continua)
                     ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
                     ctx.lineWidth = 0.6;
-                    ctx.setLineDash([2, 2]);
+                    ctx.setLineDash([]);
                     ctx.beginPath();
                     ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
                     ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
                     ctx.stroke();
-                    ctx.setLineDash([]);
 
                     // Número verde en la solapa (solo si mide al menos 4mm para no desbordar)
                     if (this.showTabNumbers && this.numberPlacement !== 'none' && tab.seamNumber && (tab.baseLen || 10) >= 4.0) {
@@ -712,16 +788,140 @@ export class PapercraftEngine {
                 }
             }
 
-            // E) Indicador de pieza seleccionada (Caja cian de selección)
+            // E) Indicador de pieza seleccionada y Cotas de Medición (CAD)
             if (this.selectedPart === part) {
                 const b = part.bounds;
+                const bx = b.minX * mmToPx - 4;
+                const by = b.minY * mmToPx - 4;
+                const bw = part.wMm * mmToPx + 8;
+                const bh = part.hMm * mmToPx + 8;
+
+                // 1. Recuadro cian punteado de selección
                 ctx.strokeStyle = '#00e5ff';
                 ctx.lineWidth = 1.5;
                 ctx.setLineDash([4, 2]);
-                ctx.strokeRect(b.minX * mmToPx - 4, b.minY * mmToPx - 4, part.wMm * mmToPx + 8, part.hMm * mmToPx + 8);
+                ctx.strokeRect(bx, by, bw, bh);
                 ctx.setLineDash([]);
+
+                // 2. Cota horizontal (Ancho en mm) en la parte inferior
+                const dimOffsetY = 14;
+                const lineY = by + bh + dimOffsetY;
+                ctx.strokeStyle = '#00e5ff';
+                ctx.fillStyle = '#00e5ff';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(bx, lineY);
+                ctx.lineTo(bx + bw, lineY);
+                ctx.moveTo(bx, lineY - 3); ctx.lineTo(bx, lineY + 3);
+                ctx.moveTo(bx + bw, lineY - 3); ctx.lineTo(bx + bw, lineY + 3);
+                ctx.stroke();
+
+                ctx.font = 'bold 11px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillText(`↔ ${part.wMm.toFixed(1)} mm`, bx + bw / 2, lineY + 3);
+
+                // 3. Cota vertical (Alto en mm) en el lateral derecho
+                const dimOffsetX = 14;
+                const lineX = bx + bw + dimOffsetX;
+                ctx.beginPath();
+                ctx.moveTo(lineX, by);
+                ctx.lineTo(lineX, by + bh);
+                ctx.moveTo(lineX - 3, by); ctx.lineTo(lineX + 3, by);
+                ctx.moveTo(lineX - 3, by + bh); ctx.lineTo(lineX + 3, by + bh);
+                ctx.stroke();
+
+                ctx.save();
+                ctx.translate(lineX + 4, by + bh / 2);
+                ctx.rotate(Math.PI / 2);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.fillText(`↕ ${part.hMm.toFixed(1)} mm`, 0, 0);
+                ctx.restore();
+
+                // 4. Cartela / Badge superior informativa de la pieza
+                const badgeText = `📐 Pieza #${part.id + 1}: ${part.wMm.toFixed(1)} × ${part.hMm.toFixed(1)} mm  (Hoja ${part.layout.pageIndex + 1})`;
+                ctx.font = 'bold 11px sans-serif';
+                const textMetrics = ctx.measureText(badgeText);
+                const badgeW = textMetrics.width + 16;
+                const badgeH = 20;
+                const badgeX = bx + bw / 2 - badgeW / 2;
+                const badgeY = by - badgeH - 8;
+
+                ctx.fillStyle = 'rgba(10, 25, 35, 0.92)';
+                ctx.strokeStyle = '#00e5ff';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                if (typeof ctx.roundRect === 'function') {
+                    ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 4);
+                } else {
+                    ctx.rect(badgeX, badgeY, badgeW, badgeH);
+                }
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = '#00f3ff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(badgeText, bx + bw / 2, badgeY + badgeH / 2);
             }
 
+            ctx.restore();
+        }
+
+        // PASADA 3: Dibujar medición interactiva de la Regla (si está activa)
+        if (this.activeMeasurement) {
+            const m = this.activeMeasurement;
+            const x1 = m.start.x * mmToPx;
+            const y1 = m.start.y * mmToPx;
+            const x2 = m.end.x * mmToPx;
+            const y2 = m.end.y * mmToPx;
+
+            ctx.save();
+            ctx.shadowColor = 'rgba(0,0,0,0.8)';
+            ctx.shadowBlur = 6;
+            ctx.strokeStyle = '#ffb300';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+
+            // Puntos extremos (puntos de anclaje)
+            ctx.fillStyle = '#ffb300';
+            ctx.beginPath();
+            ctx.arc(x1, y1, 4, 0, Math.PI * 2);
+            ctx.arc(x2, y2, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Cartela / Badge con la medida exacta en milímetros
+            const midX = (x1 + x2) / 2;
+            const midY = (y1 + y2) / 2;
+            const labelText = `📏 ${m.distMm.toFixed(1)} mm (ΔX: ${m.dx.toFixed(1)}, ΔY: ${m.dy.toFixed(1)})`;
+            ctx.font = 'bold 12px sans-serif';
+            const tm = ctx.measureText(labelText);
+            const bw = tm.width + 16;
+            const bh = 22;
+
+            ctx.fillStyle = 'rgba(20, 20, 20, 0.92)';
+            ctx.strokeStyle = '#ffb300';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(midX - bw / 2, midY - bh / 2 - 14, bw, bh, 4);
+            } else {
+                ctx.rect(midX - bw / 2, midY - bh / 2 - 14, bw, bh);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffecb3';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(labelText, midX, midY - 14);
             ctx.restore();
         }
 
@@ -832,15 +1032,34 @@ export class PapercraftEngine {
                 if (canvas2d) {
                     const tempCanvas = document.createElement('canvas');
                     const padPx = 4;
-                    const bW_px = Math.ceil(part.wMm * this.pixelsPerMm) + padPx * 2;
-                    const bH_px = Math.ceil(part.hMm * this.pixelsPerMm) + padPx * 2;
+                    const cosR = Math.cos(rotRad);
+                    const sinR = Math.sin(rotRad);
+
+                    // Bounding box rotado exacto de los triángulos de la pieza
+                    let minRx = Infinity, maxRx = -Infinity;
+                    let minRy = Infinity, maxRy = -Infinity;
+                    for (const tri of part.localTriangles) {
+                        for (const p of tri) {
+                            const rx = p.x * cosR - p.y * sinR;
+                            const ry = p.x * sinR + p.y * cosR;
+                            minRx = Math.min(minRx, rx); maxRx = Math.max(maxRx, rx);
+                            minRy = Math.min(minRy, ry); maxRy = Math.max(maxRy, ry);
+                        }
+                    }
+
+                    const bW_px = Math.max(8, Math.ceil((maxRx - minRx) * this.pixelsPerMm) + padPx * 2);
+                    const bH_px = Math.max(8, Math.ceil((maxRy - minRy) * this.pixelsPerMm) + padPx * 2);
                     tempCanvas.width = bW_px;
                     tempCanvas.height = bH_px;
                     const tCtx = tempCanvas.getContext('2d');
                     tCtx.imageSmoothingEnabled = true;
                     tCtx.imageSmoothingQuality = 'high';
 
-                    tCtx.translate(bW_px / 2, bH_px / 2);
+                    // Situar origen y rotar directamente dentro del canvas antes de dibujar
+                    tCtx.translate(-minRx * this.pixelsPerMm + padPx, -minRy * this.pixelsPerMm + padPx);
+                    tCtx.rotate(rotRad);
+
+                    // Recorte vectorial de triángulos
                     tCtx.beginPath();
                     for (const tri of part.localTriangles) {
                         tCtx.moveTo(tri[0].x * this.pixelsPerMm, tri[0].y * this.pixelsPerMm);
@@ -849,36 +1068,42 @@ export class PapercraftEngine {
                     }
                     tCtx.clip();
 
+                    const texScale = (part.islandMmPerUV ? (part.islandMmPerUV / this.uvSheetSizeMm) : 1.0);
+                    const drawTexSize = this.texSize * texScale;
+
                     tCtx.drawImage(
                         canvas2d,
-                        -part.centerU * this.texSize,
-                        -(1 - part.centerV) * this.texSize,
-                        this.texSize,
-                        this.texSize
+                        -part.centerU * drawTexSize,
+                        -(1 - part.centerV) * drawTexSize,
+                        drawTexSize,
+                        drawTexSize
                     );
 
                     const partImgData = tempCanvas.toDataURL('image/png', 1.0);
                     const drawW_mm = bW_px / this.pixelsPerMm;
                     const drawH_mm = bH_px / this.pixelsPerMm;
+                    const drawX_mm = originX + minRx - padPx / this.pixelsPerMm;
+                    const drawY_mm = originY + minRy - padPx / this.pixelsPerMm;
 
+                    // Insertar en jsPDF ya rotado (rotación 0), asegurando alineación perfecta sin bugs de jsPDF
                     doc.addImage(
                         partImgData,
                         'PNG',
-                        originX - drawW_mm / 2,
-                        originY - drawH_mm / 2,
+                        drawX_mm,
+                        drawY_mm,
                         drawW_mm,
                         drawH_mm,
                         undefined,
                         'FAST',
-                        rotDeg
+                        0
                     );
                 }
 
-                // B) Pliegues vivos
+                // B) Pliegues vivos (línea continua)
                 if (part.internalEdges && part.internalEdges.length > 0) {
                     doc.setDrawColor(80, 80, 80);
                     doc.setLineWidth(0.12);
-                    doc.setLineDash([1.5, 1], 0);
+                    doc.setLineDash([], 0);
                     for (const edge of part.internalEdges) {
                         const pA = toPageMm(edge.p1);
                         const pB = toPageMm(edge.p2);
@@ -909,7 +1134,7 @@ export class PapercraftEngine {
 
                         doc.setDrawColor(140, 140, 140);
                         doc.setLineWidth(this.foldLineWidthMm || 0.08);
-                        doc.setLineDash([1.5, 1], 0);
+                        doc.setLineDash([], 0);
                         doc.line(b1.x, b1.y, b2.x, b2.y);
 
                         if (this.showTabNumbers && this.numberPlacement !== 'none' && tab.seamNumber && (tab.baseLen || 10) >= 4.0) {
@@ -1011,5 +1236,307 @@ export class PapercraftEngine {
         newOpen.addEventListener('click', () => window.open(blobUrl, '_blank'));
 
         modal.classList.remove('hidden');
+    }
+
+    /**
+     * Comprueba si la malla 3D tiene islas UV que se superponen entre sí en el espacio de textura [0, 1].
+     */
+    checkMeshUVOverlaps(mesh = this.mesh) {
+        if (!mesh) return false;
+        const targetMeshes = [];
+        mesh.traverse(child => {
+            if (child.isMesh && !child.userData?.isSelectionOverlay && !child.userData?.isHelper && child.geometry && child.geometry.attributes.position && child.geometry.attributes.uv) {
+                targetMeshes.push(child);
+            }
+        });
+        if (targetMeshes.length === 0) return false;
+
+        const allBoxes = [];
+
+        for (const child of targetMeshes) {
+            const geo = child.geometry;
+            const uvAttr = geo.attributes.uv;
+            const posAttr = geo.attributes.position;
+            const index = geo.index;
+
+            const uvs = [];
+            for (let i = 0; i < uvAttr.count; i++) {
+                uvs.push([uvAttr.getX(i), uvAttr.getY(i)]);
+            }
+
+            const faces = [];
+            if (index) {
+                for (let i = 0; i < index.count; i += 3) {
+                    faces.push([index.getX(i), index.getX(i + 1), index.getX(i + 2)]);
+                }
+            } else {
+                for (let i = 0; i < posAttr.count; i += 3) {
+                    faces.push([i, i + 1, i + 2]);
+                }
+            }
+
+            function hashUV(uv) { return `${Math.round(uv[0] * 10000)},${Math.round(uv[1] * 10000)}`; }
+
+            const edgeToFaces = new Map();
+            faces.forEach((f, fIdx) => {
+                for (let i = 0; i < 3; i++) {
+                    const next = (i + 1) % 3;
+                    const k1 = hashUV(uvs[f[i]]);
+                    const k2 = hashUV(uvs[f[next]]);
+                    const edgeKey = [k1, k2].sort().join('--');
+                    if (!edgeToFaces.has(edgeKey)) edgeToFaces.set(edgeKey, []);
+                    edgeToFaces.get(edgeKey).push(fIdx);
+                }
+            });
+
+            const adj = faces.map(() => []);
+            for (const fList of edgeToFaces.values()) {
+                if (fList.length === 2) {
+                    adj[fList[0]].push(fList[1]);
+                    adj[fList[1]].push(fList[0]);
+                }
+            }
+
+            const visited = new Set();
+            for (let i = 0; i < faces.length; i++) {
+                if (!visited.has(i)) {
+                    const comp = [];
+                    const q = [i];
+                    visited.add(i);
+                    while (q.length > 0) {
+                        const cur = q.pop();
+                        comp.push(cur);
+                        for (let n of adj[cur]) {
+                            if (!visited.has(n)) {
+                                visited.add(n);
+                                q.push(n);
+                            }
+                        }
+                    }
+
+                    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+                    comp.forEach(fIdx => {
+                        for (let v of faces[fIdx]) {
+                            minU = Math.min(minU, uvs[v][0]); maxU = Math.max(maxU, uvs[v][0]);
+                            minV = Math.min(minV, uvs[v][1]); maxV = Math.max(maxV, uvs[v][1]);
+                        }
+                    });
+                    allBoxes.push({ minU, maxU, minV, maxV });
+                }
+            }
+        }
+
+        if (allBoxes.length <= 1) return false;
+
+        // Comprobar si dos islas cualesquiera (del mismo objeto o entre objetos distintos) se superponen
+        for (let a = 0; a < allBoxes.length; a++) {
+            for (let b = a + 1; b < allBoxes.length; b++) {
+                const b1 = allBoxes[a];
+                const b2 = allBoxes[b];
+                const overlapX = Math.max(0, Math.min(b1.maxU, b2.maxU) - Math.max(b1.minU, b2.minU));
+                const overlapY = Math.max(0, Math.min(b1.maxV, b2.maxV) - Math.max(b1.minV, b2.minV));
+                if (overlapX > 0.005 && overlapY > 0.005) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Auto-empaqueta y separa todas las islas UV de la malla en el espacio [0, 1] sin superposición,
+     * coordinando de forma unificada todos los objetos/partes que comparten la misma textura.
+     */
+    packMeshUVs(mesh = this.mesh, margin = 0.02) {
+        if (!mesh) return { success: false, reason: 'no mesh' };
+
+        const targetMeshes = [];
+        mesh.traverse(child => {
+            if (child.isMesh && !child.userData?.isSelectionOverlay && !child.userData?.isHelper && child.geometry && child.geometry.attributes.position && child.geometry.attributes.uv) {
+                targetMeshes.push(child);
+            }
+        });
+        if (targetMeshes.length === 0) return { success: false, reason: 'no meshes' };
+
+        const allIslands = [];
+
+        for (const child of targetMeshes) {
+            const geo = child.geometry;
+            const uvAttr = geo.attributes.uv;
+            const posAttr = geo.attributes.position;
+            const index = geo.index;
+
+            // Guardar coordenadas originales para permitir deshacer
+            if (!child.userData._originalUVs) {
+                child.userData._originalUVs = new Float32Array(uvAttr.array);
+            }
+
+            const uvs = [];
+            for (let i = 0; i < uvAttr.count; i++) {
+                uvs.push([uvAttr.getX(i), uvAttr.getY(i)]);
+            }
+
+            const faces = [];
+            if (index) {
+                for (let i = 0; i < index.count; i += 3) {
+                    faces.push([index.getX(i), index.getX(i + 1), index.getX(i + 2)]);
+                }
+            } else {
+                for (let i = 0; i < posAttr.count; i += 3) {
+                    faces.push([i, i + 1, i + 2]);
+                }
+            }
+
+            function hashUV(uv) { return `${Math.round(uv[0] * 10000)},${Math.round(uv[1] * 10000)}`; }
+
+            const edgeToFaces = new Map();
+            faces.forEach((f, fIdx) => {
+                for (let i = 0; i < 3; i++) {
+                    const next = (i + 1) % 3;
+                    const k1 = hashUV(uvs[f[i]]);
+                    const k2 = hashUV(uvs[f[next]]);
+                    const edgeKey = [k1, k2].sort().join('--');
+                    if (!edgeToFaces.has(edgeKey)) edgeToFaces.set(edgeKey, []);
+                    edgeToFaces.get(edgeKey).push(fIdx);
+                }
+            });
+
+            const adj = faces.map(() => []);
+            for (const fList of edgeToFaces.values()) {
+                if (fList.length === 2) {
+                    adj[fList[0]].push(fList[1]);
+                    adj[fList[1]].push(fList[0]);
+                }
+            }
+
+            const visited = new Set();
+            for (let i = 0; i < faces.length; i++) {
+                if (!visited.has(i)) {
+                    const comp = [];
+                    const q = [i];
+                    visited.add(i);
+                    while (q.length > 0) {
+                        const cur = q.pop();
+                        comp.push(cur);
+                        for (let n of adj[cur]) {
+                            if (!visited.has(n)) {
+                                visited.add(n);
+                                q.push(n);
+                            }
+                        }
+                    }
+
+                    let minU = Infinity, maxU = -Infinity;
+                    let minV = Infinity, maxV = -Infinity;
+                    const vertSet = new Set();
+                    comp.forEach(fIdx => {
+                        for (let v of faces[fIdx]) {
+                            vertSet.add(v);
+                            const u = uvs[v][0];
+                            const vCoord = uvs[v][1];
+                            minU = Math.min(minU, u); maxU = Math.max(maxU, u);
+                            minV = Math.min(minV, vCoord); maxV = Math.max(maxV, vCoord);
+                        }
+                    });
+
+                    allIslands.push({
+                        id: allIslands.length,
+                        child,
+                        uvAttr,
+                        uvs,
+                        vertices: Array.from(vertSet),
+                        minU, maxU, minV, maxV,
+                        w: Math.max(0.001, maxU - minU),
+                        h: Math.max(0.001, maxV - minV)
+                    });
+                }
+            }
+        }
+
+        if (allIslands.length <= 1) return { success: false, reason: '1 or 0 islands' };
+
+        // Shelf Bin-Packing paramétrico global en [margin, 1-margin] x [margin, 1-margin]
+        let low = 0.001, high = 1.5;
+        let bestPacking = null;
+
+        function tryPack(scale) {
+            const rects = allIslands.map(isl => ({
+                id: isl.id,
+                w: isl.w * scale + margin,
+                h: isl.h * scale + margin
+            }));
+
+            // Ordenar de mayor a menor altura para empaquetado uniforme
+            rects.sort((a, b) => b.h - a.h);
+
+            let curX = margin;
+            let curY = margin;
+            let rowH = 0;
+            const posMap = new Map();
+
+            for (const r of rects) {
+                if (curX + r.w > 1.0 - margin + 0.0001) {
+                    curX = margin;
+                    curY += rowH;
+                    rowH = 0;
+                }
+                if (curY + r.h > 1.0 - margin + 0.0001) {
+                    return null; // No cupo con esta escala
+                }
+                posMap.set(r.id, {
+                    x: curX + margin * 0.5,
+                    y: curY + margin * 0.5,
+                    scale
+                });
+                curX += r.w;
+                rowH = Math.max(rowH, r.h);
+            }
+            return posMap;
+        }
+
+        for (let iter = 0; iter < 32; iter++) {
+            const mid = (low + high) / 2;
+            const res = tryPack(mid);
+            if (res) {
+                bestPacking = res;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+
+        if (!bestPacking) {
+            bestPacking = tryPack(low);
+        }
+
+        if (bestPacking) {
+            for (const isl of allIslands) {
+                const placement = bestPacking.get(isl.id);
+                if (!placement) continue;
+                for (const vIdx of isl.vertices) {
+                    const oldU = isl.uvs[vIdx][0];
+                    const oldV = isl.uvs[vIdx][1];
+                    const newU = placement.x + (oldU - isl.minU) * placement.scale;
+                    const newV = placement.y + (oldV - isl.minV) * placement.scale;
+                    isl.uvAttr.setXY(vIdx, newU, newV);
+                }
+            }
+
+            for (const child of targetMeshes) {
+                child.geometry.attributes.uv.needsUpdate = true;
+                if (child.userData) {
+                    delete child.userData._uvEdges;
+                }
+            }
+
+            mesh.traverse(c => {
+                if (c.userData) delete c.userData._uvEdges;
+            });
+
+            this.analyzeMesh(mesh, this.texSize);
+            return { success: true, count: allIslands.length };
+        }
+
+        return { success: false, reason: 'could not pack' };
     }
 }

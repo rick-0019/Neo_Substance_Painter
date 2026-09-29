@@ -26,17 +26,33 @@ body, html {
 
 /* Ribbon Toolbar */
 #ribbon {
-    height: 110px;
+    height: 105px;
     background-color: var(--bg-ribbon);
     border-bottom: 1px solid var(--border);
     display: flex;
     flex-direction: row;
     align-items: center;
-    padding: 0 10px;
+    padding: 0 6px;
     box-sizing: border-box;
     overflow-x: auto;
     overflow-y: hidden;
     user-select: none;
+    scrollbar-width: thin;
+    scrollbar-color: #555 #1e1e1e;
+}
+
+#ribbon::-webkit-scrollbar {
+    height: 6px;
+}
+#ribbon::-webkit-scrollbar-track {
+    background: #181818;
+}
+#ribbon::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 3px;
+}
+#ribbon::-webkit-scrollbar-thumb:hover {
+    background: #777;
 }
 
 .ribbon-group {
@@ -45,15 +61,16 @@ body, html {
     height: 100%;
     justify-content: flex-start;
     align-items: center;
-    padding: 8px 8px 18px 8px;
+    padding: 6px 5px 16px 5px;
     box-sizing: border-box;
     position: relative;
+    flex-shrink: 0;
 }
 
 .ribbon-label {
     position: absolute;
     bottom: 2px;
-    font-size: 0.72em;
+    font-size: 0.70em;
     color: #888;
     text-align: center;
     width: 100%;
@@ -63,15 +80,16 @@ body, html {
 
 .ribbon-divider {
     width: 1px;
-    height: 70%;
+    height: 65%;
     background-color: var(--border);
-    margin: 0 5px;
+    margin: 0 3px;
+    flex-shrink: 0;
 }
 
 .ribbon-items-vertical {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
 }
 
 .ribbon-items-vertical.centered {
@@ -271,13 +289,60 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 #panel-layers.collapsed {
-    width: 34px;
+    width: 36px;
+    min-width: 36px;
+    cursor: pointer;
 }
 
-#panel-layers.collapsed .sidebar-tab-bar,
+#panel-layers.collapsed:hover {
+    background-color: #333333;
+}
+
 #panel-layers.collapsed .sidebar-tab-content,
-#panel-layers.collapsed .panel-layers-actions {
+#panel-layers.collapsed .panel-layers-actions,
+#panel-layers.collapsed .sidebar-tab-btn {
+    display: none !important;
+}
+
+#panel-layers.collapsed .sidebar-tab-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    height: 100%;
+    padding: 8px 2px;
+    border-bottom: none;
+    gap: 12px;
+}
+
+#panel-layers.collapsed .sidebar-toggle-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    color: #fff;
+    font-size: 1.1em;
+    cursor: pointer;
+}
+
+.sidebar-collapsed-hint {
     display: none;
+}
+
+#panel-layers.collapsed .sidebar-collapsed-hint {
+    display: block;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    color: #aaa;
+    font-size: 0.82em;
+    font-weight: 600;
+    letter-spacing: 2px;
+    margin-top: 15px;
+    pointer-events: none;
+    user-select: none;
 }
 
 .sidebar-tab-bar {
@@ -456,6 +521,31 @@ input[type=range]::-webkit-slider-runnable-track {
     background: rgba(255, 255, 255, 0.2);
 }
 
+.layer-btn-delete {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #888;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px;
+    border-radius: 3px;
+    opacity: 0.5;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.layer-item:hover .layer-btn-delete {
+    opacity: 0.9;
+    color: #bbb;
+}
+
+.layer-btn-delete:hover {
+    color: #ff5252;
+    background: rgba(255, 82, 82, 0.25);
+    opacity: 1;
+}
+
 .layer-name-input {
     flex: 1;
     background: #1e1e1e;
@@ -486,6 +576,115 @@ input[type=range]::-webkit-slider-runnable-track {
     color: #bbb;
     min-width: 32px;
     text-align: right;
+}
+
+/* Sub-lista de Pegatinas / Calcas vivas dentro de una capa */
+.layer-decal-badge {
+    font-size: 10px;
+    background: rgba(0, 243, 255, 0.15);
+    color: #00f3ff;
+    border: 1px solid rgba(0, 243, 255, 0.35);
+    padding: 1px 5px;
+    border-radius: 10px;
+    white-space: nowrap;
+    cursor: default;
+}
+
+.layer-decals-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 4px;
+    padding-left: 10px;
+    border-left: 2px solid rgba(0, 243, 255, 0.25);
+}
+
+.layer-decal-subitem {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 6px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    color: #ccc;
+    transition: all 0.15s ease;
+}
+
+.layer-decal-subitem:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.layer-decal-subitem.active {
+    background: rgba(0, 120, 215, 0.45);
+    border: 1px solid #00f3ff;
+    color: #ffffff;
+    box-shadow: 0 0 6px rgba(0, 243, 255, 0.2);
+}
+
+.layer-decal-branch {
+    font-family: monospace;
+    font-size: 11px;
+    color: #888;
+    user-select: none;
+}
+
+.layer-decal-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 2px;
+    background-color: #222;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+}
+
+.layer-decal-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    user-select: none;
+    font-weight: 500;
+}
+
+.layer-decal-btn-vis, .layer-decal-btn-del, .layer-decal-btn-bake {
+    background: none;
+    border: none;
+    color: #aaa;
+    cursor: pointer;
+    padding: 2px;
+    font-size: 11px;
+    line-height: 1;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.layer-decal-btn-vis:hover, .layer-decal-btn-del:hover, .layer-decal-btn-bake:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.layer-decal-btn-bake:hover {
+    color: #4dabf7;
+}
+
+.layer-decal-btn-del:hover {
+    color: #ff5252;
 }
 
 .panel-layers-actions {
@@ -1000,5 +1199,157 @@ input[type=range]::-webkit-slider-runnable-track {
     background: #3a3a3a;
     margin: 2px 0;
 }
+
+/* --- Menú Desplegable de Selección y Máscaras (Estilo MS Paint) --- */
+.selection-dropdown {
+    position: fixed;
+    background-color: #252526;
+    border: 1px solid #454545;
+    border-radius: 5px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.75);
+    z-index: 10000;
+    min-width: 220px;
+    padding: 6px 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.selection-dropdown-header {
+    font-size: 0.7em;
+    color: #888;
+    padding: 6px 14px 3px 14px;
+    text-transform: uppercase;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+}
+
+.selection-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 14px;
+    background: transparent;
+    border: none;
+    color: #ddd;
+    font-size: 0.82em;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.12s, color 0.12s;
+    width: 100%;
+}
+
+.selection-item:hover {
+    background-color: #0078d7;
+    color: #ffffff;
+}
+
+.selection-item svg {
+    flex-shrink: 0;
+}
+
+.selection-item kbd {
+    margin-left: auto;
+    font-size: 0.75em;
+    color: #999;
+    background-color: rgba(255, 255, 255, 0.08);
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-family: inherit;
+}
+
+.selection-item:hover kbd {
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+.selection-dropdown-divider {
+    height: 1px;
+    background-color: #383838;
+    margin: 4px 0;
+}
+
+/* Indicador flotante de Modo Máscara de Capa (Substance Painter) */
+#selection-mask-indicator {
+    display: none;
+    position: fixed;
+    bottom: 24px;
+    left: 20px;
+    background-color: #1a1e24;
+    color: #00e5ff;
+    border: 1.5px solid #00c3ff;
+    border-radius: 20px;
+    padding: 6px 16px;
+    font-size: 11px;
+    font-weight: bold;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.7);
+    z-index: 9999;
+    align-items: center;
+    gap: 10px;
+    user-select: none;
+}
+#selection-mask-indicator.visible {
+    display: flex;
+}
+#selection-mask-indicator button {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    color: #fff;
+    border-radius: 12px;
+    padding: 3px 10px;
+    font-size: 10.5px;
+    cursor: pointer;
+    transition: all 0.12s;
+}
+#selection-mask-indicator button:hover {
+    background: #0078d7;
+    border-color: #00a2ff;
+}
+
+/* Miniaturas de Capa y Máscara (Estilo Substance Painter) */
+.layer-thumb-slot {
+    border: 1.5px solid #444;
+    border-radius: 2px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    background: #111;
+}
+
+.layer-thumb-slot:hover {
+    border-color: #888;
+}
+
+.layer-thumb-slot.target-active {
+    border-color: #00f3ff !important;
+    box-shadow: 0 0 6px rgba(0, 243, 255, 0.75);
+}
+
+.layer-thumb-slot.mask-slot.target-active {
+    border-color: #ffaa00 !important;
+    box-shadow: 0 0 6px rgba(255, 170, 0, 0.75);
+}
+
+.layer-btn-mask-icon {
+    background: transparent;
+    border: none;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #888;
+    transition: all 0.12s;
+    flex-shrink: 0;
+}
+
+.layer-btn-mask-icon:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+}
+
+.layer-btn-mask-icon.has-mask {
+    color: #ffaa00;
+}
+
+
 
 

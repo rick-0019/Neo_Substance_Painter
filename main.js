@@ -1,19 +1,22 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=3.4';
-import { DecalSystem } from './decals.js?v=3.4';
-import { LayerManager } from './layers.js?v=3.4';
-import { PapercraftEngine } from './papercraft.js?v=3.4';
+import { Painter } from './painter.js?v=3.8';
+import { DecalSystem } from './decals.js?v=3.8';
+import { LayerManager } from './layers.js?v=3.8';
+import { PapercraftEngine } from './papercraft.js?v=3.8';
+import { SelectionManager } from './selection.js?v=3.8';
 
 // Configuration
 let TEX_SIZE = 2048;
+window.THREE = THREE;
 
 // Application State
 const state = {
     mesh: null,
     texture: null,
     uvWireframeVisible: true,
+    uvWireframeMode: 'clean',
 };
 
 // Canvas 2D Setup (Visible UV and hidden render buffer)
@@ -27,6 +30,10 @@ const layerManager = new LayerManager(canvas2d, TEX_SIZE, TEX_SIZE, () => {
 });
 window.layerManager = layerManager;
 
+// Selection Manager (Plantilla 2D)
+const selectionManager = new SelectionManager(TEX_SIZE, TEX_SIZE);
+window.selectionManager = selectionManager;
+
 // Canvas UV Overlay
 const canvasUV = document.getElementById('canvas-uv');
 canvasUV.width = TEX_SIZE;
@@ -38,6 +45,7 @@ document.getElementById('btn-apply-res').addEventListener('click', () => {
     TEX_SIZE = parseInt(document.getElementById('doc-resolution').value, 10);
     
     layerManager.resize(TEX_SIZE, TEX_SIZE);
+    selectionManager.resize(TEX_SIZE, TEX_SIZE);
     
     canvasUV.width = TEX_SIZE;
     canvasUV.height = TEX_SIZE;
@@ -120,6 +128,7 @@ scene.add(dirLight);
 
 // Systems
 const painter = new Painter(scene, camera, renderer, canvas2d, canvasTexture, layerManager);
+painter.setSelectionManager(selectionManager);
 window.painter = painter;
 const decalSystem = new DecalSystem(scene, camera, renderer, canvas2d, canvasTexture, layerManager, painter);
 window.decalSystem = decalSystem;
@@ -132,14 +141,13 @@ papercraft.setRedrawCallback(() => {
     if (typeof renderUnfoldWorkbench === 'function') renderUnfoldWorkbench();
 });
 
-// UI Texture para previsualizar formas en 3D
+// UI Texture para previsualizar formas en 3D (Optimizado sin Mipmaps para evitar saturación de bus)
 const canvasUI = document.getElementById('canvas-ui');
 const textureUI = new THREE.CanvasTexture(canvasUI);
 textureUI.colorSpace = THREE.SRGBColorSpace;
-textureUI.anisotropy = maxAniso;
-textureUI.minFilter = THREE.LinearMipmapLinearFilter;
+textureUI.minFilter = THREE.LinearFilter;
 textureUI.magFilter = THREE.LinearFilter;
-textureUI.generateMipmaps = true;
+textureUI.generateMipmaps = false;
 state.textureUI = textureUI;
 
 // Material por defecto (Cubo inicial)
@@ -156,27 +164,212 @@ state.mesh.add(line);
 scene.add(state.mesh);
 painter.setMesh(state.mesh);
 decalSystem.setMesh(state.mesh);
+setupSelection3DOverlay(state.mesh);
 layerManager.renderUI();
+
+// Visibilidad optimizada del overlay de selección 3D
+function setSelection3DOverlayVisible(visible) {
+    if (!state.mesh) return;
+    state.mesh.traverse(child => {
+        if (child.userData && child.userData.isSelectionOverlay) {
+            child.visible = visible;
+        }
+    });
+}
+window.setSelection3DOverlayVisible = setSelection3DOverlayVisible;
+
+// Proyección 3D de la Selección y Máscaras (Marching Ants visibles en el modelo 3D)
+function setupSelection3DOverlay(root) {
+    if (!root) return;
+
+    const toRemove = [];
+    root.traverse(child => {
+        if (child.userData && child.userData.isSelectionOverlay) {
+            toRemove.push(child);
+        }
+    });
+    toRemove.forEach(child => {
+        if (child.parent) child.parent.remove(child);
+        if (child.material) child.material.dispose();
+    });
+
+    const meshTargets = [];
+    root.traverse(child => {
+        if (child.isMesh && !child.userData?.isSelectionOverlay && child.geometry && child.geometry.attributes && child.geometry.attributes.uv) {
+            meshTargets.push(child);
+        }
+    });
+
+    meshTargets.forEach(child => {
+        const overlayMat = new THREE.MeshBasicMaterial({
+            map: state.textureUI,
+            transparent: true,
+            opacity: 0.95,
+            polygonOffset: true,
+            polygonOffsetFactor: -1.5,
+            polygonOffsetUnits: -1.5,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        const overlayMesh = new THREE.Mesh(child.geometry, overlayMat);
+        overlayMesh.renderOrder = 99;
+        overlayMesh.userData.isSelectionOverlay = true;
+        overlayMesh.visible = false; // Oculto por defecto para 144 FPS puros
+        child.add(overlayMesh);
+    });
+}
 
 // Helper para sincronizar valores visuales del panel Papercraft
 function updatePapercraftUI() {
     const badge = document.getElementById('unfold-scale-badge');
     if (badge) badge.textContent = papercraft.currentScale;
-    const wingspanVal = document.getElementById('unfold-wingspan-val');
-    if (wingspanVal) wingspanVal.textContent = papercraft.wingspanMm;
-    const heightVal = document.getElementById('unfold-height-val');
-    if (heightVal) heightVal.textContent = papercraft.heightMm;
+    
+    const wingspanInput = document.getElementById('unfold-model-width');
+    if (wingspanInput && document.activeElement !== wingspanInput) {
+        wingspanInput.value = Math.round(papercraft.wingspanMm);
+    }
+    const heightInput = document.getElementById('unfold-model-height');
+    if (heightInput && document.activeElement !== heightInput) {
+        heightInput.value = Math.round(papercraft.heightMm);
+    }
     const lengthInput = document.getElementById('unfold-model-length');
-    if (lengthInput) lengthInput.value = papercraft.modelLengthMm;
+    if (lengthInput && document.activeElement !== lengthInput) {
+        lengthInput.value = Math.round(papercraft.modelLengthMm);
+    }
+    const pctInput = document.getElementById('unfold-scale-pct');
+    if (pctInput && document.activeElement !== pctInput) {
+        const base = papercraft.baseModelLengthMm || 200.0;
+        pctInput.value = Math.round((papercraft.modelLengthMm / base) * 100);
+    }
     const partsCount = document.getElementById('unfold-parts-count');
     if (partsCount) partsCount.textContent = `${papercraft.parts.length} piezas (${papercraft.pagesCount} Hojas A4)`;
+
+    updateSelectedPartCard();
+}
+window.updatePapercraftUI = updatePapercraftUI;
+
+function updateSelectedPartCard() {
+    const badge = document.getElementById('unfold-sel-badge');
+    const placeholder = document.getElementById('unfold-sel-placeholder');
+    const details = document.getElementById('unfold-sel-details');
+    const part = papercraft.selectedPart;
+
+    if (!part) {
+        if (badge) {
+            badge.textContent = 'Ninguna';
+            badge.style.color = '#888';
+            badge.style.borderColor = '#555';
+            badge.style.background = 'rgba(255,255,255,0.05)';
+        }
+        if (placeholder) placeholder.style.display = 'block';
+        if (details) details.style.display = 'none';
+        return;
+    }
+
+    if (badge) {
+        badge.textContent = `Pieza #${part.id + 1}`;
+        badge.style.color = '#00e5ff';
+        badge.style.borderColor = '#00e5ff';
+        badge.style.background = 'rgba(0,229,255,0.12)';
+    }
+    if (placeholder) placeholder.style.display = 'none';
+    if (details) details.style.display = 'flex';
+
+    const dimsEl = document.getElementById('unfold-sel-dimensions');
+    if (dimsEl) dimsEl.textContent = `${part.wMm.toFixed(1)} mm × ${part.hMm.toFixed(1)} mm`;
+
+    const pageEl = document.getElementById('unfold-sel-page');
+    if (pageEl) pageEl.textContent = `Hoja ${part.layout.pageIndex + 1} de ${papercraft.pagesCount}`;
+
+    const rotEl = document.getElementById('unfold-sel-rot');
+    if (rotEl) rotEl.textContent = `${part.layout.rotation % 360}°`;
+}
+window.updateSelectedPartCard = updateSelectedPartCard;
+
+// Triangulación robusta con Earcut para N-gonos cóncavos (evita aristas que cruzan huecos y cortes)
+function triangulateConcaveNGons(raw) {
+    if (!raw || !raw.includes('f ')) return raw;
+    const lines = raw.split('\n');
+    const positions = [];
+    const newLines = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        if (trimmed.startsWith('v ')) {
+            const parts = trimmed.split(/\s+/).slice(1).map(Number);
+            positions.push(new THREE.Vector3(parts[0], parts[1], parts[2]));
+            newLines.push(line);
+        } else if (trimmed.startsWith('f ')) {
+            const parts = trimmed.split(/\s+/).slice(1);
+            if (parts.length <= 3) {
+                newLines.push(line);
+                continue;
+            }
+
+            const vertIndices = parts.map(p => {
+                const s = p.split('/');
+                return parseInt(s[0], 10) - 1;
+            });
+
+            const p0 = positions[vertIndices[0]];
+            const p1 = positions[vertIndices[1]];
+            const p2 = positions[vertIndices[2]];
+            if (!p0 || !p1 || !p2) {
+                newLines.push(line);
+                continue;
+            }
+
+            const vA = new THREE.Vector3().subVectors(p1, p0);
+            const vB = new THREE.Vector3().subVectors(p2, p0);
+            const normal = new THREE.Vector3().crossVectors(vA, vB).normalize();
+
+            let uAxis = new THREE.Vector3(1, 0, 0);
+            if (Math.abs(normal.dot(uAxis)) > 0.9) {
+                uAxis = new THREE.Vector3(0, 1, 0);
+            }
+            const vAxis = new THREE.Vector3().crossVectors(normal, uAxis).normalize();
+            uAxis.crossVectors(vAxis, normal).normalize();
+
+            const pts2D = vertIndices.map(vIdx => {
+                const p = positions[vIdx];
+                return new THREE.Vector2(p.dot(uAxis), p.dot(vAxis));
+            });
+
+            try {
+                const triIndices = THREE.ShapeUtils.triangulateShape(pts2D, []);
+                if (triIndices && triIndices.length > 0) {
+                    for (const tri of triIndices) {
+                        newLines.push(`f ${parts[tri[0]]} ${parts[tri[1]]} ${parts[tri[2]]}`);
+                    }
+                } else {
+                    for (let t = 1; t < parts.length - 1; t++) {
+                        newLines.push(`f ${parts[0]} ${parts[t]} ${parts[t + 1]}`);
+                    }
+                }
+            } catch (err) {
+                for (let t = 1; t < parts.length - 1; t++) {
+                    newLines.push(`f ${parts[0]} ${parts[t]} ${parts[t + 1]}`);
+                }
+            }
+        } else {
+            newLines.push(line);
+        }
+    }
+    return newLines.join('\n');
 }
 
 // Carga y procesamiento de modelos OBJ
 function loadOBJContents(contents) {
     try {
+        state.rawOBJText = contents;
+        try {
+            localStorage.setItem('nsp_last_model_obj', contents);
+        } catch (e) {}
+        const cleanContents = triangulateConcaveNGons(contents);
         const loader = new OBJLoader();
-        const object = loader.parse(contents);
+        const object = loader.parse(cleanContents);
 
         if (state.mesh) scene.remove(state.mesh);
 
@@ -192,9 +385,9 @@ function loadOBJContents(contents) {
                     side: THREE.DoubleSide
                 });
                 
-                // Wireframe sutil sobre cada parte
-                const childEdges = new THREE.EdgesGeometry(child.geometry);
-                const childLine = new THREE.LineSegments(childEdges, new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.2, transparent: true }));
+                // Wireframe sutil sobre aristas vivas reales (> 25°) evitando líneas de triangulación plana
+                const childEdges = new THREE.EdgesGeometry(child.geometry, 25);
+                const childLine = new THREE.LineSegments(childEdges, new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.25, transparent: true }));
                 child.add(childLine);
                 
                 meshes.push(child);
@@ -214,8 +407,19 @@ function loadOBJContents(contents) {
         
         painter.setMesh(state.mesh);
         decalSystem.setMesh(state.mesh);
+        setupSelection3DOverlay(state.mesh);
+        
+        // Comprobar si las coordenadas UV vienen superpuestas en el OBJ original
+        if (papercraft.checkMeshUVOverlaps(state.mesh)) {
+            console.log('[Papercraft] Se detectaron islas UV superpuestas. Empaquetando UVs para evitar encimamiento...');
+            const packRes = papercraft.packMeshUVs(state.mesh, 0.025);
+            if (packRes.success && painter) {
+                painter.buildTrianglesCache();
+            }
+        }
         
         // Analizar topología Papercraft (separación de piezas y auto-acomodo en hojas A4)
+        papercraft.baseModelLengthMm = null;
         papercraft.analyzeMesh(state.mesh, TEX_SIZE);
         updatePapercraftUI();
         
@@ -227,17 +431,7 @@ function loadOBJContents(contents) {
         alert('Error al procesar el archivo OBJ: ' + err.message);
     }
 }
-
-// Intentar cargar modelo bomba_v1.obj automáticamente al iniciar
-fetch('models/bomba_v1.obj')
-    .then(r => { if (r.ok) return r.text(); throw new Error('Not found'); })
-    .then(txt => loadOBJContents(txt))
-    .catch(() => {
-        papercraft.analyzeMesh(state.mesh, TEX_SIZE);
-        updatePapercraftUI();
-        drawUVWireframe();
-        renderUnfoldWorkbench();
-    });
+window.loadOBJContents = loadOBJContents;
 
 // Banco de Trabajo Interactivo A4 (Unfold Workbench)
 const canvasUnfold = document.getElementById('canvas-unfold');
@@ -247,17 +441,40 @@ const canvasContainer = document.querySelector('.canvas-container');
 const view2dLabel = document.getElementById('view-2d-label');
 
 function renderUnfoldWorkbench() {
-    if (!canvasUnfold || !ctxUnfold || !papercraft.active) return;
-    const rect = unfoldWorkbench.getBoundingClientRect();
-    if (rect.width > 10 && rect.height > 10) {
-        if (canvasUnfold.width !== rect.width || canvasUnfold.height !== rect.height) {
-            canvasUnfold.width = rect.width;
-            canvasUnfold.height = rect.height;
+    if (!canvasUnfold || !ctxUnfold || !papercraft || !papercraft.active) return;
+    if (unfoldWorkbench) {
+        const rect = unfoldWorkbench.getBoundingClientRect();
+        if (rect.width > 10 && rect.height > 10) {
+            if (canvasUnfold.width !== rect.width || canvasUnfold.height !== rect.height) {
+                canvasUnfold.width = rect.width;
+                canvasUnfold.height = rect.height;
+            }
         }
     }
     papercraft.renderUnfoldWorkbench(ctxUnfold, canvasUnfold.width, canvasUnfold.height, canvas2d);
 }
 window.renderUnfoldWorkbench = renderUnfoldWorkbench;
+
+// Cargar modelo al iniciar: si hay un modelo guardado en memoria (ej. Raidar-X), restaurarlo; si no, buscar Raidar-X.obj
+const lastSavedOBJ = localStorage.getItem('nsp_last_model_obj');
+if (lastSavedOBJ) {
+    loadOBJContents(lastSavedOBJ);
+} else {
+    fetch('models/Raidar-X.obj')
+        .then(r => { if (r.ok) return r.text(); throw new Error('Not found'); })
+        .then(txt => loadOBJContents(txt))
+        .catch(() => {
+            fetch('models/bomba_v1.obj')
+                .then(r => { if (r.ok) return r.text(); throw new Error('Not found'); })
+                .then(txt => loadOBJContents(txt))
+                .catch(() => {
+                    papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+                    updatePapercraftUI();
+                    drawUVWireframe();
+                    renderUnfoldWorkbench();
+                });
+        });
+}
 
 // Eventos del Panel Lateral (Tabs: Capas vs Unfold)
 const tabBtnLayers = document.getElementById('tab-btn-layers');
@@ -266,18 +483,19 @@ const tabContentLayers = document.getElementById('tab-content-layers');
 const tabContentUnfold = document.getElementById('tab-content-unfold');
 
 function switchSidebarTab(tab) {
+    [tabBtnLayers, tabBtnUnfold].forEach(btn => btn?.classList.remove('active'));
+    [tabContentLayers, tabContentUnfold].forEach(content => content?.classList.remove('active'));
+
     if (tab === 'layers') {
         tabBtnLayers?.classList.add('active');
-        tabBtnUnfold?.classList.remove('active');
         tabContentLayers?.classList.add('active');
-        tabContentUnfold?.classList.remove('active');
-    } else {
+    } else if (tab === 'unfold') {
         tabBtnUnfold?.classList.add('active');
-        tabBtnLayers?.classList.remove('active');
         tabContentUnfold?.classList.add('active');
-        tabContentLayers?.classList.remove('active');
     }
 }
+window.switchSidebarTab = switchSidebarTab;
+
 tabBtnLayers?.addEventListener('click', () => switchSidebarTab('layers'));
 tabBtnUnfold?.addEventListener('click', () => {
     switchSidebarTab('unfold');
@@ -289,6 +507,41 @@ tabBtnUnfold?.addEventListener('click', () => {
 // Eventos del Panel de Capas (Layers)
 document.getElementById('btn-add-layer')?.addEventListener('click', () => {
     layerManager.addLayer();
+});
+document.getElementById('btn-add-camo-layer')?.addEventListener('click', () => {
+    const currentColor = document.getElementById('brush-color')?.value || '#4a5d3f';
+    layerManager.addCamoLayer(currentColor);
+    // Activar automáticamente el pincel para pintar el camuflaje
+    document.querySelector('.tool-btn[data-mode="paint"]')?.click();
+});
+document.getElementById('btn-load-camo-stencil')?.addEventListener('click', () => {
+    const currentColor = document.getElementById('brush-color')?.value || '#4a5d3f';
+    const activeLayer = layerManager ? layerManager.getActiveLayer() : null;
+    const isEditingMask = activeLayer && activeLayer.hasMask && activeLayer.isEditingMask;
+    const fillColor = isEditingMask ? '#FFFFFF' : currentColor;
+
+    // Mancha orgánica militar envolvente que abraza fuselaje y alas
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="512" height="512">
+        <path d="M 230 40 C 320 25, 430 75, 450 165 C 470 245, 410 320, 360 380 C 290 450, 180 475, 100 415 C 30 355, 35 250, 75 170 C 115 90, 150 55, 230 40 Z" fill="${fillColor}"/>
+    </svg>`;
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+        decalSystem.allowPassthrough = true;
+        const passCheck = document.getElementById('decal-passthrough');
+        if (passCheck) passCheck.checked = true;
+        decalSystem.setDecalImage(img, 'Mancha Camuflaje');
+        decalSystem.setMode('3d');
+        const thumb = document.getElementById('decal-preview-thumb');
+        if (thumb) {
+            thumb.innerHTML = `<img src="${url}" style="width: 100%; height: 100%; object-fit: contain;">`;
+            thumb.style.display = 'block';
+        }
+        const controls = document.getElementById('decal-controls');
+        if (controls) controls.style.display = 'flex';
+    };
+    img.src = url;
 });
 document.getElementById('btn-duplicate-layer')?.addEventListener('click', () => {
     if (window.painter && window.painter.transformState && window.painter.transformState.active) {
@@ -314,11 +567,41 @@ document.getElementById('btn-layer-up')?.addEventListener('click', () => {
 document.getElementById('btn-layer-down')?.addEventListener('click', () => {
     layerManager.moveLayer(layerManager.activeLayerId, -1);
 });
-document.getElementById('btn-toggle-layers')?.addEventListener('click', () => {
+function toggleLayersPanel(forceState) {
     const panel = document.getElementById('panel-layers');
-    panel.classList.toggle('collapsed');
+    if (!panel) return;
+    if (forceState === true) {
+        panel.classList.remove('collapsed');
+    } else if (forceState === false) {
+        panel.classList.add('collapsed');
+    } else {
+        panel.classList.toggle('collapsed');
+    }
+    const isCollapsed = panel.classList.contains('collapsed');
     const btn = document.getElementById('btn-toggle-layers');
-    btn.textContent = panel.classList.contains('collapsed') ? '📑' : '✖';
+    if (btn) btn.textContent = isCollapsed ? '◀' : '✖';
+    const ribbonBtn = document.getElementById('btn-ribbon-toggle-layers');
+    if (ribbonBtn) {
+        ribbonBtn.style.opacity = isCollapsed ? '0.75' : '1.0';
+    }
+    if (!isCollapsed) {
+        switchSidebarTab('layers');
+    }
+}
+window.toggleLayersPanel = toggleLayersPanel;
+
+document.getElementById('btn-ribbon-toggle-layers')?.addEventListener('click', () => {
+    toggleLayersPanel();
+});
+document.getElementById('btn-toggle-layers')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleLayersPanel();
+});
+document.getElementById('panel-layers')?.addEventListener('click', (e) => {
+    const panel = document.getElementById('panel-layers');
+    if (panel?.classList.contains('collapsed')) {
+        toggleLayersPanel(true);
+    }
 });
 
 // Load OBJ manual (botón Archivo)
@@ -363,17 +646,40 @@ btnRibbonUnfold?.addEventListener('click', () => {
     }
 });
 
-// Interacción de Arrastre y Rotación en el Banco de Hojas A4
+// Interacción de Arrastre, Rotación y Medición (Regla) en el Banco de Hojas A4
 let isPanningWorkbench = false;
 let startPanX = 0, startPanY = 0;
+let isMeasuringRuler = false;
+let rulerStartMm = null;
 
 canvasUnfold?.addEventListener('mousedown', (e) => {
+    // Si la herramienta de medición (Regla) está activa
+    if (papercraft.measureMode) {
+        if (e.button === 0) {
+            const mmToPx = 4.0;
+            const xMm = (e.offsetX - papercraft.panX) / (papercraft.zoom * mmToPx);
+            const yMm = (e.offsetY - papercraft.panY) / (papercraft.zoom * mmToPx);
+            rulerStartMm = { x: xMm, y: yMm };
+            papercraft.activeMeasurement = {
+                start: rulerStartMm,
+                end: { x: xMm, y: yMm },
+                distMm: 0,
+                dx: 0,
+                dy: 0
+            };
+            isMeasuringRuler = true;
+            renderUnfoldWorkbench();
+        }
+        return;
+    }
+
     if (e.button === 0) { // Clic izquierdo: arrastrar pieza o mover mesa
         const hit = papercraft.getPartAt(e.offsetX, e.offsetY);
         if (hit) {
             papercraft.selectedPart = hit.part;
             papercraft.isDraggingPart = true;
             canvasUnfold.style.cursor = 'grabbing';
+            updateSelectedPartCard();
             renderUnfoldWorkbench();
         } else {
             papercraft.selectedPart = null;
@@ -381,6 +687,7 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
             startPanX = e.clientX - papercraft.panX;
             startPanY = e.clientY - papercraft.panY;
             canvasUnfold.style.cursor = 'move';
+            updateSelectedPartCard();
             renderUnfoldWorkbench();
         }
     } else if (e.button === 2) { // Clic derecho: rotar pieza o mover mesa
@@ -388,6 +695,7 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
         if (hit) {
             papercraft.selectedPart = hit.part;
             papercraft.rotateSelectedPart(45);
+            updateSelectedPartCard();
             renderUnfoldWorkbench();
         } else {
             isPanningWorkbench = true;
@@ -400,6 +708,29 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
 
 window.addEventListener('mousemove', (e) => {
     if (!papercraft.active || !canvasUnfold) return;
+
+    if (papercraft.measureMode) {
+        if (isMeasuringRuler && rulerStartMm) {
+            const rect = canvasUnfold.getBoundingClientRect();
+            const mmToPx = 4.0;
+            const xMm = (e.clientX - rect.left - papercraft.panX) / (papercraft.zoom * mmToPx);
+            const yMm = (e.clientY - rect.top - papercraft.panY) / (papercraft.zoom * mmToPx);
+            const dx = Math.abs(xMm - rulerStartMm.x);
+            const dy = Math.abs(yMm - rulerStartMm.y);
+            const distMm = Math.hypot(xMm - rulerStartMm.x, yMm - rulerStartMm.y);
+            papercraft.activeMeasurement = {
+                start: rulerStartMm,
+                end: { x: xMm, y: yMm },
+                distMm,
+                dx,
+                dy
+            };
+            renderUnfoldWorkbench();
+        } else {
+            canvasUnfold.style.cursor = 'crosshair';
+        }
+        return;
+    }
 
     if (papercraft.isDraggingPart && papercraft.selectedPart) {
         const mmToPx = 4.0;
@@ -419,6 +750,7 @@ window.addEventListener('mousemove', (e) => {
         papercraft.selectedPart.layout.pageIndex = newPage;
         papercraft.selectedPart.layout.x = Math.round((curWorkbenchX - newPage * pagePitchMm) * 10) / 10;
 
+        updateSelectedPartCard();
         renderUnfoldWorkbench();
     } else if (isPanningWorkbench) {
         papercraft.panX = e.clientX - startPanX;
@@ -433,9 +765,13 @@ window.addEventListener('mousemove', (e) => {
 
 window.addEventListener('mouseup', () => {
     if (!papercraft.active) return;
+    if (isMeasuringRuler) {
+        isMeasuringRuler = false;
+        renderUnfoldWorkbench();
+    }
     papercraft.isDraggingPart = false;
     isPanningWorkbench = false;
-    if (canvasUnfold) canvasUnfold.style.cursor = 'default';
+    if (canvasUnfold) canvasUnfold.style.cursor = papercraft.measureMode ? 'crosshair' : 'default';
     renderUnfoldWorkbench();
 });
 
@@ -484,10 +820,98 @@ document.getElementById('btn-unfold-rotate-side')?.addEventListener('click', han
 
 function handleAddPage() {
     papercraft.addPage();
+    updatePapercraftUI();
     renderUnfoldWorkbench();
 }
 document.getElementById('btn-unfold-add-page')?.addEventListener('click', handleAddPage);
 document.getElementById('btn-unfold-add-page-side')?.addEventListener('click', handleAddPage);
+
+// Botón Limpiar Hojas Vacías (elimina y compacta páginas sin piezas)
+function handleCleanEmptyPages() {
+    const removed = papercraft.cleanEmptyPages();
+    updatePapercraftUI();
+    renderUnfoldWorkbench();
+    const countBadge = document.getElementById('unfold-parts-count');
+    if (countBadge) {
+        if (removed > 0) {
+            countBadge.textContent = `✓ ${removed} hoja(s) eliminada(s) • ${papercraft.pagesCount} A4`;
+            setTimeout(() => updatePapercraftUI(), 3000);
+        } else {
+            countBadge.textContent = `Sin hojas vacías • ${papercraft.pagesCount} A4`;
+            setTimeout(() => updatePapercraftUI(), 2500);
+        }
+    }
+}
+document.getElementById('btn-unfold-clean-pages')?.addEventListener('click', handleCleanEmptyPages);
+document.getElementById('btn-unfold-clean-pages-side')?.addEventListener('click', handleCleanEmptyPages);
+
+// Botón de Regla (Herramienta de Medición Interactiva)
+const btnMeasure = document.getElementById('btn-unfold-measure');
+function toggleMeasureMode() {
+    papercraft.measureMode = !papercraft.measureMode;
+    if (papercraft.measureMode) {
+        if (btnMeasure) {
+            btnMeasure.style.background = '#ff9800';
+            btnMeasure.style.color = '#000000';
+            btnMeasure.style.fontWeight = 'bold';
+        }
+        if (canvasUnfold) canvasUnfold.style.cursor = 'crosshair';
+    } else {
+        if (btnMeasure) {
+            btnMeasure.style.background = '';
+            btnMeasure.style.color = '#ffecb3';
+            btnMeasure.style.fontWeight = '';
+        }
+        papercraft.activeMeasurement = null;
+        if (canvasUnfold) canvasUnfold.style.cursor = 'default';
+        renderUnfoldWorkbench();
+    }
+}
+btnMeasure?.addEventListener('click', toggleMeasureMode);
+
+// Acciones de Pieza Seleccionada en Sidebar (Girar y Centrar en Hoja)
+document.getElementById('btn-unfold-sel-rotate')?.addEventListener('click', () => {
+    if (papercraft.selectedPart) {
+        papercraft.rotateSelectedPart(45);
+        updateSelectedPartCard();
+        renderUnfoldWorkbench();
+    }
+});
+document.getElementById('btn-unfold-sel-center')?.addEventListener('click', () => {
+    if (papercraft.selectedPart) {
+        papercraft.selectedPart.layout.x = Math.round(papercraft.A4_W / 2);
+        papercraft.selectedPart.layout.y = Math.round(papercraft.A4_H / 2);
+        updateSelectedPartCard();
+        renderUnfoldWorkbench();
+    }
+});
+
+// Botones Deshacer / Rehacer (Ribbon)
+document.getElementById('btn-undo')?.addEventListener('click', () => {
+    if (painter) painter.undo();
+});
+document.getElementById('btn-redo')?.addEventListener('click', () => {
+    if (painter) painter.redo();
+});
+
+// Botón Separar UVs (Ribbon Papercraft)
+document.getElementById('btn-ribbon-pack-uv')?.addEventListener('click', () => {
+    if (!state.mesh) {
+        alert('Cargue un modelo 3D primero.');
+        return;
+    }
+    const res = papercraft.packMeshUVs(state.mesh, 0.025);
+    if (res.success) {
+        if (painter) painter.buildTrianglesCache();
+        papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+        updatePapercraftUI();
+        drawUVWireframe();
+        if (papercraft.active) renderUnfoldWorkbench();
+        if (state.texture) state.texture.needsUpdate = true;
+    } else {
+        alert(res.message || 'No se pudieron reorganizar las UVs.');
+    }
+});
 
 // Exportar PDF A4 1:1 (Ribbon y Panel Unfold)
 function triggerPdfExport() {
@@ -613,12 +1037,68 @@ unfoldCutWidth?.addEventListener('change', (e) => {
     renderUnfoldWorkbench();
 });
 
-// Control de longitud del modelo armado (mm)
+// Control de Escala por Porcentaje (%)
+const scalePctInput = document.getElementById('unfold-scale-pct');
+function applyScalePct(pct) {
+    const clampedPct = Math.max(10, Math.min(1000, parseFloat(pct) || 100));
+    const base = papercraft.baseModelLengthMm || 200.0;
+    const newLen = Math.round(base * (clampedPct / 100));
+    papercraft.currentScale = `${Math.round(clampedPct)}%`;
+    const presetSelect = document.getElementById('unfold-scale-preset');
+    if (presetSelect) presetSelect.value = 'custom';
+    papercraft.setModelLength(newLen);
+    updatePapercraftUI();
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+}
+scalePctInput?.addEventListener('change', (e) => applyScalePct(e.target.value));
+
+document.querySelectorAll('.btn-scale-quick').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        const pct = parseFloat(e.currentTarget.getAttribute('data-pct')) || 100;
+        if (scalePctInput) scalePctInput.value = pct;
+        applyScalePct(pct);
+    });
+});
+
+// Control de longitud del modelo armado (Largo Z en mm)
 const modelLenInput = document.getElementById('unfold-model-length');
 modelLenInput?.addEventListener('change', (e) => {
-    const val = parseFloat(e.target.value) || 200;
+    const val = Math.max(20, Math.min(2000, parseFloat(e.target.value) || 200));
     papercraft.currentScale = 'custom';
+    const presetSelect = document.getElementById('unfold-scale-preset');
+    if (presetSelect) presetSelect.value = 'custom';
     papercraft.setModelLength(val);
+    updatePapercraftUI();
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
+// Control de envergadura del modelo armado (Ancho X en mm)
+const modelWidthInput = document.getElementById('unfold-model-width');
+modelWidthInput?.addEventListener('change', (e) => {
+    const val = Math.max(10, Math.min(2000, parseFloat(e.target.value) || 100));
+    const rx = (papercraft.ratioX && papercraft.ratioX > 0.001) ? papercraft.ratioX : 0.67;
+    const newLen = Math.round(val / rx);
+    papercraft.currentScale = 'custom';
+    const presetSelect = document.getElementById('unfold-scale-preset');
+    if (presetSelect) presetSelect.value = 'custom';
+    papercraft.setModelLength(newLen);
+    updatePapercraftUI();
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
+// Control de altura del modelo armado (Alto Y en mm)
+const modelHeightInput = document.getElementById('unfold-model-height');
+modelHeightInput?.addEventListener('change', (e) => {
+    const val = Math.max(5, Math.min(2000, parseFloat(e.target.value) || 30));
+    const ry = (papercraft.ratioY && papercraft.ratioY > 0.001) ? papercraft.ratioY : 0.19;
+    const newLen = Math.round(val / ry);
+    papercraft.currentScale = 'custom';
+    const presetSelect = document.getElementById('unfold-scale-preset');
+    if (presetSelect) presetSelect.value = 'custom';
+    papercraft.setModelLength(newLen);
     updatePapercraftUI();
     drawUVWireframe();
     renderUnfoldWorkbench();
@@ -651,10 +1131,33 @@ document.getElementById('unfold-a4-orient')?.addEventListener('change', (e) => {
 });
 
 // UI Event Listeners para Malla UV clásica
-document.getElementById('toggle-wireframe').addEventListener('change', (e) => {
-    state.uvWireframeVisible = e.target.checked;
-    drawUVWireframe();
-});
+const uvWireframeSelect = document.getElementById('uv-wireframe-mode');
+const toggleWireframeCheck = document.getElementById('toggle-wireframe');
+
+if (uvWireframeSelect) {
+    uvWireframeSelect.addEventListener('change', (e) => {
+        state.uvWireframeMode = e.target.value;
+        state.uvWireframeVisible = (e.target.value !== 'none');
+        if (toggleWireframeCheck) toggleWireframeCheck.checked = state.uvWireframeVisible;
+        drawUVWireframe();
+    });
+}
+
+if (toggleWireframeCheck) {
+    toggleWireframeCheck.addEventListener('change', (e) => {
+        state.uvWireframeVisible = e.target.checked;
+        if (!e.target.checked) {
+            state.uvWireframeMode = 'none';
+            if (uvWireframeSelect) uvWireframeSelect.value = 'none';
+        } else {
+            if (state.uvWireframeMode === 'none') {
+                state.uvWireframeMode = 'clean';
+                if (uvWireframeSelect) uvWireframeSelect.value = 'clean';
+            }
+        }
+        drawUVWireframe();
+    });
+}
 
 // Export texture (PNG)
 document.getElementById('btn-export').addEventListener('click', () => {
@@ -684,6 +1187,9 @@ toolButtons.forEach(btn => {
         const mode = targetBtn.getAttribute('data-mode');
         if (!mode) return;
 
+        // Desactivar botón de gotero si estuviera activo
+        document.getElementById('btn-eyedropper')?.classList.remove('active');
+
         if (mode === 'transform') {
             toolButtons.forEach(b => b.classList.remove('active'));
             targetBtn.classList.add('active');
@@ -709,16 +1215,302 @@ toolButtons.forEach(btn => {
             window.painter.commitLayerTransform();
         }
 
-        // Si se cambia de herramienta mientras se editaba texto o calcomanía, cancelar
-        if (window.decalSystem && window.decalSystem.isTextMode && mode !== 'text') {
-            window.decalSystem.cancelDecal();
+        // Si se cambia a cualquier herramienta que no sea texto, desactivar calcomanías y texto
+        if (window.decalSystem) {
+            if (window.decalSystem.isTextMode && mode !== 'text') {
+                window.decalSystem.cancelDecal();
+            }
+            window.decalSystem.deselectDecal();
+            window.decalSystem.isActive = false;
         }
         
         toolButtons.forEach(b => b.classList.remove('active'));
+        btnSelectionMain?.classList.remove('active');
         targetBtn.classList.add('active');
         brushModeInput.value = mode;
     });
 });
+
+// --- Menú y Herramientas de Selección / Enmascarado ---
+const btnSelectionMain = document.getElementById('btn-selection-main');
+const selectionMenu = document.getElementById('selection-dropdown-menu');
+const maskIndicator = document.getElementById('selection-mask-indicator');
+
+function activateSelectionMode(mode) {
+    if (window.painter && window.painter.editingShape) {
+        window.painter.commitShape();
+    }
+    if (window.painter && window.painter.transformState && window.painter.transformState.active) {
+        window.painter.commitLayerTransform();
+    }
+    if (window.decalSystem && window.decalSystem.isTextMode) {
+        window.decalSystem.cancelDecal();
+    }
+    document.getElementById('btn-eyedropper')?.classList.remove('active');
+
+    toolButtons.forEach(b => b.classList.remove('active'));
+    if (btnSelectionMain) btnSelectionMain.classList.add('active');
+    if (brushModeInput) brushModeInput.value = mode;
+    if (painter) painter.previousMode = 'paint';
+
+    document.querySelectorAll('.mask-tool-btn').forEach(b => {
+        b.classList.toggle('active', b.getAttribute('data-masktool') === mode);
+    });
+}
+
+btnSelectionMain?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!selectionMenu) return;
+    const isVisible = selectionMenu.style.display === 'flex';
+    if (isVisible) {
+        selectionMenu.style.display = 'none';
+    } else {
+        const rect = btnSelectionMain.getBoundingClientRect();
+        selectionMenu.style.top = `${rect.bottom + 2}px`;
+        selectionMenu.style.left = `${rect.left}px`;
+        selectionMenu.style.display = 'flex';
+    }
+});
+
+document.addEventListener('click', (e) => {
+    if (selectionMenu && selectionMenu.style.display === 'flex') {
+        if (!selectionMenu.contains(e.target) && e.target !== btnSelectionMain && !btnSelectionMain.contains(e.target)) {
+            selectionMenu.style.display = 'none';
+        }
+    }
+});
+
+document.querySelectorAll('.selection-item[data-action]').forEach(item => {
+    item.addEventListener('click', (e) => {
+        const action = item.getAttribute('data-action');
+        if (selectionMenu) selectionMenu.style.display = 'none';
+
+        function applySelectionFill() {
+            if (!selectionManager || !selectionManager.active) return;
+            const brushColor = document.getElementById('brush-color')?.value || '#2e7d32';
+            selectionManager.fillContent(layerManager, brushColor);
+            if (painter) {
+                painter.needsUpdate = true;
+                painter.forceUpdate = true;
+            }
+        }
+
+        function applySelectionToCamo() {
+            if (!selectionManager || !selectionManager.active) return;
+            const brushColor = document.getElementById('brush-color')?.value || '#2e7d32';
+            const camoLayer = layerManager.addCamoLayer(brushColor);
+            selectionManager.fillContent(layerManager, '#FFFFFF');
+            selectionManager.deselect();
+            layerManager.setEditingTarget(camoLayer.id, 'mask');
+            if (painter) {
+                painter.needsUpdate = true;
+                painter.forceUpdate = true;
+            }
+        }
+
+        switch (action) {
+            case 'select_rect':
+                activateSelectionMode('select_rect');
+                break;
+            case 'select_lasso':
+                activateSelectionMode('select_lasso');
+                break;
+            case 'fill_selection':
+                applySelectionFill();
+                break;
+            case 'selection_to_camo':
+                applySelectionToCamo();
+                break;
+            case 'invert_selection':
+                selectionManager.invert();
+                break;
+            case 'delete_selected_content':
+                selectionManager.deleteContent(layerManager);
+                if (painter) {
+                    painter.needsUpdate = true;
+                    painter.forceUpdate = true;
+                }
+                break;
+            case 'deselect_all':
+                selectionManager.deselect();
+                break;
+        }
+    });
+});
+
+// --- Indicador de Estado de Máscara de Capa (Substance Painter) y Selección ---
+function updateMaskFloatingIndicator() {
+    if (!maskIndicator) return;
+    const activeLayer = layerManager ? layerManager.getActiveLayer() : null;
+    const isEditingLayerMask = activeLayer && activeLayer.hasMask && activeLayer.isEditingMask;
+    const hasSelection = selectionManager && selectionManager.active;
+
+    const btnFill = document.getElementById('btn-mask-fill');
+    const btnToCamo = document.getElementById('btn-mask-to-camo');
+    const btnInvert = document.getElementById('btn-mask-invert');
+    const btnClear = document.getElementById('btn-mask-clear');
+    const btnExit = document.getElementById('btn-mask-exit');
+
+    if (isEditingLayerMask) {
+        maskIndicator.classList.add('visible');
+        const spanText = document.getElementById('mask-indicator-label') || maskIndicator.querySelector('span');
+        if (spanText) {
+            spanText.textContent = `🎭 Pintando en Máscara: "${activeLayer.name}" (Pincel revela • Borrador oculta)`;
+        }
+        if (btnFill) btnFill.style.display = hasSelection ? 'inline-block' : 'none';
+        if (btnToCamo) btnToCamo.style.display = 'none';
+        if (btnInvert) {
+            btnInvert.style.display = 'inline-block';
+            btnInvert.textContent = hasSelection ? 'Invertir Sel.' : 'Invertir Máscara';
+        }
+        if (btnClear) {
+            btnClear.style.display = 'inline-block';
+            btnClear.textContent = hasSelection ? 'Borrar Sel.' : 'Limpiar Máscara';
+        }
+        if (btnExit) {
+            btnExit.style.display = 'inline-block';
+            btnExit.textContent = 'Pintar Color';
+        }
+    } else if (hasSelection) {
+        maskIndicator.classList.add('visible');
+        const spanText = document.getElementById('mask-indicator-label') || maskIndicator.querySelector('span');
+        if (spanText) {
+            spanText.textContent = selectionManager.inverted 
+                ? '🎭 Selección Invertida (Pintar fuera)' 
+                : '🎭 Selección Activa (Pintar dentro)';
+        }
+        if (btnFill) btnFill.style.display = 'inline-block';
+        if (btnToCamo) btnToCamo.style.display = 'inline-block';
+        if (btnInvert) {
+            btnInvert.style.display = 'inline-block';
+            btnInvert.textContent = 'Invertir';
+        }
+        if (btnClear) {
+            btnClear.style.display = 'inline-block';
+            btnClear.textContent = 'Borrar';
+        }
+        if (btnExit) {
+            btnExit.style.display = 'inline-block';
+            btnExit.textContent = '✖ Deseleccionar';
+        }
+    } else {
+        maskIndicator.classList.remove('visible');
+    }
+}
+
+document.getElementById('btn-mask-fill')?.addEventListener('click', () => {
+    if (!selectionManager || !selectionManager.active) return;
+    const brushColor = document.getElementById('brush-color')?.value || '#2e7d32';
+    selectionManager.fillContent(layerManager, brushColor);
+    if (painter) {
+        painter.needsUpdate = true;
+        painter.forceUpdate = true;
+    }
+});
+
+document.getElementById('btn-mask-to-camo')?.addEventListener('click', () => {
+    if (!selectionManager || !selectionManager.active) return;
+    const brushColor = document.getElementById('brush-color')?.value || '#2e7d32';
+    const camoLayer = layerManager.addCamoLayer(brushColor);
+    selectionManager.fillContent(layerManager, '#FFFFFF');
+    selectionManager.deselect();
+    layerManager.setEditingTarget(camoLayer.id, 'mask');
+    if (painter) {
+        painter.needsUpdate = true;
+        painter.forceUpdate = true;
+    }
+});
+
+document.getElementById('btn-mask-invert')?.addEventListener('click', () => {
+    const activeLayer = layerManager ? layerManager.getActiveLayer() : null;
+    if (selectionManager && selectionManager.active) {
+        selectionManager.invert();
+    } else if (activeLayer && activeLayer.hasMask && activeLayer.isEditingMask) {
+        activeLayer.invertMask();
+        layerManager.recomposite();
+        layerManager.renderUI();
+        if (painter) {
+            painter.needsUpdate = true;
+            painter.forceUpdate = true;
+        }
+    }
+});
+
+document.getElementById('btn-mask-clear')?.addEventListener('click', () => {
+    const activeLayer = layerManager ? layerManager.getActiveLayer() : null;
+    if (selectionManager && selectionManager.active) {
+        selectionManager.deleteContent(layerManager);
+        if (painter) {
+            painter.needsUpdate = true;
+            painter.forceUpdate = true;
+        }
+    } else if (activeLayer && activeLayer.hasMask) {
+        activeLayer.clearMask('black');
+        layerManager.recomposite();
+        layerManager.renderUI();
+        if (painter) {
+            painter.needsUpdate = true;
+            painter.forceUpdate = true;
+        }
+    }
+});
+
+document.getElementById('btn-mask-exit')?.addEventListener('click', () => {
+    const activeLayer = layerManager ? layerManager.getActiveLayer() : null;
+    if (selectionManager && selectionManager.active) {
+        selectionManager.deselect();
+    } else if (activeLayer && activeLayer.hasMask && activeLayer.isEditingMask) {
+        layerManager.setEditingTarget(activeLayer.id, 'color');
+    }
+    updateMaskFloatingIndicator();
+});
+
+layerManager.onMaskModeChange = (isEditingMask, layer) => {
+    updateMaskFloatingIndicator();
+};
+
+selectionManager.onSelectionChange = (info) => {
+    updateMaskFloatingIndicator();
+    const hasSel = selectionManager && (selectionManager.active || selectionManager.creating);
+    setSelection3DOverlayVisible(hasSel);
+    if (painter) {
+        painter.uiNeedsUpdate = true;
+    }
+    if (hasSel && state.textureUI) {
+        state.textureUI.needsUpdate = true;
+    }
+};
+
+// Herramienta Gotero / Cuentagotas (Eyedropper)
+const btnEyedropper = document.getElementById('btn-eyedropper');
+function activateEyedropper() {
+    if (!brushModeInput) return;
+    if (brushModeInput.value === 'eyedropper') {
+        if (window.painter && typeof window.painter.restorePreviousTool === 'function') {
+            window.painter.restorePreviousTool();
+        }
+        return;
+    }
+
+    if (window.painter) {
+        window.painter.previousMode = brushModeInput.value || 'paint';
+        if (window.painter.editingShape) window.painter.commitShape();
+        if (window.painter.transformState && window.painter.transformState.active) {
+            window.painter.commitLayerTransform();
+        }
+    }
+    if (window.decalSystem && window.decalSystem.isTextMode) {
+        window.decalSystem.cancelDecal();
+    }
+
+    toolButtons.forEach(b => b.classList.remove('active'));
+    if (btnEyedropper) btnEyedropper.classList.add('active');
+    brushModeInput.value = 'eyedropper';
+}
+
+if (btnEyedropper) {
+    btnEyedropper.addEventListener('click', activateEyedropper);
+}
 
 // Controles contextuales de Transformación de Capa
 document.getElementById('btn-transform-fliph')?.addEventListener('click', () => {
@@ -1068,9 +1860,13 @@ function updateActiveQuickColor(newColor) {
         if (textColorInput) textColorInput.value = newColor;
     }
 }
+window.updateActiveQuickColor = updateActiveQuickColor;
 
 colorInput?.addEventListener('input', (e) => {
     updateActiveQuickColor(e.target.value);
+    if (window.decalSystem && window.decalSystem.selectedDecalId) {
+        window.decalSystem.updateSelectedShapeFillFromColor(e.target.value);
+    }
 });
 
 document.querySelectorAll('.palette-swatch').forEach(swatch => {
@@ -1078,6 +1874,9 @@ document.querySelectorAll('.palette-swatch').forEach(swatch => {
         const col = e.target.getAttribute('data-color');
         if (colorInput) colorInput.value = col;
         updateActiveQuickColor(col);
+        if (window.decalSystem && window.decalSystem.selectedDecalId) {
+            window.decalSystem.updateSelectedShapeFillFromColor(col);
+        }
     });
 });
 
@@ -1091,7 +1890,37 @@ function saveProjectNSP() {
             opacity: layer.opacity,
             blendMode: layer.blendMode,
             isBackground: layer.isBackground,
-            imageData: layer.canvas.toDataURL('image/png')
+            imageData: layer.canvas.toDataURL('image/png'),
+            decals: layer.decals ? layer.decals.map(d => {
+                let dataUrl = d.dataUrl;
+                if (!dataUrl && d.img) {
+                    try {
+                        const tc = document.createElement('canvas');
+                        tc.width = d.img.naturalWidth || d.img.width || 100;
+                        tc.height = d.img.naturalHeight || d.img.height || 100;
+                        const tctx = tc.getContext('2d');
+                        tctx.drawImage(d.img, 0, 0);
+                        dataUrl = tc.toDataURL('image/png');
+                    } catch (err) {}
+                }
+                return {
+                    id: d.id,
+                    name: d.name,
+                    type: d.type || 'decal',
+                    textOptions: d.textOptions,
+                    shapeOptions: d.shapeOptions,
+                    dataUrl: dataUrl,
+                    x: d.x,
+                    y: d.y,
+                    width: d.width,
+                    height: d.height,
+                    baseWidth: d.baseWidth,
+                    baseHeight: d.baseHeight,
+                    rotation: d.rotation,
+                    opacity: d.opacity,
+                    visible: d.visible
+                };
+            }) : []
         }));
 
         const slots = [
@@ -1105,6 +1934,7 @@ function saveProjectNSP() {
             version: '1.0',
             date: new Date().toISOString(),
             resolution: TEX_SIZE,
+            modelOBJ: state.rawOBJText || null,
             backgroundColor: bgPresetSelect?.value || '#222222',
             quickColors: slots,
             layers: layersData,
@@ -1155,6 +1985,11 @@ async function loadProjectNSP(file) {
             }
         }
 
+        // 0. Si el proyecto incluye su propio modelo 3D (OBJ), cargarlo primero
+        if (project.modelOBJ) {
+            loadOBJContents(project.modelOBJ);
+        }
+
         // 1. Restaurar resolución si cambió
         if (project.resolution && project.resolution !== TEX_SIZE) {
             TEX_SIZE = project.resolution;
@@ -1191,8 +2026,7 @@ async function loadProjectNSP(file) {
             layerManager.layers = [];
 
             for (const lData of project.layers) {
-                const layer = layerManager.createLayer(lData.name, lData.isBackground);
-                layer.id = lData.id;
+                const layer = layerManager.createLayer(lData.name, lData.isBackground, lData.id);
                 layer.visible = lData.visible !== undefined ? lData.visible : true;
                 layer.opacity = lData.opacity !== undefined ? lData.opacity : 1;
                 layer.blendMode = lData.blendMode || 'source-over';
@@ -1201,12 +2035,47 @@ async function loadProjectNSP(file) {
                     await new Promise(resolve => {
                         const img = new Image();
                         img.onload = () => {
+                            layer.ctx.clearRect(0, 0, layer.width, layer.height);
                             layer.ctx.drawImage(img, 0, 0);
                             resolve();
                         };
                         img.onerror = resolve;
                         img.src = lData.imageData;
                     });
+                }
+
+                if (lData.decals && Array.isArray(lData.decals)) {
+                    layer.decals = [];
+                    for (const d of lData.decals) {
+                        if (d.dataUrl) {
+                            await new Promise(resolve => {
+                                const dImg = new Image();
+                                dImg.onload = () => {
+                                    layer.addDecal({
+                                        id: d.id,
+                                        name: d.name,
+                                        type: d.type || 'decal',
+                                        textOptions: d.textOptions,
+                                        shapeOptions: d.shapeOptions,
+                                        img: dImg,
+                                        dataUrl: d.dataUrl,
+                                        x: d.x,
+                                        y: d.y,
+                                        width: d.width,
+                                        height: d.height,
+                                        baseWidth: d.baseWidth || d.width,
+                                        baseHeight: d.baseHeight || d.height,
+                                        rotation: d.rotation || 0,
+                                        opacity: d.opacity !== undefined ? d.opacity : 1.0,
+                                        visible: d.visible !== undefined ? d.visible : true
+                                    });
+                                    resolve();
+                                };
+                                dImg.onerror = resolve;
+                                dImg.src = d.dataUrl;
+                            });
+                        }
+                    }
                 }
                 layerManager.layers.push(layer);
             }
@@ -1277,11 +2146,14 @@ const sizeLabel = document.getElementById('brush-size-label');
 const btnSizeDec = document.getElementById('btn-size-dec');
 const btnSizeInc = document.getElementById('btn-size-inc');
 
-function updateBrushSize(val) {
+function updateBrushSize(val, triggerEvent = true) {
     const clamped = Math.max(1, Math.min(100, Math.round(val)));
     sizeInput.value = clamped;
     sizeLabel.textContent = clamped + ' px';
     localStorage.setItem('neo_substance_brush_size', clamped);
+    if (triggerEvent) {
+        sizeInput.dispatchEvent(new Event('input'));
+    }
 }
 
 // Cargar tamaño previo guardado en localStorage
@@ -1289,21 +2161,36 @@ const savedSize = localStorage.getItem('neo_substance_brush_size');
 if (savedSize) {
     const parsed = parseInt(savedSize, 10);
     if (!isNaN(parsed) && parsed >= 1 && parsed <= 100) {
-        updateBrushSize(parsed);
+        updateBrushSize(parsed, true);
     }
 }
 
 sizeInput.addEventListener('input', (e) => {
-    updateBrushSize(parseInt(e.target.value, 10));
+    updateBrushSize(parseInt(e.target.value, 10), false);
 });
 
 btnSizeDec?.addEventListener('click', () => {
-    updateBrushSize(parseInt(sizeInput.value, 10) - 1);
+    updateBrushSize(parseInt(sizeInput.value, 10) - 1, true);
 });
 
 btnSizeInc?.addEventListener('click', () => {
-    updateBrushSize(parseInt(sizeInput.value, 10) + 1);
+    updateBrushSize(parseInt(sizeInput.value, 10) + 1, true);
 });
+
+if (sizeLabel) {
+    sizeLabel.style.cursor = 'pointer';
+    sizeLabel.title = 'Haz clic para ingresar un valor exacto (1 - 100 px)';
+    sizeLabel.addEventListener('click', () => {
+        const current = parseInt(sizeInput.value, 10) || 10;
+        const val = prompt('Tamaño exacto del pincel (1 a 100 px):', current);
+        if (val !== null) {
+            const num = parseInt(val, 10);
+            if (!isNaN(num)) {
+                updateBrushSize(num, true);
+            }
+        }
+    });
+}
 
 // 2D View Pan & Zoom
 let zoom2D = 1;
@@ -1416,6 +2303,81 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'f' || e.key === 'F') {
         frameModel();
     }
+    if ((e.key === 'i' || e.key === 'I') && !e.ctrlKey && !e.metaKey) {
+        activateEyedropper();
+    }
+    // Atajos de Selección y Máscaras
+    if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey) {
+        activateSelectionMode('select_rect');
+    }
+    if ((e.key === 'l' || e.key === 'L') && !e.ctrlKey && !e.metaKey) {
+        activateSelectionMode('select_lasso');
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        selectionManager.selectAll();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        const activeLayer = layerManager ? layerManager.getActiveLayer() : null;
+        if (activeLayer && activeLayer.hasMask && activeLayer.isEditingMask) {
+            activeLayer.invertMask();
+            layerManager.recomposite();
+            layerManager.renderUI();
+            if (painter) {
+                painter.needsUpdate = true;
+                painter.forceUpdate = true;
+            }
+        } else {
+            selectionManager.invert();
+        }
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        selectionManager.deselect();
+    }
+    if (e.key === 'Escape') {
+        if (papercraft && (papercraft.measureMode || papercraft.activeMeasurement)) {
+            papercraft.measureMode = false;
+            papercraft.activeMeasurement = null;
+            const btnMeasure = document.getElementById('btn-unfold-measure');
+            if (btnMeasure) {
+                btnMeasure.style.background = '';
+                btnMeasure.style.color = '#ffecb3';
+                btnMeasure.style.fontWeight = '';
+            }
+            if (canvasUnfold) canvasUnfold.style.cursor = 'default';
+            renderUnfoldWorkbench();
+            return;
+        }
+        const activeLayer = layerManager ? layerManager.getActiveLayer() : null;
+        if (activeLayer && activeLayer.hasMask && activeLayer.isEditingMask) {
+            layerManager.setEditingTarget(activeLayer.id, 'color');
+            updateMaskFloatingIndicator();
+        } else if (selectionManager.active) {
+            selectionManager.deselect();
+        }
+    }
+    if (e.key === 'Enter' || (e.altKey && (e.key === 'Backspace' || e.key === 'Delete'))) {
+        if (selectionManager && selectionManager.active) {
+            e.preventDefault();
+            const brushColor = document.getElementById('brush-color')?.value || '#2e7d32';
+            selectionManager.fillContent(layerManager, brushColor);
+            if (painter) {
+                painter.needsUpdate = true;
+                painter.forceUpdate = true;
+            }
+        }
+    }
+    if (e.key === 'Delete' || e.key === 'Del' || e.key === 'Backspace') {
+        if (selectionManager.active) {
+            selectionManager.deleteContent(layerManager);
+            if (painter) {
+                painter.needsUpdate = true;
+                painter.forceUpdate = true;
+            }
+        }
+    }
 });
 
 // Resize Handling
@@ -1436,6 +2398,110 @@ document.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('mouseup', () => { isResizing = false; });
 
+// Cálculo y caché de aristas UV inteligentes (Contornos, pliegues vivos y eliminación de líneas internas)
+function getMeshUVEdges(mesh) {
+    if (mesh.userData && mesh.userData._uvEdges) return mesh.userData._uvEdges;
+
+    const geometry = mesh.geometry;
+    if (!geometry || !geometry.attributes || !geometry.attributes.uv || !geometry.attributes.position) {
+        return null;
+    }
+
+    const uvs = geometry.attributes.uv;
+    const pos = geometry.attributes.position;
+    const indices = geometry.index;
+
+    const hashUV = (u, v) => `${Math.round(u * 10000)}_${Math.round(v * 10000)}`;
+
+    const numFaces = indices ? indices.count / 3 : uvs.count / 3;
+    const edgeMap = new Map();
+    const allEdges = [];
+
+    const pA = new THREE.Vector3();
+    const pB = new THREE.Vector3();
+    const pC = new THREE.Vector3();
+    const vBA = new THREE.Vector3();
+    const vCA = new THREE.Vector3();
+
+    for (let f = 0; f < numFaces; f++) {
+        let i0, i1, i2;
+        if (indices) {
+            i0 = indices.getX(f * 3);
+            i1 = indices.getX(f * 3 + 1);
+            i2 = indices.getX(f * 3 + 2);
+        } else {
+            i0 = f * 3;
+            i1 = f * 3 + 1;
+            i2 = f * 3 + 2;
+        }
+
+        const u0 = uvs.getX(i0), v0 = uvs.getY(i0);
+        const u1 = uvs.getX(i1), v1 = uvs.getY(i1);
+        const u2 = uvs.getX(i2), v2 = uvs.getY(i2);
+
+        pA.fromBufferAttribute(pos, i0);
+        pB.fromBufferAttribute(pos, i1);
+        pC.fromBufferAttribute(pos, i2);
+
+        vBA.subVectors(pB, pA);
+        vCA.subVectors(pC, pA);
+        const normal = new THREE.Vector3().crossVectors(vBA, vCA).normalize();
+
+        const triUVs = [{ u: u0, v: v0 }, { u: u1, v: v1 }, { u: u2, v: v2 }];
+
+        for (let e = 0; e < 3; e++) {
+            const next = (e + 1) % 3;
+            const ptA = triUVs[e];
+            const ptB = triUVs[next];
+
+            const hA = hashUV(ptA.u, ptA.v);
+            const hB = hashUV(ptB.u, ptB.v);
+            if (hA === hB) continue; // Ignorar aristas degeneradas
+
+            const edgeKey = hA < hB ? `${hA}|${hB}` : `${hB}|${hA}`;
+
+            let entry = edgeMap.get(edgeKey);
+            if (!entry) {
+                entry = {
+                    uA: ptA.u, vA: ptA.v,
+                    uB: ptB.u, vB: ptB.v,
+                    faces: []
+                };
+                edgeMap.set(edgeKey, entry);
+            }
+            entry.faces.push({ faceIdx: f, normal });
+        }
+    }
+
+    const boundaryEdges = [];
+    const creaseEdges = [];
+    // Umbral de 25 grados para diferenciar pliegue vivo de curvatura suave
+    const cosThreshold = Math.cos(25 * Math.PI / 180); // ~0.9063
+
+    for (const edge of edgeMap.values()) {
+        allEdges.push({ uA: edge.uA, vA: edge.vA, uB: edge.uB, vB: edge.vB });
+
+        if (edge.faces.length === 1) {
+            // Perímetro exterior de la pieza o costura UV
+            boundaryEdges.push({ uA: edge.uA, vA: edge.vA, uB: edge.uB, vB: edge.vB });
+        } else if (edge.faces.length === 2) {
+            const n1 = edge.faces[0].normal;
+            const n2 = edge.faces[1].normal;
+            const dot = Math.max(-1, Math.min(1, n1.dot(n2)));
+            if (dot < cosThreshold) {
+                // Pliegue o arista viva (> 25°)
+                creaseEdges.push({ uA: edge.uA, vA: edge.vA, uB: edge.uB, vB: edge.vB });
+            }
+            // Si dot >= cosThreshold (<= 25°), es curva suave o triangulación plana -> se oculta
+        } else {
+            creaseEdges.push({ uA: edge.uA, vA: edge.vA, uB: edge.uB, vB: edge.vB });
+        }
+    }
+
+    mesh.userData._uvEdges = { boundaryEdges, creaseEdges, allEdges };
+    return mesh.userData._uvEdges;
+}
+
 // UV Wireframe & Papercraft Draw Logic
 function drawUVWireframe() {
     ctxUV.clearRect(0, 0, canvasUV.width, canvasUV.height);
@@ -1449,66 +2515,114 @@ function drawUVWireframe() {
         return;
     }
 
-    if (!state.uvWireframeVisible) return;
-    
-    ctxUV.strokeStyle = 'rgba(0, 0, 0, 0.7)'; // Líneas negras/oscuras para fondo blanco
-    ctxUV.lineWidth = 1;
-    ctxUV.beginPath();
+    if (!state.uvWireframeVisible || state.uvWireframeMode === 'none') return;
 
+    const mode = state.uvWireframeMode || 'clean';
     const w = canvasUV.width;
     const h = canvasUV.height;
 
-    function drawLineUV(uvs, idxA, idxB) {
-        const uA = uvs.getX(idxA);
-        const vA = uvs.getY(idxA);
-        const uB = uvs.getX(idxB);
-        const vB = uvs.getY(idxB);
-        
-        ctxUV.moveTo(uA * w, (1 - vA) * h);
-        ctxUV.lineTo(uB * w, (1 - vB) * h);
-    }
-
     const meshes = [];
     state.mesh.traverse(c => {
-        if (c.isMesh && c.geometry && c.geometry.attributes && c.geometry.attributes.uv) {
+        if (c.isMesh && !c.userData?.isSelectionOverlay && c.geometry && c.geometry.attributes && c.geometry.attributes.uv) {
             meshes.push(c);
         }
     });
 
-    meshes.forEach(mesh => {
-        const geometry = mesh.geometry;
-        const uvs = geometry.attributes.uv;
-        const indices = geometry.index;
+    if (mode === 'full') {
+        // Malla completa: todos los triángulos
+        ctxUV.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+        ctxUV.lineWidth = 1;
+        ctxUV.beginPath();
 
-        if (indices) {
-            const arr = indices.array;
-            for (let i = 0; i < arr.length; i += 3) {
-                drawLineUV(uvs, arr[i], arr[i+1]);
-                drawLineUV(uvs, arr[i+1], arr[i+2]);
-                drawLineUV(uvs, arr[i+2], arr[i]);
+        meshes.forEach(mesh => {
+            const edgesData = getMeshUVEdges(mesh);
+            if (edgesData) {
+                edgesData.allEdges.forEach(e => {
+                    ctxUV.moveTo(e.uA * w, (1 - e.vA) * h);
+                    ctxUV.lineTo(e.uB * w, (1 - e.vB) * h);
+                });
             }
-        } else {
-            for (let i = 0; i < uvs.count; i += 3) {
-                drawLineUV(uvs, i, i+1);
-                drawLineUV(uvs, i+1, i+2);
-                drawLineUV(uvs, i+2, i);
+        });
+        ctxUV.stroke();
+    } else if (mode === 'outlines') {
+        // Solo contornos exteriores
+        ctxUV.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+        ctxUV.lineWidth = 1.2;
+        ctxUV.beginPath();
+
+        meshes.forEach(mesh => {
+            const edgesData = getMeshUVEdges(mesh);
+            if (edgesData) {
+                edgesData.boundaryEdges.forEach(e => {
+                    ctxUV.moveTo(e.uA * w, (1 - e.vA) * h);
+                    ctxUV.lineTo(e.uB * w, (1 - e.vB) * h);
+                });
             }
-        }
-    });
-    
-    ctxUV.stroke();
+        });
+        ctxUV.stroke();
+    } else {
+        // Modo 'clean' (por defecto): Contornos oscuros + pliegues vivos (> 25°)
+        // 1. Pliegues vivos internos
+        ctxUV.strokeStyle = 'rgba(40, 40, 40, 0.55)';
+        ctxUV.lineWidth = 1;
+        ctxUV.beginPath();
+
+        meshes.forEach(mesh => {
+            const edgesData = getMeshUVEdges(mesh);
+            if (edgesData) {
+                edgesData.creaseEdges.forEach(e => {
+                    ctxUV.moveTo(e.uA * w, (1 - e.vA) * h);
+                    ctxUV.lineTo(e.uB * w, (1 - e.vB) * h);
+                });
+            }
+        });
+        ctxUV.stroke();
+
+        // 2. Contornos exteriores
+        ctxUV.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+        ctxUV.lineWidth = 1.2;
+        ctxUV.beginPath();
+
+        meshes.forEach(mesh => {
+            const edgesData = getMeshUVEdges(mesh);
+            if (edgesData) {
+                edgesData.boundaryEdges.forEach(e => {
+                    ctxUV.moveTo(e.uA * w, (1 - e.vA) * h);
+                    ctxUV.lineTo(e.uB * w, (1 - e.vB) * h);
+                });
+            }
+        });
+        ctxUV.stroke();
+    }
 }
 
 
-// Animation Loop
+// Animation Loop ultra-fluido a 144+ FPS (Zero Lag en RTX)
 let lastTextureUpdate = 0;
+let lastUIAnimUpdate = 0;
 function animate(time) {
     requestAnimationFrame(animate);
     controls.update();
+
+    const isSelectionActive = selectionManager && (selectionManager.active || selectionManager.creating);
+
+    // Sincronizar visibilidad del overlay 3D con la selección activa
+    setSelection3DOverlayVisible(isSelectionActive);
+
+    // Animar retícula y hormigas marchantes de la selección (~15 FPS para suavidad y mínimo consumo)
+    if (isSelectionActive) {
+        if (time - lastUIAnimUpdate > 65) {
+            if (painter) painter.updateUI(time);
+            if (state.textureUI) state.textureUI.needsUpdate = true;
+            lastUIAnimUpdate = time;
+        }
+    } else if (painter && painter.uiNeedsUpdate) {
+        painter.updateUI(time);
+        if (state.textureUI) state.textureUI.needsUpdate = true;
+        painter.uiNeedsUpdate = false;
+    }
     
-    // SÚPER OPTIMIZACIÓN: Desacoplar los FPS del Pincel 2D de la carga a la GPU.
-    // Solo mandamos la textura a la RTX cada ~33ms (30fps) o cuando se suelta el click, 
-    // liberando el procesador para que el trazo 2D vaya a máxima velocidad sin lag.
+    // Desacoplar textura principal a ~30fps durante pintura interactiva
     if (painter && painter.needsUpdate) {
         if (painter.forceUpdate || (time - lastTextureUpdate > 33)) {
             state.texture.needsUpdate = true;
@@ -1519,11 +2633,24 @@ function animate(time) {
         }
     }
     
-    if (painter && painter.uiNeedsUpdate) {
-        state.textureUI.needsUpdate = true;
-        painter.uiNeedsUpdate = false;
-    }
-    
     renderer.render(scene, camera);
 }
 requestAnimationFrame(animate);
+
+// Desplazamiento horizontal fluido con la rueda del ratón en la barra de herramientas (Ribbon)
+const ribbonEl = document.getElementById('ribbon');
+ribbonEl?.addEventListener('wheel', (e) => {
+    if (e.deltaY !== 0) {
+        ribbonEl.scrollLeft += e.deltaY;
+        e.preventDefault();
+    }
+}, { passive: false });
+
+// Inicializar el panel de capas visible por defecto en pestaña Capas
+const initialLayersPanel = document.getElementById('panel-layers');
+if (initialLayersPanel) {
+    initialLayersPanel.classList.remove('collapsed');
+}
+if (typeof switchSidebarTab === 'function') {
+    switchSidebarTab('layers');
+}

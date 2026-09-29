@@ -38,6 +38,16 @@ export class DecalSystem {
         this.mouse = new THREE.Vector2();
         this.lastHit = null;
 
+        // Búfer GPU para previsualización 2D en tiempo real de proyección 3D multi-pieza
+        this.previewRenderTarget = null;
+        this.previewOrthoCamera = null;
+        this.previewBakeScene = null;
+        this.previewBakeMaterial = null;
+        this.previewOffscreenCanvas = null;
+        this.previewOffscreenCtx = null;
+        this.previewPixelBuffer = null;
+        this._preview3DPending = false;
+
         // Parámetros de la calcomanía en Modo 2D
         this.decal2D = {
             x: 1024,
@@ -57,6 +67,8 @@ export class DecalSystem {
         this.previewGroup = new THREE.Group();
         this.previewGroup.visible = false;
         this.scene.add(this.previewGroup);
+
+        this.selectedDecalId = null; // ID de la pegatina actualmente seleccionada
 
         this.setupPreviewMesh();
         this.setupEvents();
@@ -90,6 +102,14 @@ export class DecalSystem {
         if (passGroup) passGroup.style.display = mode === '3d' ? 'flex' : 'none';
 
         if (mode === '2d') {
+            // Si el modo Unfold / Papercraft está activo, cambiar a la Vista 2D (UV) para poder ver y manipular la calcomanía
+            if (window.papercraft && window.papercraft.active) {
+                const btnRibbonUnfold = document.getElementById('btn-ribbon-unfold-mode');
+                if (btnRibbonUnfold) {
+                    btnRibbonUnfold.click();
+                }
+            }
+
             this.previewGroup.visible = false;
             if (this.isActive) {
                 // Sincronizar sliders con valores 2D
@@ -192,11 +212,31 @@ export class DecalSystem {
             const file = e.target.files[0];
             if (!file) return;
 
+            const decalName = file.name.replace(/\.[^/.]+$/, '');
             const reader = new FileReader();
             reader.onload = (event) => {
                 const img = new Image();
                 img.onload = () => {
-                    this.setDecalImage(img);
+                    // Optimizar imágenes de ultra-alta resolución (>2048px) para evitar saturar VRAM y CPU
+                    const maxDim = Math.max(window.layerManager?.width || 2048, 2048);
+                    if (img.width > maxDim || img.height > maxDim) {
+                        const ratio = Math.min(maxDim / img.width, maxDim / img.height);
+                        const optCanvas = document.createElement('canvas');
+                        optCanvas.width = Math.round(img.width * ratio);
+                        optCanvas.height = Math.round(img.height * ratio);
+                        const optCtx = optCanvas.getContext('2d');
+                        optCtx.imageSmoothingEnabled = true;
+                        optCtx.imageSmoothingQuality = 'high';
+                        optCtx.drawImage(img, 0, 0, optCanvas.width, optCanvas.height);
+
+                        const optImg = new Image();
+                        optImg.onload = () => {
+                            this.setDecalImage(optImg, decalName);
+                        };
+                        optImg.src = optCanvas.toDataURL('image/png');
+                    } else {
+                        this.setDecalImage(img, decalName);
+                    }
                 };
                 img.src = event.target.result;
             };
@@ -209,12 +249,15 @@ export class DecalSystem {
                 const scale = parseFloat(e.target.value) / 100;
                 this.decal2D.width = this.decal2D.baseWidth * scale;
                 this.decal2D.height = this.decal2D.baseHeight * scale;
-                this.render2DPreview();
+                this.scheduleSync(false);
             } else {
                 this.projectorScale = parseFloat(e.target.value);
                 this.updatePreviewTransform();
                 if (this.lastHit) this.sync2DFrom3D(this.lastHit);
             }
+        });
+        scaleInput?.addEventListener('change', () => {
+            if (this.mode === '2d') this.syncCurrentDecalToObject(true);
         });
 
         btnScaleDec?.addEventListener('click', () => {
@@ -224,6 +267,7 @@ export class DecalSystem {
                 const scale = parseFloat(scaleInput.value) / 100;
                 this.decal2D.width = this.decal2D.baseWidth * scale;
                 this.decal2D.height = this.decal2D.baseHeight * scale;
+                this.syncCurrentDecalToObject(true);
                 this.render2DPreview();
             } else {
                 this.projectorScale = parseFloat(scaleInput.value);
@@ -239,6 +283,7 @@ export class DecalSystem {
                 const scale = parseFloat(scaleInput.value) / 100;
                 this.decal2D.width = this.decal2D.baseWidth * scale;
                 this.decal2D.height = this.decal2D.baseHeight * scale;
+                this.syncCurrentDecalToObject(true);
                 this.render2DPreview();
             } else {
                 this.projectorScale = parseFloat(scaleInput.value);
@@ -250,13 +295,18 @@ export class DecalSystem {
         const btnRotDec = document.getElementById('btn-decal-rot-dec');
         const btnRotInc = document.getElementById('btn-decal-rot-inc');
 
-        const updateRotation = (deg) => {
+        const updateRotation = (deg, isFinal = false) => {
             deg = Math.max(-180, Math.min(180, deg));
             if (rotInput) rotInput.value = deg;
             if (rotLabel) rotLabel.textContent = `${deg}°`;
             if (this.mode === '2d') {
                 this.decal2D.rotation = (deg * Math.PI) / 180;
-                this.render2DPreview();
+                if (isFinal) {
+                    this.syncCurrentDecalToObject(true);
+                    this.render2DPreview();
+                } else {
+                    this.scheduleSync(false);
+                }
             } else {
                 this.projectorRotation = (deg * Math.PI) / 180;
                 this.updatePreviewTransform();
@@ -266,17 +316,21 @@ export class DecalSystem {
 
         rotInput?.addEventListener('input', (e) => {
             const deg = parseInt(e.target.value, 10);
-            updateRotation(deg);
+            updateRotation(deg, false);
+        });
+        rotInput?.addEventListener('change', (e) => {
+            const deg = parseInt(e.target.value, 10);
+            updateRotation(deg, true);
         });
 
         btnRotDec?.addEventListener('click', () => {
             const current = parseInt(rotInput?.value || 0, 10);
-            updateRotation(current - 1);
+            updateRotation(current - 1, true);
         });
 
         btnRotInc?.addEventListener('click', () => {
             const current = parseInt(rotInput?.value || 0, 10);
-            updateRotation(current + 1);
+            updateRotation(current + 1, true);
         });
 
         const chkPassthrough = document.getElementById('decal-passthrough');
@@ -284,6 +338,139 @@ export class DecalSystem {
             this.allowPassthrough = e.target.checked;
             if (this.mode === '3d' && this.isActive) {
                 this.updatePreviewTransform();
+            }
+        });
+
+        const btnDuplicate = document.getElementById('btn-decal-duplicate');
+        const btnDelete = document.getElementById('btn-decal-delete');
+        btnDuplicate?.addEventListener('click', () => this.duplicateSelectedDecal());
+        btnDelete?.addEventListener('click', () => this.deleteSelectedDecal());
+
+        const shapeFillColor = document.getElementById('shape-fill-color');
+        const btnShapeFillNone = document.getElementById('btn-shape-fill-none');
+        const shapeStrokeColor = document.getElementById('shape-stroke-color');
+
+        const updateSelectedShape = (newFill, newStroke) => {
+            if (!this.selectedDecalId || !this.layerManager) return;
+            const activeLayer = this.layerManager.getActiveLayer();
+            if (!activeLayer) return;
+            const decal = activeLayer.getDecal(this.selectedDecalId);
+            if (!decal) return;
+
+            if (!decal.shapeOptions) {
+                decal.shapeOptions = {
+                    type: decal.type || 'rect',
+                    color: '#000000',
+                    size: 2,
+                    fillColor: 'transparent',
+                    x1: 0, y1: 0,
+                    x2: decal.width || 200, y2: decal.height || 200
+                };
+            }
+
+            if (newFill !== undefined) decal.shapeOptions.fillColor = newFill;
+            if (newStroke !== undefined) {
+                decal.shapeOptions.color = newStroke;
+                decal.shapeOptions.strokeColor = newStroke;
+            }
+
+            if (window.painter && window.painter.createShapeCanvas) {
+                const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
+                decal.img = newCanvas;
+                try {
+                    decal.dataUrl = newCanvas.toDataURL('image/png');
+                } catch (_) {}
+                this.currentDecalImage = newCanvas;
+                this.syncCurrentDecalToObject(true);
+                this.render2DPreview();
+                if (this.layerManager) this.layerManager.renderUI();
+            }
+        };
+
+        shapeFillColor?.addEventListener('input', (e) => updateSelectedShape(e.target.value, undefined));
+        btnShapeFillNone?.addEventListener('click', () => updateSelectedShape('transparent', undefined));
+        shapeStrokeColor?.addEventListener('input', (e) => updateSelectedShape(undefined, e.target.value));
+
+        // Controles contextuales en la barra frontal (shape-controls)
+        const shapeBarFill = document.getElementById('shape-bar-fill-color');
+        const shapeBarFillNone = document.getElementById('btn-shape-bar-fill-none');
+        const shapeBarStroke = document.getElementById('shape-bar-stroke-color');
+        const shapeScaleInput = document.getElementById('shape-scale');
+        const btnShapeScaleDec = document.getElementById('btn-shape-scale-dec');
+        const btnShapeScaleInc = document.getElementById('btn-shape-scale-inc');
+        const shapeRotInput = document.getElementById('shape-rotation');
+        const shapeRotVal = document.getElementById('shape-rot-val');
+        const btnShapeRotDec = document.getElementById('btn-shape-rot-dec');
+        const btnShapeRotInc = document.getElementById('btn-shape-rot-inc');
+        const btnShapeBake2D = document.getElementById('btn-shape-bake-2d');
+        const btnShapeBake3D = document.getElementById('btn-shape-bake-3d');
+        const btnShapeDel = document.getElementById('btn-shape-delete');
+        const btnShapeCancel = document.getElementById('btn-shape-cancel');
+        const btnShapeMode3D = document.getElementById('btn-shape-mode-3d');
+        const btnShapeMode2D = document.getElementById('btn-shape-mode-2d');
+
+        shapeBarFill?.addEventListener('input', (e) => updateSelectedShape(e.target.value, undefined));
+        shapeBarFillNone?.addEventListener('click', () => updateSelectedShape('transparent', undefined));
+        shapeBarStroke?.addEventListener('input', (e) => updateSelectedShape(undefined, e.target.value));
+
+        shapeScaleInput?.addEventListener('input', (e) => {
+            const scale = parseFloat(e.target.value) / 100;
+            this.decal2D.width = this.decal2D.baseWidth * scale;
+            this.decal2D.height = this.decal2D.baseHeight * scale;
+            this.scheduleSync(false);
+        });
+        shapeScaleInput?.addEventListener('change', () => this.syncCurrentDecalToObject(true));
+        btnShapeScaleDec?.addEventListener('click', () => {
+            if (!shapeScaleInput) return;
+            shapeScaleInput.value = Math.max(10, parseInt(shapeScaleInput.value, 10) - 10);
+            shapeScaleInput.dispatchEvent(new Event('input'));
+            this.syncCurrentDecalToObject(true);
+        });
+        btnShapeScaleInc?.addEventListener('click', () => {
+            if (!shapeScaleInput) return;
+            shapeScaleInput.value = Math.min(300, parseInt(shapeScaleInput.value, 10) + 10);
+            shapeScaleInput.dispatchEvent(new Event('input'));
+            this.syncCurrentDecalToObject(true);
+        });
+
+        const updateShapeRotation = (deg, isFinal = false) => {
+            deg = Math.max(-180, Math.min(180, deg));
+            if (shapeRotInput) shapeRotInput.value = deg;
+            if (shapeRotVal) shapeRotVal.textContent = `${deg}°`;
+            this.decal2D.rotation = (deg * Math.PI) / 180;
+            if (isFinal) {
+                this.syncCurrentDecalToObject(true);
+                this.render2DPreview();
+            } else {
+                this.scheduleSync(false);
+            }
+        };
+
+        shapeRotInput?.addEventListener('input', (e) => updateShapeRotation(parseInt(e.target.value, 10), false));
+        shapeRotInput?.addEventListener('change', (e) => updateShapeRotation(parseInt(e.target.value, 10), true));
+        btnShapeRotDec?.addEventListener('click', () => updateShapeRotation(parseInt(shapeRotInput?.value || 0, 10) - 1, true));
+        btnShapeRotInc?.addEventListener('click', () => updateShapeRotation(parseInt(shapeRotInput?.value || 0, 10) + 1, true));
+
+        btnShapeBake2D?.addEventListener('click', () => this.bake2DToActiveLayer());
+        btnShapeBake3D?.addEventListener('click', () => this.bake3DToActiveLayer());
+        btnShapeDel?.addEventListener('click', () => this.deleteSelectedDecal());
+        btnShapeCancel?.addEventListener('click', () => this.deselectDecal());
+        btnShapeMode3D?.addEventListener('click', () => this.setMode('3d'));
+        btnShapeMode2D?.addEventListener('click', () => this.setMode('2d'));
+
+        window.addEventListener('keydown', (e) => {
+            if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+            if (this.isActive && this.mode === '2d' && this.selectedDecalId) {
+                if (e.key === 'Delete' || e.key === 'Backspace') {
+                    this.deleteSelectedDecal();
+                    e.preventDefault();
+                } else if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+                    this.duplicateSelectedDecal();
+                    e.preventDefault();
+                } else if (e.key === 'Escape') {
+                    this.deselectDecal();
+                    e.preventDefault();
+                }
             }
         });
 
@@ -300,7 +487,7 @@ export class DecalSystem {
         });
 
         btnCancel?.addEventListener('click', () => {
-            this.cancelDecal();
+            this.deselectDecal();
         });
 
         // Controles de Modo Texto integrados
@@ -327,7 +514,7 @@ export class DecalSystem {
         view3d.addEventListener('pointerdown', (e) => {
             if (!this.isActive || this.mode === '2d' || e.button !== 0) return;
             this.raycastSurface(e);
-            this.isLocked = !this.isLocked;
+            this.isLocked = true;
         });
 
         // Eventos del Canvas 2D para interactuar con la calcomanía en Modo 2D
@@ -336,7 +523,7 @@ export class DecalSystem {
         window.addEventListener('pointerup', (e) => this.onPointerUp2D(e));
     }
 
-    setDecalImage(img) {
+    setDecalImage(img, decalName = null) {
         this.currentDecalImage = img;
         this.decalTexture = new THREE.Texture(img);
         this.decalTexture.colorSpace = THREE.SRGBColorSpace;
@@ -352,7 +539,7 @@ export class DecalSystem {
         this.previewMaterial.needsUpdate = true;
 
         this.isActive = true;
-        this.isLocked = false;
+        this.isLocked = true;
 
         // Inicializar dimensiones 2D con fidelidad 1:1 y aspecto original
         const baseDim = 400;
@@ -366,9 +553,49 @@ export class DecalSystem {
             }
         }
 
+        // Obtener dataUrl garantizada para serialización en .nsp
+        let dataUrl = null;
+        try {
+            if (img.src && img.src.startsWith('data:')) {
+                dataUrl = img.src;
+            } else {
+                const c = document.createElement('canvas');
+                c.width = img.width || w;
+                c.height = img.height || h;
+                const cx = c.getContext('2d');
+                cx.drawImage(img, 0, 0);
+                dataUrl = c.toDataURL('image/png');
+            }
+        } catch (e) {}
+
+        // Crear objeto de pegatina vivo en la capa activa
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        let decalObj = null;
+        if (activeLayer) {
+            const count = (activeLayer.decals ? activeLayer.decals.length : 0) + 1;
+            const finalName = decalName || ('Calca ' + count);
+            decalObj = {
+                id: 'decal_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                name: finalName,
+                img: img,
+                dataUrl: dataUrl,
+                x: this.canvas.width / 2,
+                y: this.canvas.height / 2,
+                width: w,
+                height: h,
+                baseWidth: w,
+                baseHeight: h,
+                rotation: 0,
+                opacity: 1.0,
+                visible: true
+            };
+            activeLayer.addDecal(decalObj);
+            this.selectedDecalId = decalObj.id;
+        }
+
         this.decal2D = {
-            x: this.canvas.width / 2,
-            y: this.canvas.height / 2,
+            x: decalObj ? decalObj.x : this.canvas.width / 2,
+            y: decalObj ? decalObj.y : this.canvas.height / 2,
             width: w,
             height: h,
             baseWidth: w,
@@ -413,7 +640,6 @@ export class DecalSystem {
             this.projectorPosition.set(center.x, center.y, center.z + size.z * 0.5);
             this.projectorNormal.set(0, 0, 1);
 
-            // Raycast automático frontal para registrar en 2D desde el primer milisegundo
             const rayOrigin = new THREE.Vector3(center.x, center.y + size.y * 0.3, center.z + size.z * 1.5);
             const rayDir = new THREE.Vector3(0, 0, -1);
             this.raycaster.set(rayOrigin, rayDir);
@@ -434,7 +660,337 @@ export class DecalSystem {
             this.previewGroup.visible = true;
             this.updatePreviewTransform();
         }
+
+        if (this.layerManager) {
+            this.layerManager.recomposite();
+            this.layerManager.renderUI();
+        }
+        if (this.painter) {
+            this.painter.needsUpdate = true;
+            this.painter.forceUpdate = true;
+            this.painter.uiNeedsUpdate = true;
+        }
+        if (this.texture) {
+            this.texture.needsUpdate = true;
+        }
         this.render2DPreview();
+    }
+
+    selectDecal(decal) {
+        if (!decal) {
+            this.deselectDecal();
+            return;
+        }
+        this.selectedDecalId = decal.id;
+        this.currentDecalImage = decal.img;
+        this.decal2D = {
+            x: decal.x,
+            y: decal.y,
+            width: decal.width,
+            height: decal.height,
+            baseWidth: decal.baseWidth || decal.width,
+            baseHeight: decal.baseHeight || decal.height,
+            rotation: decal.rotation || 0,
+            isDragging: false,
+            dragHandle: null,
+            dragOffset: { x: 0, y: 0 },
+            initialDecal: null
+        };
+        this.isActive = true;
+        this.mode = '2d';
+
+        if (decal.type === 'text') {
+            this.isTextMode = true;
+            this.textOptions = Object.assign({
+                text: decal.name ? decal.name.replace(/^Texto:\s*"?/, '').replace(/"?$/, '') : 'TEXTO',
+                fontFamily: 'Arial',
+                fontSize: 48,
+                rotation: Math.round((decal.rotation * 180 / Math.PI) % 360),
+                isBold: true,
+                isItalic: false,
+                color: '#111111'
+            }, decal.textOptions || {});
+
+            const textInput = document.getElementById('text-input-value');
+            const fontFam = document.getElementById('text-font-family');
+            const fontSize = document.getElementById('text-font-size');
+            const sizeLabel = document.getElementById('text-size-val');
+            const textRot = document.getElementById('text-rotation');
+            const rotLabel = document.getElementById('text-rot-val');
+            const textColor = document.getElementById('text-color');
+            const btnBold = document.getElementById('btn-text-bold');
+            const btnItalic = document.getElementById('btn-text-italic');
+
+            if (textInput && this.textOptions.text) textInput.value = this.textOptions.text;
+            if (fontFam && this.textOptions.fontFamily) fontFam.value = this.textOptions.fontFamily;
+            if (fontSize && this.textOptions.fontSize) {
+                fontSize.value = this.textOptions.fontSize;
+                if (sizeLabel) sizeLabel.textContent = `${this.textOptions.fontSize} px`;
+            }
+            if (textRot) {
+                const deg = Math.round((decal.rotation * 180 / Math.PI) % 360);
+                const normDeg = deg > 180 ? deg - 360 : (deg < -180 ? deg + 360 : deg);
+                textRot.value = normDeg;
+                if (rotLabel) rotLabel.textContent = `${normDeg}°`;
+            }
+            if (textColor && this.textOptions.color) textColor.value = this.textOptions.color;
+            if (btnBold) {
+                if (this.textOptions.isBold) btnBold.classList.add('active');
+                else btnBold.classList.remove('active');
+            }
+            if (btnItalic) {
+                if (this.textOptions.isItalic) btnItalic.classList.add('active');
+                else btnItalic.classList.remove('active');
+            }
+
+            const textControls = document.getElementById('text-controls');
+            if (textControls) textControls.style.display = 'flex';
+            const decalControls = document.getElementById('decal-controls');
+            if (decalControls) decalControls.style.display = 'none';
+
+            document.querySelectorAll('.tool-btn[data-mode]').forEach(b => b.classList.remove('active'));
+            document.querySelector('.tool-btn[data-mode="text"]')?.classList.add('active');
+            const brushMode = document.getElementById('brush-mode');
+            if (brushMode) brushMode.value = 'text';
+        } else {
+            this.isTextMode = false;
+            const textControls = document.getElementById('text-controls');
+            if (textControls) textControls.style.display = 'none';
+            const controls = document.getElementById('decal-controls');
+            if (controls) controls.style.display = 'flex';
+
+            const scaleInput = document.getElementById('decal-scale');
+            const rotInput = document.getElementById('decal-rotation');
+            const rotLabel = document.getElementById('decal-rot-label');
+            if (scaleInput && decal.baseWidth) {
+                const scalePct = Math.round((decal.width / decal.baseWidth) * 100);
+                scaleInput.value = Math.min(300, Math.max(10, scalePct));
+            }
+            if (rotInput && rotLabel) {
+                const deg = Math.round((decal.rotation * 180 / Math.PI) % 360);
+                const normDeg = deg > 180 ? deg - 360 : (deg < -180 ? deg + 360 : deg);
+                rotInput.value = normDeg;
+                rotLabel.textContent = `${normDeg}°`;
+            }
+            const thumb = document.getElementById('decal-preview-thumb');
+            if (thumb && (decal.img || decal.dataUrl)) {
+                thumb.style.display = 'block';
+                thumb.style.backgroundImage = decal.dataUrl ? `url(${decal.dataUrl})` : (decal.img && decal.img.src ? `url(${decal.img.src})` : '');
+            }
+
+            const isShape = ['rect', 'circle', 'star', 'line'].includes(decal.type);
+            const shapeBar = document.getElementById('shape-controls');
+            if (isShape) {
+                if (shapeBar) shapeBar.style.display = 'flex';
+                if (controls) controls.style.display = 'none';
+
+                if (!decal.shapeOptions) {
+                    decal.shapeOptions = {
+                        type: decal.type,
+                        color: '#000000',
+                        size: 2,
+                        fillColor: 'transparent',
+                        x1: 0, y1: 0,
+                        x2: decal.width || 200, y2: decal.height || 200
+                    };
+                }
+                const shapeBarFill = document.getElementById('shape-bar-fill-color');
+                const shapeBarStroke = document.getElementById('shape-bar-stroke-color');
+                const shapeScaleInput = document.getElementById('shape-scale');
+                const shapeRotInput = document.getElementById('shape-rotation');
+                const shapeRotVal = document.getElementById('shape-rot-val');
+
+                if (shapeBarFill) {
+                    shapeBarFill.value = (decal.shapeOptions.fillColor && decal.shapeOptions.fillColor !== 'transparent')
+                        ? decal.shapeOptions.fillColor
+                        : '#ffff00';
+                }
+                if (shapeBarStroke) {
+                    shapeBarStroke.value = (decal.shapeOptions.color && decal.shapeOptions.color !== 'transparent')
+                        ? decal.shapeOptions.color
+                        : '#000000';
+                }
+                if (shapeScaleInput && decal.baseWidth) {
+                    const scalePct = Math.round((decal.width / decal.baseWidth) * 100);
+                    shapeScaleInput.value = Math.min(300, Math.max(10, scalePct));
+                }
+                if (shapeRotInput && shapeRotVal) {
+                    const deg = Math.round((decal.rotation * 180 / Math.PI) % 360);
+                    const normDeg = deg > 180 ? deg - 360 : (deg < -180 ? deg + 360 : deg);
+                    shapeRotInput.value = normDeg;
+                    shapeRotVal.textContent = `${normDeg}°`;
+                }
+            } else {
+                if (shapeBar) shapeBar.style.display = 'none';
+                if (controls) controls.style.display = 'flex';
+            }
+        }
+
+        const btnMode2D = document.getElementById('btn-decal-mode-2d');
+        const btnMode3D = document.getElementById('btn-decal-mode-3d');
+        btnMode2D?.classList.add('active');
+        btnMode3D?.classList.remove('active');
+
+        this.render2DPreview();
+        if (this.layerManager) {
+            this.layerManager.recomposite();
+            this.layerManager.renderUI();
+        }
+        if (this.painter) {
+            this.painter.needsUpdate = true;
+            this.painter.forceUpdate = true;
+            this.painter.uiNeedsUpdate = true;
+        }
+    }
+
+    deselectDecal() {
+        this.selectedDecalId = null;
+        this.isActive = false;
+        this.clear2DUI();
+        const controls = document.getElementById('decal-controls');
+        if (controls) controls.style.display = 'none';
+        const shapeBar = document.getElementById('shape-controls');
+        if (shapeBar) shapeBar.style.display = 'none';
+        const shapeControls = document.getElementById('shape-style-controls');
+        if (shapeControls) shapeControls.style.display = 'none';
+        const textControls = document.getElementById('text-controls');
+        if (textControls) textControls.style.display = 'none';
+        this.canvas.style.cursor = 'default';
+        if (this.painter) this.painter.uiNeedsUpdate = true;
+        if (this.layerManager) this.layerManager.renderUI();
+    }
+
+    updateSelectedShapeFillFromColor(col) {
+        if (!this.selectedDecalId || !this.layerManager) return;
+        const activeLayer = this.layerManager.getActiveLayer();
+        if (!activeLayer) return;
+        const decal = activeLayer.getDecal(this.selectedDecalId);
+        if (!decal || !['rect', 'circle', 'star', 'line'].includes(decal.type)) return;
+
+        if (!decal.shapeOptions) {
+            decal.shapeOptions = {
+                type: decal.type,
+                color: '#000000',
+                size: 2,
+                fillColor: col,
+                x1: 0, y1: 0,
+                x2: decal.width || 200, y2: decal.height || 200
+            };
+        } else {
+            decal.shapeOptions.fillColor = col;
+        }
+
+        const fillInput = document.getElementById('shape-bar-fill-color');
+        if (fillInput) fillInput.value = col;
+
+        if (window.painter && window.painter.createShapeCanvas) {
+            const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
+            decal.img = newCanvas;
+            try {
+                decal.dataUrl = newCanvas.toDataURL('image/png');
+            } catch (_) {}
+            this.currentDecalImage = newCanvas;
+            this.syncCurrentDecalToObject(true);
+            this.render2DPreview();
+            if (this.layerManager) this.layerManager.renderUI();
+        }
+    }
+
+    findDecalAt(canvasX, canvasY) {
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        if (!activeLayer || !activeLayer.decals || activeLayer.decals.length === 0) return null;
+
+        for (let i = activeLayer.decals.length - 1; i >= 0; i--) {
+            const d = activeLayer.decals[i];
+            if (d.visible === false) continue;
+            const dx = canvasX - d.x;
+            const dy = canvasY - d.y;
+            const cos = Math.cos(-d.rotation);
+            const sin = Math.sin(-d.rotation);
+            const lx = dx * cos - dy * sin;
+            const ly = dx * sin + dy * cos;
+            if (Math.abs(lx) <= d.width / 2 && Math.abs(ly) <= d.height / 2) {
+                return d;
+            }
+        }
+        return null;
+    }
+
+    duplicateSelectedDecal() {
+        if (!this.selectedDecalId) return;
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        if (!activeLayer) return;
+        const cur = activeLayer.getDecal(this.selectedDecalId);
+        if (!cur) return;
+
+        const clone = {
+            ...cur,
+            id: 'decal_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+            name: cur.name + ' (copia)',
+            x: cur.x + 25,
+            y: cur.y + 25
+        };
+        activeLayer.addDecal(clone);
+        this.selectDecal(clone);
+    }
+
+    deleteSelectedDecal() {
+        if (!this.selectedDecalId) return;
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        if (activeLayer) {
+            activeLayer.removeDecal(this.selectedDecalId);
+            this.deselectDecal();
+            if (this.layerManager) {
+                this.layerManager.recomposite();
+                this.layerManager.renderUI();
+            }
+            if (this.painter) {
+                this.painter.needsUpdate = true;
+                this.painter.forceUpdate = true;
+            }
+            if (this.texture) {
+                this.texture.needsUpdate = true;
+            }
+        }
+    }
+
+    scheduleSync(force = false) {
+        if (this._syncRaf) return;
+        this._syncRaf = requestAnimationFrame(() => {
+            this._syncRaf = null;
+            this.syncCurrentDecalToObject(force);
+            this.render2DPreview();
+        });
+    }
+
+    syncCurrentDecalToObject(force = true) {
+        if (!this.selectedDecalId || !this.layerManager) return;
+        const activeLayer = this.layerManager.getActiveLayer();
+        if (!activeLayer || !activeLayer.decals) return;
+        const dObj = activeLayer.getDecal(this.selectedDecalId);
+        if (!dObj) return;
+
+        dObj.x = this.decal2D.x;
+        dObj.y = this.decal2D.y;
+        dObj.width = this.decal2D.width;
+        dObj.height = this.decal2D.height;
+        dObj.baseWidth = this.decal2D.baseWidth;
+        dObj.baseHeight = this.decal2D.baseHeight;
+        dObj.rotation = this.decal2D.rotation;
+        if (this.currentDecalImage) {
+            dObj.img = this.currentDecalImage;
+        }
+
+        this.layerManager.recomposite();
+        if (this.painter) {
+            this.painter.needsUpdate = true;
+            if (force) {
+                this.painter.forceUpdate = true;
+            }
+        }
+        if (force && this.texture) {
+            this.texture.needsUpdate = true;
+        }
     }
 
     startTextMode(opts = {}) {
@@ -447,7 +1003,7 @@ export class DecalSystem {
             isBold: document.getElementById('btn-text-bold')?.classList.contains('active') ?? true,
             isItalic: document.getElementById('btn-text-italic')?.classList.contains('active') ?? false,
             color: document.getElementById('text-color')?.value || '#111111',
-            mode: '3d'
+            mode: this.mode || '3d'
         }, opts);
 
         const decalControls = document.getElementById('decal-controls');
@@ -515,10 +1071,58 @@ export class DecalSystem {
         const target2DHeight = Math.max(20, o.fontSize * 2.5);
         const target2DWidth = target2DHeight * aspect;
 
+        // Sincronizar / crear objeto de texto en la capa activa
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        let textObj = null;
+        if (activeLayer) {
+            if (this.selectedDecalId) {
+                textObj = activeLayer.getDecal(this.selectedDecalId);
+                if (textObj && textObj.type !== 'text') {
+                    textObj = null;
+                }
+            }
+
+            const dataUrl = offscreen.toDataURL('image/png');
+            const displayName = (o.text && o.text.trim()) ? `Texto: "${o.text.substring(0, 14)}"` : 'Texto';
+
+            if (!textObj) {
+                const count = (activeLayer.decals ? activeLayer.decals.filter(d => d.type === 'text').length : 0) + 1;
+                textObj = {
+                    id: 'text_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                    name: displayName,
+                    type: 'text',
+                    textOptions: { ...o },
+                    img: offscreen,
+                    dataUrl: dataUrl,
+                    x: this.decal2D?.x || this.canvas.width / 2,
+                    y: this.decal2D?.y || this.canvas.height / 2,
+                    width: target2DWidth,
+                    height: target2DHeight,
+                    baseWidth: target2DWidth,
+                    baseHeight: target2DHeight,
+                    rotation: (o.rotation * Math.PI) / 180,
+                    opacity: 1.0,
+                    visible: true
+                };
+                activeLayer.addDecal(textObj);
+                this.selectedDecalId = textObj.id;
+            } else {
+                textObj.img = offscreen;
+                textObj.dataUrl = dataUrl;
+                textObj.name = displayName;
+                textObj.textOptions = { ...o };
+                textObj.width = target2DWidth;
+                textObj.height = target2DHeight;
+                textObj.baseWidth = target2DWidth;
+                textObj.baseHeight = target2DHeight;
+                textObj.rotation = (o.rotation * Math.PI) / 180;
+            }
+        }
+
         if (!this.decal2D || !this.decal2D.x) {
             this.decal2D = {
-                x: this.canvas.width / 2,
-                y: this.canvas.height / 2,
+                x: textObj ? textObj.x : this.canvas.width / 2,
+                y: textObj ? textObj.y : this.canvas.height / 2,
                 width: target2DWidth,
                 height: target2DHeight,
                 baseWidth: target2DWidth,
@@ -567,6 +1171,19 @@ export class DecalSystem {
         this.setMode(this.textOptions.mode || this.mode || '3d');
         this.updatePreviewTransform();
         this.render2DPreview();
+
+        if (this.layerManager) {
+            this.layerManager.recomposite();
+            this.layerManager.renderUI();
+        }
+        if (this.painter) {
+            this.painter.needsUpdate = true;
+            this.painter.forceUpdate = true;
+            this.painter.uiNeedsUpdate = true;
+        }
+        if (this.texture) {
+            this.texture.needsUpdate = true;
+        }
     }
 
     cancelDecal() {
@@ -736,46 +1353,49 @@ export class DecalSystem {
         }
 
         // Profundidad óptima: suficiente para abrazar la curvatura del fuselaje sin atravesar el objeto
-        const depth = Math.min(scaleX, scaleY) * 0.8;
+        const depth = Math.max(scaleX, scaleY) * (this.allowPassthrough ? 3.0 : 1.8);
         const size = new THREE.Vector3(scaleX, scaleY, depth);
         const orientation = new THREE.Euler().setFromQuaternion(finalQuat);
 
         this.currentProjectorOrientation = orientation;
         this.currentProjectorSize = size;
 
-        // 3. Generar DecalGeometry adaptada a la curvatura 3D
-        let targetMesh = null;
-        if (this.mesh) {
-            this.mesh.traverse(c => {
-                if (c.isMesh && !targetMesh) targetMesh = c;
-            });
-        }
+        // 3. Generar DecalGeometry adaptada a la curvatura 3D (soportando múltiples mallas como fuselaje + alas)
+        const candidateMeshes = this.getMeshesToBake();
+        const decalGeos = [];
 
-        if (targetMesh) {
+        for (const targetMesh of candidateMeshes) {
             try {
-                let decalGeo = new DecalGeometry(targetMesh, this.projectorPosition, orientation, size);
-                decalGeo = this.filterDecalGeometry(decalGeo, this.projectorNormal, this.allowPassthrough);
-                if (decalGeo.attributes.position && decalGeo.attributes.position.count > 0) {
-                    this.previewMesh.geometry.dispose();
-                    this.previewMesh.geometry = decalGeo;
-                    this.previewMesh.visible = true;
-
-                    const edges = new THREE.EdgesGeometry(decalGeo);
-                    this.previewBorder.geometry.dispose();
-                    this.previewBorder.geometry = edges;
-                    this.previewBorder.visible = true;
-
-                    this.fallbackPlane.visible = false;
-                    this.fallbackBorder.visible = false;
-
-                    this.previewGroup.position.set(0, 0, 0);
-                    this.previewGroup.quaternion.identity();
-                    this.previewGroup.scale.set(1, 1, 1);
-                    return;
+                let geo = new DecalGeometry(targetMesh, this.projectorPosition, orientation, size);
+                geo = this.filterDecalGeometry(geo, this.projectorNormal, this.allowPassthrough);
+                if (geo.attributes.position && geo.attributes.position.count > 0) {
+                    decalGeos.push(geo);
+                } else {
+                    geo.dispose();
                 }
             } catch (err) {
-                console.warn('Error en DecalGeometry:', err);
+                // Silenciosamente continuar con las otras mallas
             }
+        }
+
+        if (decalGeos.length > 0) {
+            const decalGeo = this.mergeDecalGeometries(decalGeos);
+            this.previewMesh.geometry.dispose();
+            this.previewMesh.geometry = decalGeo;
+            this.previewMesh.visible = true;
+
+            const edges = new THREE.EdgesGeometry(decalGeo);
+            this.previewBorder.geometry.dispose();
+            this.previewBorder.geometry = edges;
+            this.previewBorder.visible = true;
+
+            this.fallbackPlane.visible = false;
+            this.fallbackBorder.visible = false;
+
+            this.previewGroup.position.set(0, 0, 0);
+            this.previewGroup.quaternion.identity();
+            this.previewGroup.scale.set(1, 1, 1);
+            return;
         }
 
         // Respaldo plano si el cursor sale de la malla
@@ -789,10 +1409,57 @@ export class DecalSystem {
         this.fallbackBorder.visible = true;
     }
 
+    getMeshesToBake() {
+        const meshes = [];
+        if (this.mesh) {
+            this.mesh.traverse(c => {
+                if (c.isMesh && !c.userData?.isSelectionOverlay && c.geometry && c.geometry.attributes && c.geometry.attributes.uv) {
+                    meshes.push(c);
+                }
+            });
+        }
+        return meshes;
+    }
+
+    mergeDecalGeometries(geos) {
+        if (geos.length === 1) return geos[0];
+        let totalPos = 0, totalNorm = 0, totalUv = 0;
+        for (const g of geos) {
+            totalPos += g.attributes.position ? g.attributes.position.array.length : 0;
+            totalNorm += g.attributes.normal ? g.attributes.normal.array.length : 0;
+            totalUv += g.attributes.uv ? g.attributes.uv.array.length : 0;
+        }
+        const posArr = new Float32Array(totalPos);
+        const normArr = totalNorm > 0 ? new Float32Array(totalNorm) : null;
+        const uvArr = totalUv > 0 ? new Float32Array(totalUv) : null;
+
+        let posOff = 0, normOff = 0, uvOff = 0;
+        for (const g of geos) {
+            if (g.attributes.position) {
+                posArr.set(g.attributes.position.array, posOff);
+                posOff += g.attributes.position.array.length;
+            }
+            if (normArr && g.attributes.normal) {
+                normArr.set(g.attributes.normal.array, normOff);
+                normOff += g.attributes.normal.array.length;
+            }
+            if (uvArr && g.attributes.uv) {
+                uvArr.set(g.attributes.uv.array, uvOff);
+                uvOff += g.attributes.uv.array.length;
+            }
+            g.dispose();
+        }
+        const merged = new THREE.BufferGeometry();
+        merged.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+        if (normArr) merged.setAttribute('normal', new THREE.BufferAttribute(normArr, 3));
+        if (uvArr) merged.setAttribute('uv', new THREE.BufferAttribute(uvArr, 2));
+        return merged;
+    }
+
     /**
      * Filtra los triángulos generados por DecalGeometry.
-     * Si allowPassthrough es false, elimina los triángulos cuyas normales apuntan en sentido contrario
-     * al proyector (dot < 0.08), evitando que la calca se proyecte en la cara inferior de alas delgadas o caras opuestas.
+     * Si allowPassthrough es false, elimina solo las caras opuestas (> 110°, dot < -0.35),
+     * permitiendo que la calca/mancha abrace perfectamente uniones a 90° (como fuselaje con alas).
      */
     filterDecalGeometry(decalGeo, projectorNormal, allowPassthrough) {
         if (allowPassthrough) return decalGeo;
@@ -822,8 +1489,8 @@ export class DecalSystem {
             edge2.subVectors(v2, v0);
             faceNormal.crossVectors(edge1, edge2).normalize();
 
-            // Descartar caras opuestas al proyector
-            if (faceNormal.dot(projectorNormal) >= 0.08) {
+            // Descartar solo caras totalmente opuestas al proyector (permite abrazar uniones de 90° como fuselaje a ala)
+            if (faceNormal.dot(projectorNormal) >= -0.35) {
                 for (let j = 0; j < 3; j++) {
                     const idx = i + j;
                     filteredPos.push(pos.getX(idx), pos.getY(idx), pos.getZ(idx));
@@ -851,6 +1518,142 @@ export class DecalSystem {
     }
 
     // ==========================================
+    // PREVISUALIZACIÓN 2D GPU DESDE MODO 3D
+    // ==========================================
+
+    initPreviewBake() {
+        if (this.previewBakeMaterial) return;
+
+        this.previewRenderTarget = new THREE.WebGLRenderTarget(512, 512, {
+            format: THREE.RGBAFormat,
+            type: THREE.UnsignedByteType
+        });
+        this.previewOrthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        this.previewBakeScene = new THREE.Scene();
+
+        this.previewBakeMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                uProjectorMatrix: { value: new THREE.Matrix4() },
+                uProjectorNormal: { value: new THREE.Vector3() },
+                uDecalTexture: { value: null },
+                uModelMatrix: { value: new THREE.Matrix4() },
+                uAllowPassthrough: { value: 0.0 }
+            },
+            vertexShader: `
+                varying vec3 vWorldPosition;
+                varying vec3 vWorldNormal;
+                uniform mat4 uModelMatrix;
+
+                void main() {
+                    vec4 worldPos = uModelMatrix * vec4(position, 1.0);
+                    vWorldPosition = worldPos.xyz;
+                    vWorldNormal = normalize((uModelMatrix * vec4(normal, 0.0)).xyz);
+                    gl_Position = vec4(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, 0.0, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform mat4 uProjectorMatrix;
+                uniform vec3 uProjectorNormal;
+                uniform sampler2D uDecalTexture;
+                uniform float uAllowPassthrough;
+
+                varying vec3 vWorldPosition;
+                varying vec3 vWorldNormal;
+
+                void main() {
+                    if (uAllowPassthrough < 0.5) {
+                        if (dot(vWorldNormal, uProjectorNormal) < -0.35) discard;
+                    }
+
+                    vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
+                    if (abs(p.x) > 0.5 || abs(p.y) > 0.5 || abs(p.z) > 0.5) discard;
+
+                    vec2 decalUV = vec2(p.x + 0.5, p.y + 0.5);
+                    vec4 col = texture2D(uDecalTexture, decalUV);
+                    if (col.a < 0.01) discard;
+
+                    gl_FragColor = col;
+                }
+            `,
+            side: THREE.DoubleSide,
+            transparent: true
+        });
+
+        this.previewOffscreenCanvas = document.createElement('canvas');
+        this.previewOffscreenCanvas.width = 512;
+        this.previewOffscreenCanvas.height = 512;
+        this.previewOffscreenCtx = this.previewOffscreenCanvas.getContext('2d');
+        this.previewPixelBuffer = new Uint8Array(512 * 512 * 4);
+    }
+
+    schedule2DPreview3D() {
+        if (this._preview3DPending) return;
+        this._preview3DPending = true;
+        requestAnimationFrame(() => {
+            this._preview3DPending = false;
+            if (this.isActive && this.mode === '3d') {
+                this.render2DPreview3D();
+            }
+        });
+    }
+
+    render2DPreview3D() {
+        if (!this.isActive || !this.currentDecalImage || !this.ctxUI || !this.renderer || !this.mesh) return;
+
+        this.initPreviewBake();
+
+        const orientation = this.currentProjectorOrientation || new THREE.Euler();
+        const size = this.currentProjectorSize || new THREE.Vector3(1, 1, 1);
+
+        const projectorWorldMatrix = new THREE.Matrix4();
+        projectorWorldMatrix.makeRotationFromEuler(orientation);
+        projectorWorldMatrix.setPosition(this.projectorPosition);
+        projectorWorldMatrix.multiply(new THREE.Matrix4().makeScale(size.x, size.y, size.z));
+        const inverseProjectorMatrix = projectorWorldMatrix.clone().invert();
+
+        const meshesToBake = this.getMeshesToBake();
+        if (meshesToBake.length === 0) return;
+
+        while (this.previewBakeScene.children.length > 0) {
+            this.previewBakeScene.remove(this.previewBakeScene.children[0]);
+        }
+
+        this.previewBakeMaterial.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
+        this.previewBakeMaterial.uniforms.uProjectorNormal.value.copy(this.projectorNormal);
+        this.previewBakeMaterial.uniforms.uDecalTexture.value = this.decalTexture;
+        this.previewBakeMaterial.uniforms.uAllowPassthrough.value = this.allowPassthrough ? 1.0 : 0.0;
+
+        meshesToBake.forEach(m => {
+            const meshClone = new THREE.Mesh(m.geometry, this.previewBakeMaterial);
+            meshClone.material.uniforms.uModelMatrix.value.copy(m.matrixWorld);
+            this.previewBakeScene.add(meshClone);
+        });
+
+        const prevTarget = this.renderer.getRenderTarget();
+        const prevClearAlpha = this.renderer.getClearAlpha();
+        const prevClearColor = this.renderer.getClearColor(new THREE.Color());
+
+        this.renderer.setRenderTarget(this.previewRenderTarget);
+        this.renderer.setClearColor(0x000000, 0.0);
+        this.renderer.clear(true, true, true);
+        this.renderer.render(this.previewBakeScene, this.previewOrthoCamera);
+        this.renderer.setRenderTarget(prevTarget);
+        this.renderer.setClearColor(prevClearColor, prevClearAlpha);
+
+        this.renderer.readRenderTargetPixels(this.previewRenderTarget, 0, 0, 512, 512, this.previewPixelBuffer);
+        const imgData = new ImageData(new Uint8ClampedArray(this.previewPixelBuffer.buffer), 512, 512);
+        this.previewOffscreenCtx.putImageData(imgData, 0, 0);
+
+        this.clear2DUI();
+        this.ctxUI.save();
+        this.ctxUI.imageSmoothingEnabled = true;
+        this.ctxUI.imageSmoothingQuality = 'high';
+        this.ctxUI.globalAlpha = 0.9;
+        this.ctxUI.drawImage(this.previewOffscreenCanvas, 0, 0, this.canvasUI.width, this.canvasUI.height);
+        this.ctxUI.restore();
+    }
+
+    // ==========================================
     // SISTEMA DE CALCOMANÍAS 2D (Fidelidad 1:1)
     // ==========================================
 
@@ -871,8 +1674,17 @@ export class DecalSystem {
     }
 
     render2DPreview() {
-        if (!this.isActive || !this.currentDecalImage || !this.ctxUI) return;
+        if (!this.isActive || !this.ctxUI) return;
+
+        if (this.mode === '3d') {
+            this.schedule2DPreview3D();
+            return;
+        }
+
         this.clear2DUI();
+
+        // En Modo 2D, si no hay calca seleccionada, dejar la UI limpia
+        if (!this.selectedDecalId) return;
 
         const d = this.decal2D;
         const ctx = this.ctxUI;
@@ -885,85 +1697,75 @@ export class DecalSystem {
         ctx.translate(d.x, d.y);
         ctx.rotate(d.rotation);
 
-        // 1. Dibujar imagen de calcomanía nítida
-        ctx.drawImage(this.currentDecalImage, -halfW, -halfH, d.width, d.height);
-
-        if (this.mode === '3d') {
-            // Modo 3D: Mostrar caja y cruceta de REGISTRO simultáneo en 2D
-            ctx.strokeStyle = '#00f3ff';
-            ctx.setLineDash([6, 4]);
-            ctx.lineWidth = 2.5;
-            ctx.strokeRect(-halfW, -halfH, d.width, d.height);
-            ctx.setLineDash([]);
-
-            // Cruceta de centro de impacto
-            ctx.strokeStyle = '#00f3ff';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(-14, 0); ctx.lineTo(14, 0);
-            ctx.moveTo(0, -14); ctx.lineTo(0, 14);
-            ctx.stroke();
-
-            // Etiqueta indicadora
-            ctx.fillStyle = '#00f3ff';
-            ctx.font = 'bold 12px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('📍 Registro 3D (2D Listo)', 0, halfH + 18);
-        } else {
-            // Modo 2D: Controles interactivos con nodos de escala y rotación
-            ctx.strokeStyle = '#00a2ff';
-            ctx.setLineDash([6, 6]);
-            ctx.lineWidth = 2;
-            ctx.strokeRect(-halfW, -halfH, d.width, d.height);
-            ctx.setLineDash([]);
-
-            const maxDim = Math.max(d.width, d.height);
-            const handleRadius = Math.max(6, Math.min(12, maxDim / 15));
-
-            const drawHandle = (hx, hy, isRotate = false, isEdge = false) => {
-                ctx.fillStyle = isRotate ? '#00e5ff' : (isEdge ? '#ffffff' : '#00a2ff');
-                ctx.strokeStyle = isRotate ? '#0078d7' : (isEdge ? '#00a2ff' : '#ffffff');
-                ctx.lineWidth = 2;
-                if (isRotate) {
-                    ctx.beginPath();
-                    ctx.arc(hx, hy, handleRadius + 2, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.stroke();
-                } else {
-                    ctx.fillRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
-                    ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
-                }
-            };
-
-            // Esquinas (escala proporcional)
-            drawHandle(-halfW, -halfH);
-            drawHandle( halfW, -halfH);
-            drawHandle(-halfW,  halfH);
-            drawHandle( halfW,  halfH);
-
-            // Bordes (ajuste de anchura o altura)
-            drawHandle(0, -halfH, false, true);
-            drawHandle(0,  halfH, false, true);
-            drawHandle(-halfW, 0, false, true);
-            drawHandle( halfW, 0, false, true);
-
-            // Palo de rotación
-            const stemLength = Math.max(30, handleRadius * 3);
-            ctx.beginPath();
-            ctx.moveTo(0, -halfH);
-            ctx.lineTo(0, -halfH - stemLength);
-            ctx.strokeStyle = '#00a2ff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            drawHandle(0, -halfH - stemLength, true);
+        // Si la calca no estuviera aún en la capa activa, dibujarla aquí
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        const inLayer = activeLayer && activeLayer.decals && activeLayer.decals.some(x => x.id === this.selectedDecalId);
+        if (!inLayer && this.currentDecalImage) {
+            ctx.drawImage(this.currentDecalImage, -halfW, -halfH, d.width, d.height);
         }
+
+        // Modo 2D: Controles interactivos con nodos de escala y rotación transparentes
+        ctx.strokeStyle = '#0078d7';
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(-halfW, -halfH, d.width, d.height);
+        ctx.setLineDash([]);
+
+        const minDim = Math.min(d.width, d.height);
+        const handleRadius = Math.max(3.5, Math.min(6, Math.round(minDim / 12)));
+        const showEdgeHandles = d.width >= 36 && d.height >= 36;
+
+        const drawHandle = (hx, hy, isRotate = false) => {
+            // Nodos con interior 100% transparente para ver el panelado y la figura debajo
+            if (isRotate) {
+                ctx.beginPath();
+                ctx.arc(hx, hy, handleRadius + 1, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.strokeStyle = '#0078d7';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            } else {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
+                ctx.strokeStyle = '#0078d7';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
+            }
+        };
+
+        // Esquinas (escala proporcional)
+        drawHandle(-halfW, -halfH);
+        drawHandle( halfW, -halfH);
+        drawHandle(-halfW,  halfH);
+        drawHandle( halfW,  halfH);
+
+        // Bordes (ajuste de anchura o altura) - solo visibles si el tamaño lo amerita
+        if (showEdgeHandles) {
+            drawHandle(0, -halfH);
+            drawHandle(0,  halfH);
+            drawHandle(-halfW, 0);
+            drawHandle( halfW, 0);
+        }
+
+        // Palo de rotación proporcional
+        const stemLength = Math.max(16, Math.min(28, Math.round(minDim * 0.25 + 10)));
+        ctx.beginPath();
+        ctx.moveTo(0, -halfH);
+        ctx.lineTo(0, -halfH - stemLength);
+        ctx.strokeStyle = '#0078d7';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        drawHandle(0, -halfH - stemLength, true);
 
         ctx.restore();
     }
 
     hitTest2D(canvasX, canvasY) {
-        if (!this.isActive || this.mode !== '2d') return null;
+        if (!this.isActive || this.mode !== '2d' || !this.selectedDecalId) return null;
 
         const d = this.decal2D;
         const dx = canvasX - d.x;
@@ -975,13 +1777,18 @@ export class DecalSystem {
 
         const halfW = d.width / 2;
         const halfH = d.height / 2;
-        const maxDim = Math.max(d.width, d.height);
-        const handleRadius = Math.max(6, Math.min(12, maxDim / 15));
-        const tol = Math.max(14, handleRadius + 6);
-        const stemLength = Math.max(30, handleRadius * 3);
+        const minDim = Math.min(d.width, d.height);
+        const handleRadius = Math.max(3.5, Math.min(6, Math.round(minDim / 12)));
+        const stemLength = Math.max(16, Math.min(28, Math.round(minDim * 0.25 + 10)));
+        const showEdgeHandles = d.width >= 36 && d.height >= 36;
+
+        // Tolerancia delimitada dinámicamente para no solapar la zona central de arrastre
+        const maxTol = Math.max(4, Math.min(halfW, halfH) * 0.45);
+        const tol = Math.max(4, Math.min(handleRadius + 3, maxTol));
+        const rotTol = Math.max(6, handleRadius + 4);
 
         // 1. Nodo de rotación
-        if (Math.hypot(lx, ly - (-halfH - stemLength)) <= tol) {
+        if (Math.hypot(lx, ly - (-halfH - stemLength)) <= rotTol) {
             return 'rotate';
         }
 
@@ -992,10 +1799,12 @@ export class DecalSystem {
         if (Math.abs(lx - ( halfW)) <= tol && Math.abs(ly - ( halfH)) <= tol) return 'se';
 
         // 3. Bordes (n, s, w, e)
-        if (Math.abs(lx - 0) <= tol && Math.abs(ly - (-halfH)) <= tol) return 'n';
-        if (Math.abs(lx - 0) <= tol && Math.abs(ly - ( halfH)) <= tol) return 's';
-        if (Math.abs(lx - (-halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'w';
-        if (Math.abs(lx - ( halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'e';
+        if (showEdgeHandles) {
+            if (Math.abs(lx - 0) <= tol && Math.abs(ly - (-halfH)) <= tol) return 'n';
+            if (Math.abs(lx - 0) <= tol && Math.abs(ly - ( halfH)) <= tol) return 's';
+            if (Math.abs(lx - (-halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'w';
+            if (Math.abs(lx - ( halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'e';
+        }
 
         // 4. Interior de la calcomanía (mover)
         if (Math.abs(lx) <= halfW && Math.abs(ly) <= halfH) {
@@ -1006,32 +1815,62 @@ export class DecalSystem {
     }
 
     onPointerDown2D(e) {
-        if (!this.isActive || this.mode !== '2d' || e.button !== 0) return;
+        if (e.button !== 0 || this.mode !== '2d') return;
         const { x, y } = this.getCanvas2DCoords(e);
-        const hit = this.hitTest2D(x, y);
-        if (hit) {
+
+        // 1. Si hay una calca seleccionada, verificar si se hizo clic en sus nodos o su interior
+        if (this.selectedDecalId) {
+            const hit = this.hitTest2D(x, y);
+            if (hit) {
+                this.decal2D.isDragging = true;
+                this.decal2D.dragHandle = hit;
+                this.decal2D.dragOffset = { x: x - this.decal2D.x, y: y - this.decal2D.y };
+                this.decal2D.initialDecal = { ...this.decal2D };
+                this.decal2D.dragStart = { x, y };
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return;
+            }
+        }
+
+        // 2. Si no se tocó la calca seleccionada, buscar si se hizo clic sobre OTRA pegatina de la capa activa
+        const clickedDecal = this.findDecalAt(x, y);
+        if (clickedDecal) {
+            this.selectDecal(clickedDecal);
             this.decal2D.isDragging = true;
-            this.decal2D.dragHandle = hit;
+            this.decal2D.dragHandle = 'move';
             this.decal2D.dragOffset = { x: x - this.decal2D.x, y: y - this.decal2D.y };
             this.decal2D.initialDecal = { ...this.decal2D };
             this.decal2D.dragStart = { x, y };
             e.stopPropagation();
+            e.stopImmediatePropagation();
+            return;
+        }
+
+        // 3. Clic en espacio vacío: deseleccionar para dejar el lienzo despejado
+        if (this.selectedDecalId) {
+            this.deselectDecal();
         }
     }
 
     onPointerMove2D(e) {
-        if (!this.isActive || this.mode !== '2d') return;
+        if (this.mode !== '2d') return;
         const { x, y } = this.getCanvas2DCoords(e);
 
         if (!this.decal2D.isDragging) {
-            const hit = this.hitTest2D(x, y);
-            if (hit === 'rotate') this.canvas.style.cursor = 'grab';
-            else if (hit === 'move') this.canvas.style.cursor = 'move';
-            else if (['nw', 'se'].includes(hit)) this.canvas.style.cursor = 'nwse-resize';
-            else if (['ne', 'sw'].includes(hit)) this.canvas.style.cursor = 'nesw-resize';
-            else if (['n', 's'].includes(hit)) this.canvas.style.cursor = 'ns-resize';
-            else if (['e', 'w'].includes(hit)) this.canvas.style.cursor = 'ew-resize';
-            else this.canvas.style.cursor = 'default';
+            if (this.selectedDecalId) {
+                const hit = this.hitTest2D(x, y);
+                if (hit === 'rotate') { this.canvas.style.cursor = 'grab'; return; }
+                else if (hit === 'move') { this.canvas.style.cursor = 'move'; return; }
+                else if (['nw', 'se'].includes(hit)) { this.canvas.style.cursor = 'nwse-resize'; return; }
+                else if (['ne', 'sw'].includes(hit)) { this.canvas.style.cursor = 'nesw-resize'; return; }
+                else if (['n', 's'].includes(hit)) { this.canvas.style.cursor = 'ns-resize'; return; }
+                else if (['e', 'w'].includes(hit)) { this.canvas.style.cursor = 'ew-resize'; return; }
+            }
+            const hoverDecal = this.findDecalAt(x, y);
+            if (hoverDecal) {
+                this.canvas.style.cursor = 'pointer';
+            }
             return;
         }
 
@@ -1106,13 +1945,20 @@ export class DecalSystem {
             d.width = Math.max(20, Math.abs(lx) * 2);
         }
 
-        this.render2DPreview();
+        this.scheduleSync(false);
     }
 
     onPointerUp2D(e) {
         if (this.decal2D && this.decal2D.isDragging) {
+            if (this._syncRaf) {
+                cancelAnimationFrame(this._syncRaf);
+                this._syncRaf = null;
+            }
             this.decal2D.isDragging = false;
             this.decal2D.dragHandle = null;
+            this.syncCurrentDecalToObject(true);
+            this.render2DPreview();
+            if (this.layerManager) this.layerManager.renderUI();
         }
     }
 
@@ -1125,32 +1971,37 @@ export class DecalSystem {
     }
 
     bake2DToActiveLayer() {
-        if (!this.isActive || !this.currentDecalImage) {
-            alert(this.isTextMode ? 'Introduce un texto para estampar.' : 'Carga primero una imagen de calcomanía.');
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        if (!activeLayer) return;
+
+        if (this.selectedDecalId && activeLayer.getDecal && activeLayer.getDecal(this.selectedDecalId)) {
+            if (this.painter) this.painter.saveUndoState();
+            activeLayer.bakeDecal(this.selectedDecalId);
+        } else if (activeLayer.decals && activeLayer.decals.length > 0) {
+            if (this.painter) this.painter.saveUndoState();
+            activeLayer.bakeDecals();
+        } else if (this.currentDecalImage && this.isActive) {
+            if (this.painter) this.painter.saveUndoState();
+            const isEditingMask = (activeLayer.hasMask && activeLayer.isEditingMask);
+            const targetCtx = isEditingMask ? activeLayer.maskCtx : activeLayer.ctx;
+            const d = this.decal2D;
+            targetCtx.save();
+            targetCtx.imageSmoothingEnabled = true;
+            targetCtx.imageSmoothingQuality = 'high';
+            targetCtx.translate(d.x, d.y);
+            targetCtx.rotate(d.rotation);
+            targetCtx.drawImage(this.currentDecalImage, -d.width / 2, -d.height / 2, d.width, d.height);
+            targetCtx.restore();
+        } else {
+            alert('No hay pegatinas en la capa activa para estampar.');
             return;
         }
 
-        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-        const targetCtx = activeLayer ? activeLayer.ctx : this.canvas.getContext('2d');
+        this.deselectDecal();
 
-        // 1. Guardar historial Deshacer (Ctrl + Z)
-        if (this.painter) {
-            this.painter.saveUndoState();
-        }
-
-        // 2. Dibujar directamente en la capa activa con máxima fidelidad 1:1
-        const d = this.decal2D;
-        targetCtx.save();
-        targetCtx.imageSmoothingEnabled = true;
-        targetCtx.imageSmoothingQuality = 'high';
-        targetCtx.translate(d.x, d.y);
-        targetCtx.rotate(d.rotation);
-        targetCtx.drawImage(this.currentDecalImage, -d.width / 2, -d.height / 2, d.width, d.height);
-        targetCtx.restore();
-
-        // 3. Recomponer capas y actualizar texturas 3D
         if (this.layerManager) {
             this.layerManager.recomposite();
+            this.layerManager.renderUI();
         }
         if (this.painter) {
             this.painter.needsUpdate = true;
@@ -1159,21 +2010,21 @@ export class DecalSystem {
         if (this.texture) {
             this.texture.needsUpdate = true;
         }
+        if (window.papercraft && window.papercraft.active && window.renderUnfoldWorkbench) {
+            window.renderUnfoldWorkbench();
+        }
 
         // Feedback visual en botón
         const btn2D = this.isTextMode ? document.getElementById('btn-text-bake-2d') : document.getElementById('btn-bake-decal-2d');
         if (btn2D) {
             const oldText = btn2D.textContent;
-            btn2D.textContent = '✅ ¡Estampado!';
+            btn2D.textContent = '✅ ¡Estampado a Capa!';
             btn2D.style.backgroundColor = '#1e7e34';
             setTimeout(() => { 
                 btn2D.textContent = oldText; 
                 btn2D.style.backgroundColor = '#28a745';
             }, 1200);
         }
-
-        // Dejar la calca visible para seguir editando o estampando más copias
-        this.render2DPreview();
     }
 
     /**
@@ -1187,8 +2038,9 @@ export class DecalSystem {
         }
 
         const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-        const targetCanvas = activeLayer ? activeLayer.canvas : this.canvas;
-        const targetCtx = activeLayer ? activeLayer.ctx : this.canvas.getContext('2d');
+        const isEditingMask = (activeLayer && activeLayer.hasMask && activeLayer.isEditingMask);
+        const targetCanvas = isEditingMask ? activeLayer.maskCanvas : (activeLayer ? activeLayer.canvas : this.canvas);
+        const targetCtx = isEditingMask ? activeLayer.maskCtx : (activeLayer ? activeLayer.ctx : this.canvas.getContext('2d'));
         const width = targetCanvas.width;
         const height = targetCanvas.height;
 
@@ -1208,13 +2060,7 @@ export class DecalSystem {
         const inverseProjectorMatrix = projectorWorldMatrix.clone().invert();
 
         // 3. Mallas objetivo a proyectar
-        const meshesToBake = [];
-        this.mesh.traverse(c => {
-            if (c.isMesh && c.geometry && c.geometry.attributes && c.geometry.attributes.uv) {
-                meshesToBake.push(c);
-            }
-        });
-
+        const meshesToBake = this.getMeshesToBake();
         if (meshesToBake.length === 0) return;
 
         // 4. Shader de Despliegue UV por Hardware (RTX)
@@ -1250,10 +2096,10 @@ export class DecalSystem {
                 varying vec3 vWorldNormal;
 
                 void main() {
-                    // Si no está habilitado traspasar, descartar caras perpendiculares o que apuntan en sentido contrario
-                    // (Evita manchar caras a 90° o el otro lado del fuselaje / alas finas, pero abraza suavemente curvas de hasta ~75°)
+                    // Si no está habilitado traspasar, descartar solo caras totalmente opuestas (> 110°)
+                    // (Permite abrazar suavemente uniones a 90° como fuselaje con alas y curvaturas)
                     if (uAllowPassthrough < 0.5) {
-                        if (dot(vWorldNormal, uProjectorNormal) < 0.20) discard;
+                        if (dot(vWorldNormal, uProjectorNormal) < -0.35) discard;
                     }
 
                     vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
@@ -1317,10 +2163,15 @@ export class DecalSystem {
         offCtx.putImageData(imgData, 0, 0);
 
         targetCtx.save();
+        let clipApplied3D = false;
+        if (window.selectionManager) {
+            clipApplied3D = window.selectionManager.applyClip(targetCtx);
+        }
         targetCtx.imageSmoothingEnabled = true;
         targetCtx.imageSmoothingQuality = 'high';
         targetCtx.globalCompositeOperation = 'source-over';
         targetCtx.drawImage(offscreen, 0, 0);
+        if (clipApplied3D) targetCtx.restore();
         targetCtx.restore();
 
         // 7. Limpiar recursos GPU
@@ -1328,8 +2179,13 @@ export class DecalSystem {
         bakeMaterial.dispose();
 
         // 8. Recomponer capas y actualizar vistas
+        if (activeLayer && this.selectedDecalId) {
+            activeLayer.removeDecal(this.selectedDecalId);
+            this.selectedDecalId = null;
+        }
         if (this.layerManager) {
             this.layerManager.recomposite();
+            this.layerManager.renderUI();
         }
         if (this.painter) {
             this.painter.needsUpdate = true;
@@ -1337,6 +2193,9 @@ export class DecalSystem {
         }
         if (this.texture) {
             this.texture.needsUpdate = true;
+        }
+        if (window.papercraft && window.papercraft.active && window.renderUnfoldWorkbench) {
+            window.renderUnfoldWorkbench();
         }
 
         // Feedback visual en botón
@@ -1353,5 +2212,6 @@ export class DecalSystem {
 
         // Dejar fijada la calca por si quiere moverla o estampar en otro lugar
         this.isLocked = true;
+        this.clear2DUI();
     }
 }

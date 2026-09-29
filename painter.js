@@ -36,6 +36,11 @@ export class Painter {
 
         // Patrón / Textura activa
         this.currentPatternCanvas = null;
+        this.previousMode = 'paint';
+
+        // Sistema de Selección
+        this.selectionManager = null;
+        this.isSelecting = false;
         
         // Interpolación
         this.lastU = null;
@@ -43,12 +48,19 @@ export class Painter {
         this.lastDrawX = null;
         this.lastDrawY = null;
         
-        // Sistema de Undo (Ctrl+Z)
+        // Sistema de Undo / Redo (Ctrl+Z / Ctrl+Y)
         this.undoStack = [];
-        this.maxUndo = 15;
+        this.redoStack = [];
+        this.maxUndo = 30;
         
         window.addEventListener('keydown', (e) => {
-            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) {
+            const isTextEditing = e.target && (
+                e.target.tagName === 'TEXTAREA' ||
+                (e.target.tagName === 'INPUT' && ['text', 'search', 'password', 'number'].includes(e.target.type)) ||
+                e.target.isContentEditable
+            );
+
+            if (isTextEditing) {
                 if (e.key === 'Enter' && e.target.id === 'text-input-value') {
                     if (this.textState && this.textState.active) {
                         this.commitText();
@@ -56,8 +68,21 @@ export class Painter {
                 }
                 return;
             }
-            if (e.ctrlKey && e.key === 'z') {
+
+            const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+            const isKeyZ = e.code === 'KeyZ' || e.key === 'z' || e.key === 'Z';
+            const isKeyY = e.code === 'KeyY' || e.key === 'y' || e.key === 'Y';
+
+            if (isCtrlOrMeta && isKeyZ && !e.shiftKey) {
+                e.preventDefault();
                 this.undo();
+                return;
+            }
+
+            if ((isCtrlOrMeta && isKeyZ && e.shiftKey) || (isCtrlOrMeta && isKeyY)) {
+                e.preventDefault();
+                this.redo();
+                return;
             } else if (e.key === 'Enter') {
                 if (this.textState && this.textState.active) {
                     this.commitText();
@@ -67,26 +92,71 @@ export class Painter {
                     this.commitShape();
                 }
             } else if (e.key === 'Escape') {
-                if (this.textState && this.textState.active) {
+                if (this.selectionManager && (this.selectionManager.active || this.selectionManager.creating)) {
+                    this.selectionManager.deselect();
+                    this.clearUI();
+                } else if (this.textState && this.textState.active) {
                     this.cancelText();
                 } else if (this.transformState && this.transformState.active) {
                     this.cancelLayerTransform();
+                }
+            } else if (e.key === 'Delete') {
+                if (this.selectionManager && this.selectionManager.active) {
+                    this.saveUndoState();
+                    this.selectionManager.deleteContent(this.layerManager);
+                    this.needsUpdate = true;
+                    this.forceUpdate = true;
                 }
             }
         });
         
         this.setupEvents();
         this.setupBrushCursor();
+        this.updateUndoRedoUI();
     }
 
     setLayerManager(lm) {
         this.layerManager = lm;
     }
 
+    setSelectionManager(sm) {
+        this.selectionManager = sm;
+    }
+
+    applyMaskClip(targetCtx) {
+        if (this.selectionManager && this.selectionManager.active) {
+            return this.selectionManager.applyClip(targetCtx);
+        }
+        return false;
+    }
+
+    isPointSelected(x, y) {
+        if (this.selectionManager && this.selectionManager.active) {
+            return this.selectionManager.isPointSelected(x, y, this.ctx);
+        }
+        return true;
+    }
+
+    restorePreviousTool() {
+        const prevMode = (this.previousMode && !['select_rect', 'select_lasso', 'eyedropper'].includes(this.previousMode)) ? this.previousMode : 'paint';
+        const targetBtn = document.querySelector(`.tool-btn[data-mode="${prevMode}"]`) || document.querySelector('.tool-btn[data-mode="paint"]');
+        if (targetBtn) {
+            targetBtn.click();
+        } else {
+            const brushModeInput = document.getElementById('brush-mode');
+            if (brushModeInput) brushModeInput.value = prevMode;
+        }
+    }
+
     getActiveCtx() {
         if (this.layerManager) {
             const layer = this.layerManager.getActiveLayer();
-            if (layer) return layer.ctx;
+            if (layer) {
+                if (layer.hasMask && layer.isEditingMask && layer.maskCtx) {
+                    return layer.maskCtx;
+                }
+                return layer.ctx;
+            }
         }
         return this.ctx;
     }
@@ -94,7 +164,12 @@ export class Painter {
     getActiveCanvas() {
         if (this.layerManager) {
             const layer = this.layerManager.getActiveLayer();
-            if (layer) return layer.canvas;
+            if (layer) {
+                if (layer.hasMask && layer.isEditingMask && layer.maskCanvas) {
+                    return layer.maskCanvas;
+                }
+                return layer.canvas;
+            }
         }
         return this.canvas;
     }
@@ -107,10 +182,16 @@ export class Painter {
         if (this.undoStack.length >= this.maxUndo) this.undoStack.shift();
         const ctx = this.getActiveCtx();
         const canvas = this.getActiveCanvas();
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        if (!ctx || !canvas) return;
+
         this.undoStack.push({
-            layerId: this.layerManager ? this.layerManager.activeLayerId : null,
+            layerId: activeLayer ? activeLayer.id : null,
+            isMask: activeLayer ? (activeLayer.hasMask && activeLayer.isEditingMask) : false,
             data: ctx.getImageData(0, 0, canvas.width, canvas.height)
         });
+        this.redoStack = [];
+        this.updateUndoRedoUI();
     }
 
     undo() {
@@ -118,22 +199,101 @@ export class Painter {
             this.cancelLayerTransform();
             return;
         }
-        if (this.editingShape) this.commitShape();
-        if (this.undoStack.length > 0) {
-            const lastState = this.undoStack.pop();
-            if (this.layerManager && lastState.layerId) {
-                const layer = this.layerManager.layers.find(l => l.id === lastState.layerId);
-                if (layer) {
+        if (this.editingShape) {
+            this.editingShape = null;
+            this.dragMode = null;
+            this.clearUI();
+        }
+        if (this.undoStack.length === 0) return;
+
+        // Guardar estado actual en pila de rehacer
+        const ctx = this.getActiveCtx();
+        const canvas = this.getActiveCanvas();
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        if (ctx && canvas) {
+            this.redoStack.push({
+                layerId: activeLayer ? activeLayer.id : null,
+                isMask: activeLayer ? (activeLayer.hasMask && activeLayer.isEditingMask) : false,
+                data: ctx.getImageData(0, 0, canvas.width, canvas.height)
+            });
+        }
+
+        const lastState = this.undoStack.pop();
+        if (this.layerManager && lastState.layerId) {
+            const layer = this.layerManager.layers.find(l => l.id === lastState.layerId);
+            if (layer) {
+                if (lastState.isMask && layer.maskCtx) {
+                    layer.maskCtx.putImageData(lastState.data, 0, 0);
+                } else {
                     layer.ctx.putImageData(lastState.data, 0, 0);
-                    this.layerManager.recomposite();
                 }
-            } else if (lastState.data) {
-                this.ctx.putImageData(lastState.data, 0, 0);
-            } else {
-                this.ctx.putImageData(lastState, 0, 0);
+                this.layerManager.recomposite();
+                this.layerManager.renderUI();
             }
-            this.needsUpdate = true;
-            this.forceUpdate = true;
+        } else if (lastState.data && this.ctx) {
+            this.ctx.putImageData(lastState.data, 0, 0);
+        } else if (lastState.data) {
+            const activeCtx = this.getActiveCtx();
+            if (activeCtx) activeCtx.putImageData(lastState.data, 0, 0);
+        }
+
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
+        this.updateUndoRedoUI();
+    }
+
+    redo() {
+        if (this.redoStack.length === 0) return;
+
+        const ctx = this.getActiveCtx();
+        const canvas = this.getActiveCanvas();
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        if (ctx && canvas) {
+            this.undoStack.push({
+                layerId: activeLayer ? activeLayer.id : null,
+                isMask: activeLayer ? (activeLayer.hasMask && activeLayer.isEditingMask) : false,
+                data: ctx.getImageData(0, 0, canvas.width, canvas.height)
+            });
+        }
+
+        const nextState = this.redoStack.pop();
+        if (this.layerManager && nextState.layerId) {
+            const layer = this.layerManager.layers.find(l => l.id === nextState.layerId);
+            if (layer) {
+                if (nextState.isMask && layer.maskCtx) {
+                    layer.maskCtx.putImageData(nextState.data, 0, 0);
+                } else {
+                    layer.ctx.putImageData(nextState.data, 0, 0);
+                }
+                this.layerManager.recomposite();
+                this.layerManager.renderUI();
+            }
+        } else if (nextState.data && this.ctx) {
+            this.ctx.putImageData(nextState.data, 0, 0);
+        } else if (nextState.data) {
+            const activeCtx = this.getActiveCtx();
+            if (activeCtx) activeCtx.putImageData(nextState.data, 0, 0);
+        }
+
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
+        this.updateUndoRedoUI();
+    }
+
+    updateUndoRedoUI() {
+        const btnUndo = document.getElementById('btn-undo');
+        const btnRedo = document.getElementById('btn-redo');
+        if (btnUndo) {
+            btnUndo.disabled = (this.undoStack.length === 0);
+            btnUndo.style.opacity = (this.undoStack.length === 0) ? '0.4' : '1';
+            btnUndo.style.cursor = (this.undoStack.length === 0) ? 'not-allowed' : 'pointer';
+        }
+        if (btnRedo) {
+            btnRedo.disabled = (this.redoStack.length === 0);
+            btnRedo.style.opacity = (this.redoStack.length === 0) ? '0.4' : '1';
+            btnRedo.style.cursor = (this.redoStack.length === 0) ? 'not-allowed' : 'pointer';
         }
     }
 
@@ -142,14 +302,52 @@ export class Painter {
         
         view3d.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
-            if (window.decalSystem && (window.decalSystem.isActive || window.decalSystem.isTextMode)) return;
+            const mode = document.getElementById('brush-mode')?.value || 'paint';
+            if (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '3d') {
+                return;
+            }
             if (this.editingShape) this.commitShape();
             if (!this.mesh) return; // Must have a mesh loaded
             
             try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
             
-            const mode = document.getElementById('brush-mode').value;
-            
+            if (mode === 'eyedropper' || e.altKey) {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && i.uv);
+                if (hit) {
+                    const x = hit.uv.x * this.canvas.width;
+                    const y = (1 - hit.uv.y) * this.canvas.height;
+                    this.pickColor(x, y);
+                    if (mode === 'eyedropper') {
+                        this.restorePreviousTool();
+                    }
+                }
+                return;
+            }
+
+            // Selección en Vista 3D (Lazo libre 3D y Rectángulo)
+            if (mode === 'select_rect' || mode === 'select_lasso') {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
+                if (hit && this.selectionManager) {
+                    const x = hit.uv.x * this.canvas.width;
+                    const y = (1 - hit.uv.y) * this.canvas.height;
+                    this.selectionManager.startCreation(mode, x, y);
+                    this.isSelecting = true;
+                    this.uiNeedsUpdate = true;
+                }
+                return;
+            }
+
+
             if (mode === 'text') {
                 const rect = this.renderer.domElement.getBoundingClientRect();
                 this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -220,7 +418,6 @@ export class Painter {
                     const y = (1 - uv.y) * this.canvas.height;
                     
                     this.saveUndoState();
-                    this.savedCanvasData = this.getActiveCtx().getImageData(0, 0, this.canvas.width, this.canvas.height);
                     const settings = this.getBrushSettings();
                     this.editingShape = {
                         type: mode,
@@ -245,7 +442,42 @@ export class Painter {
         });
         
         view3d.addEventListener('pointermove', (e) => {
+            const mode = document.getElementById('brush-mode')?.value;
+            if ((mode === 'select_rect' || mode === 'select_lasso') && e.buttons === 1 && !this.isSelecting && this.mesh && this.selectionManager) {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
+                if (hit) {
+                    const x = hit.uv.x * this.canvas.width;
+                    const y = (1 - hit.uv.y) * this.canvas.height;
+                    this.selectionManager.startCreation(mode, x, y);
+                    this.isSelecting = true;
+                    this.uiNeedsUpdate = true;
+                    return;
+                }
+            }
+
+            if (this.isSelecting && this.selectionManager && this.selectionManager.creating) {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
+                if (hit) {
+                    const x = hit.uv.x * this.canvas.width;
+                    const y = (1 - hit.uv.y) * this.canvas.height;
+                    this.selectionManager.updateCreation(x, y);
+                    this.uiNeedsUpdate = true;
+                }
+                return;
+            }
+
             if (this.isPainting) this.paint3D(e);
+
             if (this.isPaintingShape3D && this.editingShape && this.dragMode === 'create') {
                 const rect = this.renderer.domElement.getBoundingClientRect();
                 this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -366,19 +598,21 @@ export class Painter {
                     this.lastDrawY = null;
                     this.needsUpdate = true;
                     this.forceUpdate = true;
+                    if (this.layerManager) {
+                        this.layerManager.renderUI();
+                    }
                 }
                 if (this.isPaintingShape3D) {
                     this.isPaintingShape3D = false;
                     this.dragMode = null;
-                    const dx = this.editingShape.x2 - this.editingShape.x1;
-                    const dy = this.editingShape.y2 - this.editingShape.y1;
+                    const dx = this.editingShape ? (this.editingShape.x2 - this.editingShape.x1) : 0;
+                    const dy = this.editingShape ? (this.editingShape.y2 - this.editingShape.y1) : 0;
                     if (Math.abs(dx) < 2 && Math.abs(dy) < 2) {
                         this.editingShape = null;
-                        this.getActiveCtx().putImageData(this.savedCanvasData, 0, 0);
                         this.clearUI();
                         if (this.layerManager) this.layerManager.recomposite();
                     } else {
-                        this.renderEditingShape();
+                        this.commitShape();
                     }
                 }
                 else if (this.editingShape && this.dragMode) {
@@ -388,11 +622,10 @@ export class Painter {
                     if (Math.abs(dx) < 2 && Math.abs(dy) < 2) {
                         // Descartar figura muy pequeña
                         this.editingShape = null;
-                        this.getActiveCtx().putImageData(this.savedCanvasData, 0, 0);
                         this.clearUI();
                         if (this.layerManager) this.layerManager.recomposite();
                     } else {
-                        this.renderEditingShape(); // Dibuja los nodos de control
+                        this.commitShape();
                     }
                 }
                 if (this.transformState && this.transformState.isDragging) {
@@ -403,12 +636,21 @@ export class Painter {
                     this.textState.isDragging = false;
                     this.textState.dragHandle = null;
                 }
+                if (this.isSelecting && this.selectionManager) {
+                    this.selectionManager.commitCreation();
+                    this.isSelecting = false;
+                    this.uiNeedsUpdate = true;
+                }
             }
         });
         
         this.canvas.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
-            if (window.decalSystem && (window.decalSystem.isActive || window.decalSystem.isTextMode)) return;
+            if (window.decalSystem && window.decalSystem.decal2D && window.decalSystem.decal2D.isDragging) return;
+            const mode = document.getElementById('brush-mode')?.value || 'paint';
+            if (window.decalSystem && window.decalSystem.isTextMode && mode !== 'text') {
+                window.decalSystem.cancelDecal();
+            }
             
             const rect = this.canvas.getBoundingClientRect();
             // Obtener coordenadas locales al canvas (resolución)
@@ -429,21 +671,26 @@ export class Painter {
                 return;
             }
 
-            const mode = document.getElementById('brush-mode').value;
-
-            if (mode === 'text' || (this.textState && this.textState.active)) {
-                if (!this.textState || !this.textState.active) {
-                    this.startTextTool();
+            if (mode === 'select_rect' || mode === 'select_lasso') {
+                if (this.selectionManager) {
+                    this.selectionManager.startCreation(mode, x, y);
+                    this.isSelecting = true;
+                    this.uiNeedsUpdate = true;
                 }
-                const hit = this.hitTestText(x, y);
-                if (hit) {
-                    this.textState.isDragging = true;
-                    this.textState.dragHandle = hit;
-                    this.textState.dragOffset = { x: x - this.textState.x, y: y - this.textState.y };
-                } else {
-                    this.textState.x = x;
-                    this.textState.y = y;
-                    this.renderTextUI();
+                return;
+            }
+
+            if (mode === 'eyedropper' || e.altKey) {
+                this.pickColor(x, y);
+                if (mode === 'eyedropper') {
+                    this.restorePreviousTool();
+                }
+                return;
+            }
+
+            if (mode === 'text') {
+                if (window.decalSystem) {
+                    window.decalSystem.startTextMode();
                 }
                 return;
             }
@@ -470,7 +717,14 @@ export class Painter {
             }
             
             if (['line', 'rect', 'circle', 'star'].includes(mode)) {
-                this.savedCanvasData = this.getActiveCtx().getImageData(0, 0, this.canvas.width, this.canvas.height);
+                if (window.decalSystem && window.decalSystem.selectedDecalId) {
+                    const hit = window.decalSystem.hitTest2D(x, y);
+                    if (hit) {
+                        return; // Dejar que decalSystem gestione el arrastre de tiradores del objeto
+                    }
+                    window.decalSystem.deselectDecal();
+                }
+
                 const settings = this.getBrushSettings();
                 this.editingShape = {
                     type: mode,
@@ -496,13 +750,19 @@ export class Painter {
         });
         
         this.canvas.addEventListener('pointermove', (e) => {
-            if (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '2d') return;
+            if (window.decalSystem && window.decalSystem.decal2D && window.decalSystem.decal2D.isDragging) return;
             const rect = this.canvas.getBoundingClientRect();
             const scaleX = this.canvas.width / rect.width;
             const scaleY = this.canvas.height / rect.height;
             const x = (e.clientX - rect.left) * scaleX;
             const y = (e.clientY - rect.top) * scaleY;
             
+            if (this.isSelecting && this.selectionManager) {
+                this.selectionManager.updateCreation(x, y);
+                this.uiNeedsUpdate = true;
+                return;
+            }
+
             if (this.textState && this.textState.active && !this.textState.isDragging) {
                 const hit = this.hitTestText(x, y);
                 if (hit === 'rotate') this.canvas.style.cursor = 'grab';
@@ -667,20 +927,173 @@ export class Painter {
         });
     }
 
-    // --- Lógica del Bounding Box (Mover/Escalar Formas) ---
+    // --- Lógica de UI Overlay (Bounding Box, Transformación y Selección) ---
     clearUI() {
         if (this.ctxUI) {
             this.ctxUI.clearRect(0, 0, this.canvasUI.width, this.canvasUI.height);
+            if (this.selectionManager && this.selectionManager.active) {
+                this.selectionManager.renderOverlay(this.ctxUI);
+            }
             this.uiNeedsUpdate = true;
         }
     }
+
+    updateUI(time = 0) {
+        if (!this.ctxUI) return;
+        this.ctxUI.clearRect(0, 0, this.canvasUI.width, this.canvasUI.height);
+        let hasActiveOverlay = false;
+
+        if (this.selectionManager && (this.selectionManager.active || this.selectionManager.creating)) {
+            this.selectionManager.dashOffset = (time / 80) % 12;
+            this.selectionManager.renderOverlay(this.ctxUI);
+            hasActiveOverlay = true;
+        }
+        if (this.transformState && this.transformState.active) {
+            this.renderTransformUI();
+            hasActiveOverlay = true;
+        } else if (this.editingShape) {
+            this.renderShapeUI();
+            hasActiveOverlay = true;
+        }
+        this.uiNeedsUpdate = hasActiveOverlay;
+    }
     
+    createShapeCanvas(s) {
+        if (!s) return null;
+        const dx = Math.abs(s.x2 - s.x1);
+        const dy = Math.abs(s.y2 - s.y1);
+        if (dx < 2 && dy < 2) return null;
+
+        const strokeW = Math.max(1, s.size * 2);
+        const pad = Math.ceil(strokeW) + 8;
+        const w = Math.max(10, Math.round(dx));
+        const h = Math.max(10, Math.round(dy));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = w + pad * 2;
+        canvas.height = h + pad * 2;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        ctx.lineWidth = strokeW;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = s.color || '#000000';
+        ctx.fillStyle = s.color || '#000000';
+
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+
+        ctx.beginPath();
+        if (s.type === 'line') {
+            const rawDx = s.x2 - s.x1;
+            const rawDy = s.y2 - s.y1;
+            ctx.moveTo(cx - rawDx / 2, cy - rawDy / 2);
+            ctx.lineTo(cx + rawDx / 2, cy + rawDy / 2);
+            ctx.stroke();
+        } else if (s.type === 'rect') {
+            ctx.rect(cx - w / 2, cy - h / 2, w, h);
+            if (s.fillColor && s.fillColor !== 'transparent') {
+                ctx.fillStyle = s.fillColor;
+                ctx.fill();
+            }
+            if (s.color && s.color !== 'transparent') {
+                ctx.strokeStyle = s.color;
+                ctx.stroke();
+            }
+        } else if (s.type === 'circle') {
+            ctx.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2);
+            if (s.fillColor && s.fillColor !== 'transparent') {
+                ctx.fillStyle = s.fillColor;
+                ctx.fill();
+            }
+            if (s.color && s.color !== 'transparent') {
+                ctx.strokeStyle = s.color;
+                ctx.stroke();
+            }
+        } else if (s.type === 'star') {
+            const rx = w / 2;
+            const ry = h / 2;
+            const spikes = 5;
+            let rot = (Math.PI / 2) * 3;
+            const step = Math.PI / spikes;
+            ctx.moveTo(cx, cy - ry);
+            for (let i = 0; i < spikes; i++) {
+                ctx.lineTo(cx + Math.cos(rot) * rx, cy + Math.sin(rot) * ry);
+                rot += step;
+                ctx.lineTo(cx + Math.cos(rot) * (rx * 0.4), cy + Math.sin(rot) * (ry * 0.4));
+                rot += step;
+            }
+            ctx.lineTo(cx, cy - ry);
+            ctx.closePath();
+            if (s.fillColor && s.fillColor !== 'transparent') {
+                ctx.fillStyle = s.fillColor;
+                ctx.fill();
+            }
+            if (s.color && s.color !== 'transparent') {
+                ctx.strokeStyle = s.color;
+                ctx.stroke();
+            }
+        }
+
+        return canvas;
+    }
+
     commitShape() {
+        if (!this.editingShape) return;
+        const s = this.editingShape;
+
+        // 1. Generar canvas de alta fidelidad y agregarlo como objeto vivo a la capa activa
+        const shapeCanvas = this.createShapeCanvas(s);
+        if (shapeCanvas) {
+            const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+            if (activeLayer) {
+                const shapeNames = {
+                    rect: 'Rectángulo',
+                    circle: 'Círculo',
+                    line: 'Línea',
+                    star: 'Estrella'
+                };
+                const count = (activeLayer.decals ? activeLayer.decals.filter(d => d.type === s.type).length : 0) + 1;
+                const shapeName = `${shapeNames[s.type] || 'Forma'} ${count}`;
+                const cx = (s.x1 + s.x2) / 2;
+                const cy = (s.y1 + s.y2) / 2;
+                const w = shapeCanvas.width;
+                const h = shapeCanvas.height;
+
+                const shapeObj = {
+                    id: 'shape_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                    name: shapeName,
+                    type: s.type,
+                    shapeOptions: { ...s },
+                    img: shapeCanvas,
+                    dataUrl: shapeCanvas.toDataURL('image/png'),
+                    x: cx,
+                    y: cy,
+                    width: w,
+                    height: h,
+                    baseWidth: w,
+                    baseHeight: h,
+                    rotation: s.angle || 0,
+                    opacity: 1.0,
+                    visible: true
+                };
+
+                activeLayer.addDecal(shapeObj);
+                if (window.decalSystem) {
+                    window.decalSystem.setMode('2d');
+                    window.decalSystem.selectDecal(shapeObj);
+                }
+            }
+        }
+
         this.editingShape = null;
         this.dragMode = null;
         this.clearUI();
         if (this.layerManager) {
             this.layerManager.recomposite();
+            this.layerManager.renderUI();
         }
         this.needsUpdate = true;
         this.forceUpdate = true;
@@ -745,65 +1158,85 @@ export class Painter {
         return null;
     }
 
+    renderShapeUI() {
+        this.renderEditingShape();
+    }
+
     renderEditingShape() {
-        if (!this.editingShape) return;
+        if (!this.editingShape || !this.ctxUI) return;
         const s = this.editingShape;
-        const activeCtx = this.getActiveCtx();
-        activeCtx.putImageData(this.savedCanvasData, 0, 0);
         this.clearUI();
         
         const cx = (s.x1 + s.x2) / 2;
         const cy = (s.y1 + s.y2) / 2;
         
-        activeCtx.save();
-        activeCtx.translate(cx, cy);
-        activeCtx.rotate(s.angle);
-        activeCtx.translate(-cx, -cy);
+        this.ctxUI.save();
+        this.ctxUI.translate(cx, cy);
+        this.ctxUI.rotate(s.angle || 0);
+        this.ctxUI.translate(-cx, -cy);
         
-        activeCtx.lineWidth = s.size * 2;
-        activeCtx.lineCap = 'round';
-        activeCtx.lineJoin = 'round';
-        activeCtx.strokeStyle = s.color;
-        activeCtx.fillStyle = s.color;
+        this.ctxUI.lineWidth = s.size * 2;
+        this.ctxUI.lineCap = 'round';
+        this.ctxUI.lineJoin = 'round';
+        this.ctxUI.strokeStyle = s.color;
+        this.ctxUI.fillStyle = s.color;
         
-        activeCtx.beginPath();
+        this.ctxUI.beginPath();
         if (s.type === 'line') {
-            activeCtx.moveTo(s.x1, s.y1);
-            activeCtx.lineTo(s.x2, s.y2);
-            activeCtx.stroke();
+            this.ctxUI.moveTo(s.x1, s.y1);
+            this.ctxUI.lineTo(s.x2, s.y2);
+            this.ctxUI.stroke();
         } else if (s.type === 'rect') {
             const minX = Math.min(s.x1, s.x2);
             const minY = Math.min(s.y1, s.y2);
-            activeCtx.rect(minX, minY, Math.abs(s.x2 - s.x1), Math.abs(s.y2 - s.y1));
-            activeCtx.stroke();
+            this.ctxUI.rect(minX, minY, Math.abs(s.x2 - s.x1), Math.abs(s.y2 - s.y1));
+            if (s.fillColor && s.fillColor !== 'transparent') {
+                this.ctxUI.fillStyle = s.fillColor;
+                this.ctxUI.fill();
+            }
+            if (s.color && s.color !== 'transparent') {
+                this.ctxUI.strokeStyle = s.color;
+                this.ctxUI.stroke();
+            }
         } else if (s.type === 'circle') {
             const rx = Math.abs(s.x2 - s.x1) / 2;
             const ry = Math.abs(s.y2 - s.y1) / 2;
-            activeCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-            activeCtx.stroke();
+            this.ctxUI.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+            if (s.fillColor && s.fillColor !== 'transparent') {
+                this.ctxUI.fillStyle = s.fillColor;
+                this.ctxUI.fill();
+            }
+            if (s.color && s.color !== 'transparent') {
+                this.ctxUI.strokeStyle = s.color;
+                this.ctxUI.stroke();
+            }
         } else if (s.type === 'star') {
             const rx = Math.abs(s.x2 - s.x1) / 2;
             const ry = Math.abs(s.y2 - s.y1) / 2;
             const spikes = 5;
             let rot = Math.PI / 2 * 3;
             let step = Math.PI / spikes;
-            activeCtx.moveTo(cx, cy - ry);
+            this.ctxUI.moveTo(cx, cy - ry);
             for (let i = 0; i < spikes; i++) {
-                activeCtx.lineTo(cx + Math.cos(rot) * rx, cy + Math.sin(rot) * ry);
+                this.ctxUI.lineTo(cx + Math.cos(rot) * rx, cy + Math.sin(rot) * ry);
                 rot += step;
-                activeCtx.lineTo(cx + Math.cos(rot) * (rx * 0.4), cy + Math.sin(rot) * (ry * 0.4));
+                this.ctxUI.lineTo(cx + Math.cos(rot) * (rx * 0.4), cy + Math.sin(rot) * (ry * 0.4));
                 rot += step;
             }
-            activeCtx.lineTo(cx, cy - ry);
-            activeCtx.closePath();
-            activeCtx.stroke();
+            this.ctxUI.lineTo(cx, cy - ry);
+            this.ctxUI.closePath();
+            if (s.fillColor && s.fillColor !== 'transparent') {
+                this.ctxUI.fillStyle = s.fillColor;
+                this.ctxUI.fill();
+            }
+            if (s.color && s.color !== 'transparent') {
+                this.ctxUI.strokeStyle = s.color;
+                this.ctxUI.stroke();
+            }
         }
         
-        activeCtx.restore();
-        if (this.layerManager) {
-            this.layerManager.recomposite();
-        }
-        this.needsUpdate = true;
+        this.ctxUI.restore();
+        this.uiNeedsUpdate = true;
         
         // Dibujar nodos de control en UI
         if (!this.dragMode && this.ctxUI) {
@@ -827,16 +1260,21 @@ export class Painter {
             const handleRadius = Math.max(4, Math.min(8, maxDim / 10));
             
             const drawHandle = (x, y, isRotate = false) => {
-                this.ctxUI.fillStyle = isRotate ? '#00e5ff' : '#fff';
-                this.ctxUI.strokeStyle = '#0078d7';
-                this.ctxUI.lineWidth = 2;
                 if (isRotate) {
                     this.ctxUI.beginPath();
-                    this.ctxUI.arc(x, y, handleRadius, 0, Math.PI*2);
-                    this.ctxUI.fill();
+                    this.ctxUI.arc(x, y, handleRadius, 0, Math.PI * 2);
+                    this.ctxUI.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                    this.ctxUI.lineWidth = 3;
+                    this.ctxUI.stroke();
+                    this.ctxUI.strokeStyle = '#0078d7';
+                    this.ctxUI.lineWidth = 1.5;
                     this.ctxUI.stroke();
                 } else {
-                    this.ctxUI.fillRect(x - handleRadius, y - handleRadius, handleRadius * 2, handleRadius * 2);
+                    this.ctxUI.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                    this.ctxUI.lineWidth = 3;
+                    this.ctxUI.strokeRect(x - handleRadius, y - handleRadius, handleRadius * 2, handleRadius * 2);
+                    this.ctxUI.strokeStyle = '#0078d7';
+                    this.ctxUI.lineWidth = 1.5;
                     this.ctxUI.strokeRect(x - handleRadius, y - handleRadius, handleRadius * 2, handleRadius * 2);
                 }
             };
@@ -959,27 +1397,33 @@ export class Painter {
         ctx.rotate(t.rotation);
 
         // 1. Marco delimitador punteado
-        ctx.strokeStyle = '#00a2ff';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 6]);
+        ctx.strokeStyle = '#0078d7';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
         ctx.strokeRect(-halfW, -halfH, t.width, t.height);
         ctx.setLineDash([]);
 
         // 2. Tiradores
-        const maxDim = Math.max(t.width, t.height);
-        const handleRadius = Math.max(6, Math.min(12, maxDim / 15));
+        const minDim = Math.min(t.width, t.height);
+        const handleRadius = Math.max(3.5, Math.min(6, Math.round(minDim / 12)));
+        const showEdgeHandles = t.width >= 36 && t.height >= 36;
 
-        const drawHandle = (hx, hy, isRotate = false, isEdge = false) => {
-            ctx.fillStyle = isRotate ? '#00e5ff' : (isEdge ? '#ffffff' : '#00a2ff');
-            ctx.strokeStyle = isRotate ? '#0078d7' : (isEdge ? '#00a2ff' : '#ffffff');
-            ctx.lineWidth = 2;
+        const drawHandle = (hx, hy, isRotate = false) => {
             if (isRotate) {
                 ctx.beginPath();
-                ctx.arc(hx, hy, handleRadius + 2, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.arc(hx, hy, handleRadius + 1, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.strokeStyle = '#0078d7';
+                ctx.lineWidth = 1.5;
                 ctx.stroke();
             } else {
-                ctx.fillRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
+                ctx.strokeStyle = '#0078d7';
+                ctx.lineWidth = 1.5;
                 ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
             }
         };
@@ -991,18 +1435,20 @@ export class Painter {
         drawHandle( halfW,  halfH);
 
         // Bordes (ajuste de ancho o alto)
-        drawHandle(0, -halfH, false, true);
-        drawHandle(0,  halfH, false, true);
-        drawHandle(-halfW, 0, false, true);
-        drawHandle( halfW, 0, false, true);
+        if (showEdgeHandles) {
+            drawHandle(0, -halfH);
+            drawHandle(0,  halfH);
+            drawHandle(-halfW, 0);
+            drawHandle( halfW, 0);
+        }
 
         // Mástil y tirador de rotación
-        const stemLength = Math.max(30, handleRadius * 3);
+        const stemLength = Math.max(16, Math.min(28, Math.round(minDim * 0.25 + 10)));
         ctx.beginPath();
         ctx.moveTo(0, -halfH);
         ctx.lineTo(0, -halfH - stemLength);
-        ctx.strokeStyle = '#00a2ff';
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#0078d7';
+        ctx.lineWidth = 1.5;
         ctx.stroke();
 
         drawHandle(0, -halfH - stemLength, true);
@@ -1023,13 +1469,18 @@ export class Painter {
 
         const halfW = t.width / 2;
         const halfH = t.height / 2;
-        const maxDim = Math.max(t.width, t.height);
-        const handleRadius = Math.max(6, Math.min(12, maxDim / 15));
-        const tol = Math.max(14, handleRadius + 6);
-        const stemLength = Math.max(30, handleRadius * 3);
+        const minDim = Math.min(t.width, t.height);
+        const handleRadius = Math.max(3.5, Math.min(6, Math.round(minDim / 12)));
+        const stemLength = Math.max(16, Math.min(28, Math.round(minDim * 0.25 + 10)));
+        const showEdgeHandles = t.width >= 36 && t.height >= 36;
+
+        // Tolerancia delimitada dinámicamente para no solapar la zona central de arrastre
+        const maxTol = Math.max(4, Math.min(halfW, halfH) * 0.45);
+        const tol = Math.max(4, Math.min(handleRadius + 3, maxTol));
+        const rotTol = Math.max(6, handleRadius + 4);
 
         // 1. Nodo de rotación
-        if (Math.hypot(lx, ly - (-halfH - stemLength)) <= tol) {
+        if (Math.hypot(lx, ly - (-halfH - stemLength)) <= rotTol) {
             return 'rotate';
         }
 
@@ -1040,10 +1491,12 @@ export class Painter {
         if (Math.abs(lx - ( halfW)) <= tol && Math.abs(ly - ( halfH)) <= tol) return 'se';
 
         // 3. Bordes (n, s, w, e)
-        if (Math.abs(lx - 0) <= tol && Math.abs(ly - (-halfH)) <= tol) return 'n';
-        if (Math.abs(lx - 0) <= tol && Math.abs(ly - ( halfH)) <= tol) return 's';
-        if (Math.abs(lx - (-halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'w';
-        if (Math.abs(lx - ( halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'e';
+        if (showEdgeHandles) {
+            if (Math.abs(lx - 0) <= tol && Math.abs(ly - (-halfH)) <= tol) return 'n';
+            if (Math.abs(lx - 0) <= tol && Math.abs(ly - ( halfH)) <= tol) return 's';
+            if (Math.abs(lx - (-halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'w';
+            if (Math.abs(lx - ( halfW)) <= tol && Math.abs(ly - 0) <= tol) return 'e';
+        }
 
         // 4. Interior (mover)
         if (Math.abs(lx) <= halfW && Math.abs(ly) <= halfH) {
@@ -1532,6 +1985,7 @@ export class Painter {
 
         const pattern = activeCtx.createPattern(patCanvas, 'repeat');
         activeCtx.save();
+        const clipApplied = this.applyMaskClip(activeCtx);
         activeCtx.fillStyle = pattern;
         activeCtx.strokeStyle = pattern;
         activeCtx.lineWidth = 2.5;
@@ -1544,6 +1998,7 @@ export class Painter {
         activeCtx.fill();
         activeCtx.stroke();
         activeCtx.restore();
+        if (clipApplied) activeCtx.restore();
 
         if (this.layerManager) this.layerManager.recomposite();
         this.needsUpdate = true;
@@ -1665,7 +2120,9 @@ export class Painter {
         mctx.fillStyle = pat;
         mctx.fillRect(0, 0, w, h);
 
+        const clipApplied = this.applyMaskClip(activeCtx);
         activeCtx.drawImage(maskCanvas, 0, 0);
+        if (clipApplied) activeCtx.restore();
 
         if (this.layerManager) this.layerManager.recomposite();
         this.needsUpdate = true;
@@ -1685,6 +2142,121 @@ export class Painter {
         };
     }
 
+    buildTrianglesCache() {
+        this._meshTrianglesCache = [];
+        this._meshTrianglesCacheMesh = this.mesh;
+        if (!this.mesh) return;
+
+        const pA = new THREE.Vector3();
+        const pB = new THREE.Vector3();
+        const pC = new THREE.Vector3();
+        const uvA = new THREE.Vector2();
+        const uvB = new THREE.Vector2();
+        const uvC = new THREE.Vector2();
+
+        this.mesh.traverse(child => {
+            if (child.isMesh && !child.userData?.isSelectionOverlay && child.geometry) {
+                const geom = child.geometry;
+                const pos = geom.attributes.position;
+                const uvs = geom.attributes.uv;
+                const index = geom.index;
+                const matrixWorld = child.matrixWorld;
+
+                if (!pos || !uvs) return;
+
+                const count = index ? index.count : pos.count;
+                for (let i = 0; i < count; i += 3) {
+                    const idxA = index ? index.getX(i) : i;
+                    const idxB = index ? index.getX(i + 1) : i + 1;
+                    const idxC = index ? index.getX(i + 2) : i + 2;
+
+                    pA.fromBufferAttribute(pos, idxA).applyMatrix4(matrixWorld);
+                    pB.fromBufferAttribute(pos, idxB).applyMatrix4(matrixWorld);
+                    pC.fromBufferAttribute(pos, idxC).applyMatrix4(matrixWorld);
+
+                    uvA.fromBufferAttribute(uvs, idxA);
+                    uvB.fromBufferAttribute(uvs, idxB);
+                    uvC.fromBufferAttribute(uvs, idxC);
+
+                    const center = new THREE.Vector3().add(pA).add(pB).add(pC).multiplyScalar(1 / 3);
+                    const radius = Math.max(center.distanceTo(pA), center.distanceTo(pB), center.distanceTo(pC));
+
+                    const edge1 = new THREE.Vector3().subVectors(pB, pA);
+                    const edge2 = new THREE.Vector3().subVectors(pC, pA);
+                    const normal = new THREE.Vector3().crossVectors(edge1, edge2).normalize();
+
+                    const a = pA.clone(), b = pB.clone(), c = pC.clone();
+                    const uA = uvA.clone(), uB = uvB.clone(), uC = uvC.clone();
+
+                    this._meshTrianglesCache.push({
+                        a, b, c,
+                        uA, uB, uC,
+                        center,
+                        radius,
+                        normal,
+                        getUVAtPoint: (p) => {
+                            const v0 = new THREE.Vector3().subVectors(c, a);
+                            const v1 = new THREE.Vector3().subVectors(b, a);
+                            const v2 = new THREE.Vector3().subVectors(p, a);
+
+                            const dot00 = v0.dot(v0);
+                            const dot01 = v0.dot(v1);
+                            const dot02 = v0.dot(v2);
+                            const dot11 = v1.dot(v1);
+                            const dot12 = v1.dot(v2);
+
+                            const denom = dot00 * dot11 - dot01 * dot01;
+                            if (Math.abs(denom) < 1e-8) return null;
+
+                            const invDenom = 1 / denom;
+                            let u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+                            let v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+
+                            const tol = 0.2;
+                            if (u >= -tol && v >= -tol && (u + v) <= 1 + tol) {
+                                u = Math.max(0, Math.min(1, u));
+                                v = Math.max(0, Math.min(1, v));
+                                const w = Math.max(0, 1 - u - v);
+                                return {
+                                    u: w * uA.x + v * uB.x + u * uC.x,
+                                    v: w * uA.y + v * uB.y + u * uC.y
+                                };
+                            }
+                            return null;
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    getSeamUVs(point3D, radius3D, hitNormal, primaryUV) {
+        if (!this._meshTrianglesCache || this._meshTrianglesCacheMesh !== this.mesh) {
+            this.buildTrianglesCache();
+        }
+        const tris = this._meshTrianglesCache;
+        if (!tris || tris.length === 0) return [];
+
+        const extraUVs = [];
+
+        for (let i = 0; i < tris.length; i++) {
+            const t = tris[i];
+            if (hitNormal && t.normal.dot(hitNormal) < 0.2) continue;
+
+            const maxDistSq = (radius3D + t.radius) * (radius3D + t.radius);
+            if (t.center.distanceToSquared(point3D) > maxDistSq) continue;
+
+            const uv = t.getUVAtPoint(point3D);
+            if (uv) {
+                const dUV = Math.hypot(uv.u - primaryUV.x, uv.v - primaryUV.y);
+                if (dUV > 0.03) {
+                    extraUVs.push(uv);
+                }
+            }
+        }
+        return extraUVs;
+    }
+
     paint3D(event) {
         if (!this.mesh) return;
         const rect = this.renderer.domElement.getBoundingClientRect();
@@ -1692,16 +2264,36 @@ export class Painter {
         this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
         this.raycaster.setFromCamera(this.mouse, this.camera);
         const intersects = this.raycaster.intersectObject(this.mesh, true);
-        const hit = intersects.find(i => i.object.isMesh && i.uv);
+        const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
 
         if (hit) {
             const uv = hit.uv;
+            const settings = this.getBrushSettings();
+
+            // Calcular radio en espacio 3D para abarcar costuras contiguas entre piezas (ej. fuselaje a ala)
+            const distToCam = this.camera.position.distanceTo(hit.point);
+            const vFOV = THREE.MathUtils.degToRad(this.camera.fov);
+            const heightAtDist = 2 * Math.tan(vFOV / 2) * distToCam;
+            const worldPixelSize = heightAtDist / this.renderer.domElement.clientHeight;
+            const brushRadius3D = Math.max(0.005, settings.size * worldPixelSize);
+            const hitNormal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : null;
+
+            // 1. Pintar en la superficie primaria
             this.drawAtUV(uv.x, uv.y, this.lastU === null);
+
+            // 2. Pintar en piezas contiguas que tocan esta costura
+            const seamUVs = this.getSeamUVs(hit.point, brushRadius3D, hitNormal, uv);
+            for (let k = 0; k < seamUVs.length; k++) {
+                this.drawAtUV(seamUVs[k].u, seamUVs[k].v, false);
+            }
+
             this.lastU = uv.x;
             this.lastV = uv.y;
+            this.lastPoint3D = hit.point.clone();
         } else {
             this.lastU = null;
             this.lastV = null;
+            this.lastPoint3D = null;
         }
     }
 
@@ -1730,8 +2322,17 @@ export class Painter {
         let strokeColor = settings.color;
         const isErase = (settings.mode === 'erase');
         const layer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        const isEditingLayerMask = (layer && layer.hasMask && layer.isEditingMask);
 
-        if (isErase) {
+        if (isEditingLayerMask) {
+            if (isErase) {
+                activeCtx.globalCompositeOperation = 'destination-out';
+                strokeColor = 'rgba(0,0,0,1)';
+            } else {
+                activeCtx.globalCompositeOperation = 'source-over';
+                strokeColor = '#FFFFFF';
+            }
+        } else if (isErase) {
             if (layer && !layer.isBackground) {
                 activeCtx.globalCompositeOperation = 'destination-out';
                 strokeColor = 'rgba(0,0,0,1)';
@@ -1745,6 +2346,7 @@ export class Painter {
 
         activeCtx.strokeStyle = strokeColor;
         activeCtx.fillStyle = strokeColor;
+        const clipApplied = this.applyMaskClip(activeCtx);
 
         const hexToRgba = (hex, alpha) => {
             if (hex.startsWith('rgba') || hex.startsWith('rgb')) return hex;
@@ -1761,7 +2363,7 @@ export class Painter {
                 activeCtx.fill();
             } else if (tip === 'soft') {
                 const grad = activeCtx.createRadialGradient(px, py, 0, px, py, size);
-                if (isErase && layer && !layer.isBackground) {
+                if (isErase && (isEditingLayerMask || (layer && !layer.isBackground))) {
                     grad.addColorStop(0, 'rgba(0,0,0,0.5)');
                     grad.addColorStop(0.5, 'rgba(0,0,0,0.25)');
                     grad.addColorStop(1, 'rgba(0,0,0,0)');
@@ -1824,6 +2426,7 @@ export class Painter {
             }
         }
 
+        if (clipApplied) activeCtx.restore();
         activeCtx.globalCompositeOperation = 'source-over';
         this.lastDrawX = x;
         this.lastDrawY = y;
@@ -1846,7 +2449,11 @@ export class Painter {
                 (this.transformState && this.transformState.active) || 
                 (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '2d')) {
                 this.cursor2D.style.display = 'none';
-                this.canvas.style.cursor = 'default';
+                if (settings.mode === 'eyedropper' || e.altKey) {
+                    this.canvas.style.cursor = 'crosshair';
+                } else {
+                    this.canvas.style.cursor = 'default';
+                }
                 return;
             }
 
@@ -1937,6 +2544,11 @@ export class Painter {
                 (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '3d') ||
                 ((e.buttons & 2) || (e.buttons & 4))) {
                 this.cursor3DMesh.visible = false;
+                if (settings.mode === 'eyedropper' || e.altKey) {
+                    this.renderer.domElement.style.cursor = 'crosshair';
+                } else {
+                    this.renderer.domElement.style.cursor = 'default';
+                }
                 return;
             }
 
@@ -2015,15 +2627,6 @@ export class Painter {
         };
         sizeInput?.addEventListener('input', onSizeChange);
 
-        document.getElementById('btn-size-dec')?.addEventListener('click', () => {
-            sizeInput.value = Math.max(1, parseInt(sizeInput.value, 10) - 1);
-            onSizeChange();
-        });
-        document.getElementById('btn-size-inc')?.addEventListener('click', () => {
-            sizeInput.value = Math.min(100, parseInt(sizeInput.value, 10) + 1);
-            onSizeChange();
-        });
-
         // 4. Selector de Puntas de Pincel
         document.querySelectorAll('.brush-tip-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -2074,14 +2677,21 @@ export class Painter {
         // Tolerancia moderada para absorber el degradado anti-aliasing
         const tol = 60; 
         
-        const matchStartColor = (pos) => {
+        const checkMask = (px, py) => {
+            if (!this.selectionManager || !this.selectionManager.active) return true;
+            return this.selectionManager.isPointSelected(px, py, activeCtx);
+        };
+        
+        const matchStartColor = (pos, px, py) => {
+            if (!checkMask(px, py)) return false;
             return Math.abs(data[pos] - startR) <= tol &&
                    Math.abs(data[pos+1] - startG) <= tol &&
                    Math.abs(data[pos+2] - startB) <= tol &&
                    Math.abs(data[pos+3] - startA) <= tol;
         };
         
-        const colorPixel = (pos) => {
+        const colorPixel = (pos, px, py) => {
+            if (!checkMask(px, py)) return;
             data[pos] = fillR;
             data[pos+1] = fillG;
             data[pos+2] = fillB;
@@ -2099,13 +2709,13 @@ export class Painter {
             let pos = (y * w + x) * 4;
             
             // Subir hasta encontrar el límite
-            while (y >= 0 && matchStartColor(pos)) {
+            while (y >= 0 && matchStartColor(pos, x, y)) {
                 y--;
                 pos -= w * 4;
             }
             
             // DILATACIÓN: Pintamos 1 píxel extra sobre el borde para tapar el halo blanco
-            if (y >= 0) colorPixel(pos);
+            if (y >= 0) colorPixel(pos, x, y);
             
             y++;
             pos += w * 4;
@@ -2113,30 +2723,30 @@ export class Painter {
             let reachLeft = false;
             let reachRight = false;
             
-            while (y < h && matchStartColor(pos)) {
-                colorPixel(pos);
+            while (y < h && matchStartColor(pos, x, y)) {
+                colorPixel(pos, x, y);
                 
                 if (x > 0) {
-                    if (matchStartColor(pos - 4)) {
+                    if (matchStartColor(pos - 4, x - 1, y)) {
                         if (!reachLeft) {
                             stack.push([x - 1, y]);
                             reachLeft = true;
                         }
                     } else {
                         if (reachLeft) reachLeft = false;
-                        colorPixel(pos - 4); // DILATACIÓN: Borde izquierdo
+                        colorPixel(pos - 4, x - 1, y); // DILATACIÓN: Borde izquierdo
                     }
                 }
                 
                 if (x < w - 1) {
-                    if (matchStartColor(pos + 4)) {
+                    if (matchStartColor(pos + 4, x + 1, y)) {
                         if (!reachRight) {
                             stack.push([x + 1, y]);
                             reachRight = true;
                         }
                     } else {
                         if (reachRight) reachRight = false;
-                        colorPixel(pos + 4); // DILATACIÓN: Borde derecho
+                        colorPixel(pos + 4, x + 1, y); // DILATACIÓN: Borde derecho
                     }
                 }
                 
@@ -2145,7 +2755,7 @@ export class Painter {
             }
             
             // DILATACIÓN: Pintamos 1 píxel extra en el borde inferior
-            if (y < h) colorPixel(pos);
+            if (y < h) colorPixel(pos, x, y);
         }
         
         activeCtx.putImageData(imgData, 0, 0);
@@ -2182,7 +2792,8 @@ export class Painter {
             activeCtx.globalCompositeOperation = 'source-over';
             activeCtx.fillStyle = settings.color;
         }
-        
+
+        const clipApplied = this.applyMaskClip(activeCtx);
         activeCtx.beginPath();
         activeCtx.moveTo(uA, vA);
         activeCtx.lineTo(uB, vB);
@@ -2192,6 +2803,7 @@ export class Painter {
         activeCtx.strokeStyle = activeCtx.fillStyle;
         activeCtx.lineWidth = 1.5;
         activeCtx.stroke();
+        if (clipApplied) activeCtx.restore();
         activeCtx.globalCompositeOperation = 'source-over';
         
         if (this.layerManager) {
@@ -2221,7 +2833,7 @@ export class Painter {
 
         const meshes = [];
         this.mesh.traverse(c => {
-            if (c.isMesh && c.geometry && c.geometry.attributes && c.geometry.attributes.uv) {
+            if (c.isMesh && !c.userData?.isSelectionOverlay && c.geometry && c.geometry.attributes && c.geometry.attributes.uv) {
                 meshes.push(c);
             }
         });
@@ -2259,5 +2871,91 @@ export class Painter {
                 break;
             }
         }
+    }
+
+    // --- Herramienta Gotero / Cuentagotas (Eyedropper) ---
+
+    pickColor(x, y) {
+        const compCanvas = this.layerManager ? this.layerManager.compositeCanvas : this.canvas;
+        const ctx = compCanvas.getContext('2d');
+        const cx = Math.max(0, Math.min(compCanvas.width - 1, Math.floor(x)));
+        const cy = Math.max(0, Math.min(compCanvas.height - 1, Math.floor(y)));
+        const p = ctx.getImageData(cx, cy, 1, 1).data;
+        
+        let r = p[0], g = p[1], b = p[2], a = p[3];
+        // Si el píxel es transparente o casi transparente, asumir blanco de fondo
+        if (a < 10) {
+            r = 255; g = 255; b = 255;
+        }
+        
+        const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+        
+        const colorInput = document.getElementById('brush-color');
+        if (colorInput) colorInput.value = hex;
+        
+        if (typeof window.updateActiveQuickColor === 'function') {
+            window.updateActiveQuickColor(hex);
+        }
+
+        this.showColorToast(hex);
+        return hex;
+    }
+
+    showColorToast(hex) {
+        let toast = document.getElementById('eyedropper-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'eyedropper-toast';
+            toast.style.position = 'fixed';
+            toast.style.bottom = '24px';
+            toast.style.left = '50%';
+            toast.style.transform = 'translateX(-50%)';
+            toast.style.backgroundColor = '#1e1e1e';
+            toast.style.color = '#ffffff';
+            toast.style.border = '1px solid #555';
+            toast.style.borderRadius = '20px';
+            toast.style.padding = '6px 16px';
+            toast.style.fontSize = '12px';
+            toast.style.fontWeight = 'bold';
+            toast.style.boxShadow = '0 4px 14px rgba(0,0,0,0.6)';
+            toast.style.zIndex = '10000';
+            toast.style.pointerEvents = 'none';
+            toast.style.display = 'flex';
+            toast.style.alignItems = 'center';
+            toast.style.gap = '8px';
+            toast.style.transition = 'opacity 0.25s ease';
+            document.body.appendChild(toast);
+        }
+        toast.innerHTML = `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background-color:${hex};border:1.5px solid #fff;"></span> Color copiado: ${hex.toUpperCase()}`;
+        toast.style.opacity = '1';
+        clearTimeout(this._toastTimeout);
+        this._toastTimeout = setTimeout(() => {
+            if (toast) toast.style.opacity = '0';
+        }, 1400);
+    }
+
+    updateUI(time = 0) {
+        if (this.selectionManager && (this.selectionManager.active || this.selectionManager.creating)) {
+            this.selectionManager.dashOffset = (time / 80) % 12;
+            this.clearUI();
+            this.selectionManager.renderOverlay(this.ctxUI);
+        }
+    }
+
+    restorePreviousTool() {
+        const prev = this.previousMode && this.previousMode !== 'eyedropper' ? this.previousMode : 'paint';
+        const targetBtn = document.querySelector(`.tool-btn[data-mode="${prev}"]`) || document.querySelector('.tool-btn[data-mode="paint"]');
+        if (targetBtn) {
+            targetBtn.click();
+        } else {
+            const modeInput = document.getElementById('brush-mode');
+            if (modeInput) modeInput.value = prev;
+        }
+        const eyedropperBtn = document.getElementById('btn-eyedropper');
+        if (eyedropperBtn) eyedropperBtn.classList.remove('active');
+        const eyedropperToolBtn = document.getElementById('btn-tool-eyedropper');
+        if (eyedropperToolBtn) eyedropperToolBtn.classList.remove('active');
+        if (this.canvas) this.canvas.style.cursor = 'default';
+        if (this.renderer && this.renderer.domElement) this.renderer.domElement.style.cursor = 'default';
     }
 }
