@@ -72,6 +72,9 @@ export class Layer {
     bakeDecals() {
         if (!this.decals || this.decals.length === 0) return false;
         this.renderDecals(this.ctx);
+        if (this.hasMask && this.maskCtx) {
+            this.decals.forEach(d => this.unmaskDecal(d));
+        }
         this.decals = [];
         return true;
     }
@@ -90,9 +93,35 @@ export class Layer {
             this.ctx.rotate(d.rotation || 0);
             this.ctx.drawImage(d.img, -d.width / 2, -d.height / 2, d.width, d.height);
             this.ctx.restore();
+
+            if (this.hasMask && this.maskCtx) {
+                this.unmaskDecal(d);
+            }
         }
         this.decals.splice(idx, 1);
         return true;
+    }
+
+    unmaskDecal(d) {
+        if (!this.maskCtx || !d || !d.img) return;
+        try {
+            const w = Math.max(1, Math.round(d.width || d.baseWidth || 100));
+            const h = Math.max(1, Math.round(d.height || d.baseHeight || 100));
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = w;
+            tempCanvas.height = h;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(d.img, 0, 0, w, h);
+            tempCtx.globalCompositeOperation = 'source-in';
+            tempCtx.fillStyle = '#FFFFFF';
+            tempCtx.fillRect(0, 0, w, h);
+
+            this.maskCtx.save();
+            this.maskCtx.translate(d.x, d.y);
+            this.maskCtx.rotate(d.rotation || 0);
+            this.maskCtx.drawImage(tempCanvas, -w / 2, -h / 2, w, h);
+            this.maskCtx.restore();
+        } catch (_) {}
     }
 
     addMask(type = 'black') {
@@ -510,16 +539,16 @@ export class LayerManager {
                 this.tempMaskCtx.globalCompositeOperation = 'source-over';
                 this.tempMaskCtx.drawImage(layer.canvas, 0, 0);
 
-                // Dibujar pegatinas vivas de la capa
+                // Aplicar máscara: el canal alfa de la máscara modula la capa de pintura base
+                this.tempMaskCtx.globalCompositeOperation = 'destination-in';
+                this.tempMaskCtx.drawImage(layer.maskCanvas, 0, 0);
+
+                // Dibujar pegatinas y formas vivas de la capa SOBRE la capa ya recortada por la máscara
+                this.tempMaskCtx.globalCompositeOperation = 'source-over';
                 if (layer.decals && layer.decals.length > 0) {
                     layer.renderDecals(this.tempMaskCtx);
                 }
 
-                // Aplicar máscara: el canal alfa de la máscara modula la capa
-                this.tempMaskCtx.globalCompositeOperation = 'destination-in';
-                this.tempMaskCtx.drawImage(layer.maskCanvas, 0, 0);
-
-                this.tempMaskCtx.globalCompositeOperation = 'source-over';
                 this.compositeCtx.drawImage(this.tempMaskCanvas, 0, 0);
             } else {
                 this.compositeCtx.drawImage(layer.canvas, 0, 0);

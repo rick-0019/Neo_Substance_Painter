@@ -377,6 +377,13 @@ export class DecalSystem {
                 decal.shapeOptions.strokeColor = newStroke;
             }
 
+            decal.shapeOptions.width = decal.width;
+            decal.shapeOptions.height = decal.height;
+            decal.shapeOptions.x1 = 0;
+            decal.shapeOptions.y1 = 0;
+            decal.shapeOptions.x2 = decal.width;
+            decal.shapeOptions.y2 = decal.height;
+
             if (window.painter && window.painter.createShapeCanvas) {
                 const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
                 decal.img = newCanvas;
@@ -445,6 +452,12 @@ export class DecalSystem {
                         };
                     }
                     decal.shapeOptions.cornerRadius = num;
+                    decal.shapeOptions.width = decal.width;
+                    decal.shapeOptions.height = decal.height;
+                    decal.shapeOptions.x1 = 0;
+                    decal.shapeOptions.y1 = 0;
+                    decal.shapeOptions.x2 = decal.width;
+                    decal.shapeOptions.y2 = decal.height;
                     if (window.painter && window.painter.createShapeCanvas) {
                         const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
                         decal.img = newCanvas;
@@ -482,6 +495,12 @@ export class DecalSystem {
                         };
                     }
                     decal.shapeOptions.strokeWidth = num;
+                    decal.shapeOptions.width = decal.width;
+                    decal.shapeOptions.height = decal.height;
+                    decal.shapeOptions.x1 = 0;
+                    decal.shapeOptions.y1 = 0;
+                    decal.shapeOptions.x2 = decal.width;
+                    decal.shapeOptions.y2 = decal.height;
                     if (window.painter && window.painter.createShapeCanvas) {
                         const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
                         decal.img = newCanvas;
@@ -998,6 +1017,13 @@ export class DecalSystem {
         } else {
             decal.shapeOptions.fillColor = col;
         }
+
+        decal.shapeOptions.width = decal.width;
+        decal.shapeOptions.height = decal.height;
+        decal.shapeOptions.x1 = 0;
+        decal.shapeOptions.y1 = 0;
+        decal.shapeOptions.x2 = decal.width;
+        decal.shapeOptions.y2 = decal.height;
 
         const fillInput = document.getElementById('shape-bar-fill-color');
         if (fillInput) fillInput.value = col;

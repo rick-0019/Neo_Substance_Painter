@@ -1103,10 +1103,18 @@ export class Painter {
     
     createShapeCanvas(s) {
         if (!s) return null;
-        const dx = Math.abs((s.x2 !== undefined ? s.x2 : s.width) - (s.x1 || 0));
-        const dy = Math.abs((s.y2 !== undefined ? s.y2 : s.height) - (s.y1 || 0));
-        const w = Math.max(10, Math.round(dx || s.width || 100));
-        const h = Math.max(10, Math.round(dy || s.height || 100));
+        let w = 100;
+        let h = 100;
+        if (s.x1 !== undefined && s.x2 !== undefined && Math.abs(s.x2 - s.x1) > 0) {
+            w = Math.max(10, Math.round(Math.abs(s.x2 - s.x1)));
+        } else if (s.width) {
+            w = Math.max(10, Math.round(s.width));
+        }
+        if (s.y1 !== undefined && s.y2 !== undefined && Math.abs(s.y2 - s.y1) > 0) {
+            h = Math.max(10, Math.round(Math.abs(s.y2 - s.y1)));
+        } else if (s.height) {
+            h = Math.max(10, Math.round(s.height));
+        }
 
         const strokeW = Math.max(1, (s.strokeWidth !== undefined ? s.strokeWidth : (s.size ? s.size * 2 : 4)));
         const pad = Math.ceil(strokeW) + 12;
