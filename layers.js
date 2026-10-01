@@ -239,17 +239,37 @@ export class LayerManager {
         this.tempMaskCanvas = null;
         this.tempMaskCtx = null;
 
-        // Capa base blanca por defecto (fondo)
+        this.resetToDefaultLayers();
+    }
+
+    resetToDefaultLayers() {
+        this.layers = [];
+        this.nextId = 1;
+
+        // 1. Capa base blanca por defecto (fondo)
         const baseLayer = new Layer(this.nextId++, 'Fondo Blanco', this.width, this.height, true);
         this.layers.push(baseLayer);
+
+        // 2. Capa Color Base (transparente)
+        const colorBaseLayer = new Layer(this.nextId++, 'Color Base', this.width, this.height, false);
+        colorBaseLayer.ctx.clearRect(0, 0, this.width, this.height);
+        this.layers.push(colorBaseLayer);
+
+        // 3. Capa Panelado (transparente)
+        const paneladoLayer = new Layer(this.nextId++, 'Panelado', this.width, this.height, false);
+        paneladoLayer.ctx.clearRect(0, 0, this.width, this.height);
+        this.layers.push(paneladoLayer);
+
+        // 4. Capa Calcas (transparente)
+        const calcasLayer = new Layer(this.nextId++, 'Calcas', this.width, this.height, false);
+        calcasLayer.ctx.clearRect(0, 0, this.width, this.height);
+        this.layers.push(calcasLayer);
+
+        // Seleccionar Fondo Blanco por defecto tal como en la captura
         this.activeLayerId = baseLayer.id;
 
-        // Capa de pintura inicial
-        const paintLayer = new Layer(this.nextId++, 'Capa 1', this.width, this.height, false);
-        this.layers.push(paintLayer);
-        this.activeLayerId = paintLayer.id;
-
         this.recomposite();
+        if (this.onMaskModeChange) this.onMaskModeChange(false, baseLayer);
     }
 
     getActiveLayer() {

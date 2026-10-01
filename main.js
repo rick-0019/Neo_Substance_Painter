@@ -40,8 +40,58 @@ canvasUV.width = TEX_SIZE;
 canvasUV.height = TEX_SIZE;
 const ctxUV = canvasUV.getContext('2d');
 
-document.getElementById('btn-apply-res').addEventListener('click', () => {
-    if(!confirm('Cambiar la resolución limpiará la textura actual. ¿Continuar?')) return;
+export function createNewProject(promptUser = true) {
+    if (promptUser && !confirm('¿Crear un nuevo archivo? Se descartarán los cambios no guardados y se reiniciarán las 4 capas estándar (Calcas, Panelado, Color Base y Fondo Blanco).')) {
+        return;
+    }
+
+    if (window.decalSystem) {
+        window.decalSystem.deselectDecal();
+    }
+    if (window.selectionManager) {
+        window.selectionManager.deselect();
+    }
+    if (window.painter) {
+        window.painter.editingShape = null;
+        window.painter.transformState = null;
+        window.painter.textState = null;
+        window.painter.savedCanvasData = null;
+        window.painter.clearUI();
+        window.painter.undoStack = [];
+        window.painter.redoStack = [];
+        window.painter.updateUndoRedoUI();
+    }
+
+    layerManager.resetToDefaultLayers();
+    layerManager.renderUI();
+
+    if (window.painter) {
+        window.painter.needsUpdate = true;
+        window.painter.forceUpdate = true;
+    }
+    if (state.texture) {
+        state.texture.needsUpdate = true;
+    }
+    if (window.decalSystem && window.decalSystem.texture) {
+        window.decalSystem.texture.needsUpdate = true;
+    }
+    if (window.papercraft && window.papercraft.active && window.renderUnfoldWorkbench) {
+        window.renderUnfoldWorkbench();
+    }
+
+    drawUVWireframe();
+
+    const paintFileDropdown = document.getElementById('paint-file-dropdown');
+    if (paintFileDropdown) paintFileDropdown.style.display = 'none';
+}
+window.createNewProject = createNewProject;
+
+document.getElementById('btn-new-project')?.addEventListener('click', () => {
+    createNewProject(true);
+});
+
+document.getElementById('btn-apply-res')?.addEventListener('click', () => {
+    if(!confirm('Cambiar la resolución redimensionará el lienzo y reiniciará el proyecto. ¿Continuar?')) return;
     TEX_SIZE = parseInt(document.getElementById('doc-resolution').value, 10);
     
     layerManager.resize(TEX_SIZE, TEX_SIZE);
@@ -55,8 +105,7 @@ document.getElementById('btn-apply-res').addEventListener('click', () => {
         canvasUI.height = TEX_SIZE;
     }
     
-    drawUVWireframe();
-    state.texture.needsUpdate = true;
+    createNewProject(false);
 });
 
 // Create Three.js Texture from Canvas
@@ -2310,6 +2359,10 @@ window.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
         e.preventDefault();
         selectionManager.deselect();
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+        e.preventDefault();
+        createNewProject(true);
     }
     if (e.key === 'Escape') {
         if (papercraft && (papercraft.measureMode || papercraft.activeMeasurement)) {
