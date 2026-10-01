@@ -1264,6 +1264,14 @@ toolButtons.forEach(btn => {
             window.painter.commitLayerTransform();
         }
 
+        const isShape = ['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode);
+
+        brushModeInput.value = mode;
+        toolButtons.forEach(b => b.classList.remove('active'));
+        document.getElementById('btn-select-rect')?.classList.remove('active');
+        document.getElementById('btn-select-lasso')?.classList.remove('active');
+        targetBtn.classList.add('active');
+
         // Si se cambia a cualquier herramienta que no sea texto, desactivar calcomanías y texto
         if (window.decalSystem) {
             if (window.decalSystem.isTextMode && mode !== 'text') {
@@ -1272,17 +1280,28 @@ toolButtons.forEach(btn => {
             if (mode === 'select') {
                 window.decalSystem.isActive = true;
                 window.decalSystem.setMode('2d');
-            } else {
+            } else if (!isShape) {
                 window.decalSystem.deselectDecal();
                 window.decalSystem.isActive = false;
             }
         }
-        
-        toolButtons.forEach(b => b.classList.remove('active'));
-        document.getElementById('btn-select-rect')?.classList.remove('active');
-        document.getElementById('btn-select-lasso')?.classList.remove('active');
-        targetBtn.classList.add('active');
-        brushModeInput.value = mode;
+
+        const shapeBar = document.getElementById('shape-controls');
+        const ribbon = document.getElementById('ribbon');
+        if (isShape) {
+            if (shapeBar) shapeBar.style.display = 'flex';
+            if (ribbon) ribbon.classList.add('shape-mode-active');
+            const curDash = window.currentShapeStrokeDash || 'solid';
+            document.querySelectorAll('.btn-shape-dash').forEach(b => {
+                b.classList.toggle('active', b.getAttribute('data-dash') === curDash);
+            });
+            document.querySelectorAll('.btn-catalog-dash').forEach(b => {
+                b.classList.toggle('active', b.getAttribute('data-dash') === curDash);
+            });
+        } else if (mode !== 'select') {
+            if (shapeBar) shapeBar.style.display = 'none';
+            if (ribbon) ribbon.classList.remove('shape-mode-active');
+        }
     });
 });
 

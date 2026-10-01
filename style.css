@@ -86,10 +86,9 @@ body, html {
     flex-shrink: 0;
 }
 
-/* Ocultar grupos incompatibles durante el modo forma/calca para eliminar la barra deslizante */
+/* Ocultar grupos incompatibles durante el modo forma/calca para eliminar la barra deslizante (manteniendo Formas accesible) */
 #ribbon.shape-mode-active #group-brush-tips,
 #ribbon.shape-mode-active #group-brush-size,
-#ribbon.shape-mode-active #group-shapes,
 #ribbon.shape-mode-active #group-textures,
 #ribbon.shape-mode-active #group-papercraft,
 #ribbon.shape-mode-active #group-selection,

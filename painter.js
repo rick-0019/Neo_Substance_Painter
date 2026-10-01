@@ -555,8 +555,8 @@ export class Painter {
                     this.editingShape = {
                         type: mode,
                         x1: x, y1: y, x2: x, y2: y,
-                        color: strokeColorInput?.value || settings.color || '#000000',
-                        fillColor: fillInput?.value || '#ffff00',
+                        color: window.currentShapeStrokeColor || strokeColorInput?.value || settings.color || '#000000',
+                        fillColor: window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : (fillInput?.value || '#ffff00'),
                         size: settings.size,
                         strokeWidth: strokeW,
                         strokeDash: strokeDash,
@@ -880,8 +880,8 @@ export class Painter {
                 this.editingShape = {
                     type: mode,
                     x1: x, y1: y, x2: x, y2: y,
-                    color: strokeColorInput?.value || settings.color || '#000000',
-                    fillColor: fillInput?.value || '#ffff00',
+                    color: window.currentShapeStrokeColor || strokeColorInput?.value || settings.color || '#000000',
+                    fillColor: window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : (fillInput?.value || '#ffff00'),
                     size: settings.size,
                     strokeWidth: strokeW,
                     strokeDash: strokeDash,

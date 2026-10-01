@@ -351,49 +351,65 @@ export class DecalSystem {
         const shapeStrokeColor = document.getElementById('shape-stroke-color');
 
         const updateSelectedShape = (newFill, newStroke) => {
-            if (!this.selectedDecalId || !this.layerManager) return;
-            const activeLayer = this.layerManager.getActiveLayer();
-            if (!activeLayer) return;
-            const decal = activeLayer.getDecal(this.selectedDecalId);
-            if (!decal) return;
-
-            if (!decal.shapeOptions) {
-                decal.shapeOptions = {
-                    type: decal.type || 'rect',
-                    color: '#000000',
-                    strokeColor: '#000000',
-                    strokeWidth: 4,
-                    cornerRadius: 0,
-                    size: 2,
-                    fillColor: 'transparent',
-                    x1: 0, y1: 0,
-                    x2: decal.width || 200, y2: decal.height || 200
-                };
+            if (newFill !== undefined) {
+                window.currentShapeFillColor = newFill;
+                const btnNone = document.getElementById('btn-shape-bar-fill-none');
+                if (btnNone) btnNone.classList.toggle('active', newFill === 'transparent');
             }
-
-            if (newFill !== undefined) decal.shapeOptions.fillColor = newFill;
             if (newStroke !== undefined) {
-                decal.shapeOptions.color = newStroke;
-                decal.shapeOptions.strokeColor = newStroke;
+                window.currentShapeStrokeColor = newStroke;
             }
 
-            decal.shapeOptions.width = decal.width;
-            decal.shapeOptions.height = decal.height;
-            decal.shapeOptions.x1 = 0;
-            decal.shapeOptions.y1 = 0;
-            decal.shapeOptions.x2 = decal.width;
-            decal.shapeOptions.y2 = decal.height;
+            if (this.selectedDecalId && this.layerManager) {
+                const activeLayer = this.layerManager.getActiveLayer();
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    if (!decal.shapeOptions) {
+                        decal.shapeOptions = {
+                            type: decal.type || 'rect',
+                            color: '#000000',
+                            strokeColor: '#000000',
+                            strokeWidth: 4,
+                            cornerRadius: 0,
+                            size: 2,
+                            fillColor: 'transparent',
+                            x1: 0, y1: 0,
+                            x2: decal.width || 200, y2: decal.height || 200
+                        };
+                    }
 
-            if (window.painter && window.painter.createShapeCanvas) {
-                const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
-                decal.img = newCanvas;
-                try {
-                    decal.dataUrl = newCanvas.toDataURL('image/png');
-                } catch (_) {}
-                this.currentDecalImage = newCanvas;
-                this.syncCurrentDecalToObject(true);
-                this.render2DPreview();
-                if (this.layerManager) this.layerManager.renderUI();
+                    if (newFill !== undefined) decal.shapeOptions.fillColor = newFill;
+                    if (newStroke !== undefined) {
+                        decal.shapeOptions.color = newStroke;
+                        decal.shapeOptions.strokeColor = newStroke;
+                    }
+
+                    decal.shapeOptions.width = decal.width;
+                    decal.shapeOptions.height = decal.height;
+                    decal.shapeOptions.x1 = 0;
+                    decal.shapeOptions.y1 = 0;
+                    decal.shapeOptions.x2 = decal.width;
+                    decal.shapeOptions.y2 = decal.height;
+
+                    if (window.painter && window.painter.createShapeCanvas) {
+                        const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
+                        decal.img = newCanvas;
+                        try {
+                            decal.dataUrl = newCanvas.toDataURL('image/png');
+                        } catch (_) {}
+                        this.currentDecalImage = newCanvas;
+                        this.syncCurrentDecalToObject(true);
+                        this.render2DPreview();
+                        if (this.layerManager) this.layerManager.renderUI();
+                    }
+                }
+            } else if (window.painter && window.painter.editingShape) {
+                if (newFill !== undefined) window.painter.editingShape.fillColor = newFill;
+                if (newStroke !== undefined) {
+                    window.painter.editingShape.color = newStroke;
+                    window.painter.editingShape.strokeColor = newStroke;
+                }
+                window.painter.renderEditingShape();
             }
         };
 
@@ -584,6 +600,24 @@ export class DecalSystem {
             } else if (window.painter && window.painter.editingShape) {
                 window.painter.editingShape.strokeDash = dashStyle;
                 window.painter.renderEditingShape();
+            } else {
+                // Si no hay figura seleccionada, asegurar que la herramienta de formas esté activa y lista para dibujar
+                const brushModeInput = document.getElementById('brush-mode');
+                const curMode = brushModeInput?.value;
+                const shapeModes = ['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'];
+                if (!shapeModes.includes(curMode)) {
+                    const rectBtn = document.querySelector('.tool-btn[data-mode="rect"]');
+                    if (rectBtn) {
+                        rectBtn.click();
+                    } else if (brushModeInput) {
+                        brushModeInput.value = 'rect';
+                    }
+                }
+
+                const shapeBar = document.getElementById('shape-controls');
+                if (shapeBar) shapeBar.style.display = 'flex';
+                const ribbon = document.getElementById('ribbon');
+                if (ribbon) ribbon.classList.add('shape-mode-active');
             }
         };
 
@@ -1125,11 +1159,21 @@ export class DecalSystem {
         this.isActive = false;
         this.clear2DUI();
         const ribbon = document.getElementById('ribbon');
-        if (ribbon) ribbon.classList.remove('shape-mode-active');
+        const shapeBar = document.getElementById('shape-controls');
+
+        const curBrushMode = document.getElementById('brush-mode')?.value;
+        const isShapeTool = ['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(curBrushMode);
+
+        if (!isShapeTool) {
+            if (ribbon) ribbon.classList.remove('shape-mode-active');
+            if (shapeBar) shapeBar.style.display = 'none';
+        } else {
+            if (ribbon) ribbon.classList.add('shape-mode-active');
+            if (shapeBar) shapeBar.style.display = 'flex';
+        }
+
         const controls = document.getElementById('decal-controls');
         if (controls) controls.style.display = 'none';
-        const shapeBar = document.getElementById('shape-controls');
-        if (shapeBar) shapeBar.style.display = 'none';
         const shapeControls = document.getElementById('shape-style-controls');
         if (shapeControls) shapeControls.style.display = 'none';
         const textControls = document.getElementById('text-controls');
