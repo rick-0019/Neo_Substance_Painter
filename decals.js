@@ -558,10 +558,10 @@ export class DecalSystem {
 
         const updateShapeStrokeDash = (dashStyle) => {
             window.currentShapeStrokeDash = dashStyle;
-            btnShapeDashes.forEach(b => {
+            document.querySelectorAll('.btn-shape-dash').forEach(b => {
                 b.classList.toggle('active', b.getAttribute('data-dash') === dashStyle);
             });
-            btnCatalogDashes.forEach(b => {
+            document.querySelectorAll('.btn-catalog-dash').forEach(b => {
                 b.classList.toggle('active', b.getAttribute('data-dash') === dashStyle);
             });
 
@@ -663,6 +663,18 @@ export class DecalSystem {
                 window.painter.renderEditingShape();
             }
         };
+
+        this.updateShapeStrokeDash = updateShapeStrokeDash;
+        window.updateShapeStrokeDash = updateShapeStrokeDash;
+
+        // Delegated click listener para garantizar respuesta inmediata
+        document.addEventListener('click', (e) => {
+            const dashBtn = e.target.closest('.btn-shape-dash, .btn-catalog-dash');
+            if (dashBtn) {
+                const style = dashBtn.getAttribute('data-dash') || 'solid';
+                updateShapeStrokeDash(style);
+            }
+        });
 
         btnShapeDashes.forEach(btn => {
             btn.addEventListener('click', () => {

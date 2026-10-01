@@ -5,7 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neo Substance Painter - Pepakura Edition</title>
     <link rel="icon" type="image/x-icon" href="app_icon.ico">
-    <link rel="stylesheet" href="style.css?v=3.6">
+    <link rel="stylesheet" href="style.css?v=4.0">
+    <script>
+        window.currentShapeStrokeDash = 'solid';
+        window.updateShapeStrokeDash = function(dashStyle) {
+            window.currentShapeStrokeDash = dashStyle;
+            document.querySelectorAll('.btn-shape-dash, .btn-catalog-dash').forEach(function(b) {
+                b.classList.toggle('active', b.getAttribute('data-dash') === dashStyle);
+            });
+            if (window.decalSystem && typeof window.decalSystem.updateShapeStrokeDash === 'function') {
+                window.decalSystem.updateShapeStrokeDash(dashStyle);
+            }
+        };
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script type="importmap">
         {
@@ -185,6 +197,47 @@
                 <span class="ribbon-label">Herramientas</span>
             </div>
 
+            <div class="ribbon-divider"></div>
+
+            <!-- Grupo: Formas (Catálogo con Selector de Trazo / Remaches) -->
+            <div class="ribbon-group" id="group-shapes">
+                <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
+                    <!-- Selector Rápido de Trazo: Continuo / Remaches / Guiones -->
+                    <div class="shape-catalog-dash-selector" style="display: flex; gap: 1px; background: #222; border: 1px solid #444; border-radius: 3px; padding: 1px; margin-bottom: 1px;">
+                        <button type="button" class="btn-catalog-dash active" data-dash="solid" onclick="window.updateShapeStrokeDash &amp;&amp; window.updateShapeStrokeDash('solid')" style="padding: 1px 3px; font-size: 8.5px;" title="Trazo Continuo Sólido">— Lín</button>
+                        <button type="button" class="btn-catalog-dash" data-dash="rivets" onclick="window.updateShapeStrokeDash &amp;&amp; window.updateShapeStrokeDash('rivets')" style="padding: 1px 3px; font-size: 8.5px;" title="Remaches / Puntos Redondos (Línea, Rectángulo, Círculo, etc.)">••• Rem</button>
+                        <button type="button" class="btn-catalog-dash" data-dash="dashed" onclick="window.updateShapeStrokeDash &amp;&amp; window.updateShapeStrokeDash('dashed')" style="padding: 1px 3px; font-size: 8.5px;" title="Trazo Discontinuo / Guiones">- - Gui</button>
+                    </div>
+                    <div class="ribbon-grid-tools" style="grid-template-columns: repeat(4, 1fr); gap: 2px;">
+                        <button data-mode="line" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Línea (Sólida o Remaches)">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><line x1="4" y1="20" x2="20" y2="4"></line></svg>
+                        </button>
+                        <button data-mode="rect" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Rectángulo / Cuadrado (Sólido o Remaches)">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                        </button>
+                        <button data-mode="circle" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Círculo / Óvalo (Sólido o Remaches)">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="9"></circle></svg>
+                        </button>
+                        <button data-mode="triangle" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Triángulo">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12,3 21,19 3,19"></polygon></svg>
+                        </button>
+                        <button data-mode="star" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Estrella">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                        </button>
+                        <button data-mode="polygon" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Polígono / Hexágono Regular">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12,2 21,7.2 21,17.8 12,23 3,17.8 3,7.2"></polygon></svg>
+                        </button>
+                        <button data-mode="arrow" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Flecha Táctica">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12,2 21,11 15,11 15,22 9,22 9,11 3,11"></polygon></svg>
+                        </button>
+                        <button data-mode="badge" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Insignia / Escudo Militar">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><path d="M12 2l8 3.5v6.5c0 5-3.5 9.5-8 11-4.5-1.5-8-6-8-11V5.5L12 2z"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                <span class="ribbon-label">Formas</span>
+            </div>
+
             <!-- Controles contextuales de Transformación de Capa -->
             <div id="transform-controls" style="display: none; align-items: center; gap: 8px;">
                 <div class="ribbon-divider" style="height: 45px;"></div>
@@ -288,9 +341,9 @@
                 <div style="display: flex; flex-direction: column; gap: 2px; align-items: center;">
                     <span style="font-size: 0.68em; color: #aaa;">Estilo Trazo</span>
                     <div class="shape-dash-selector" style="display: flex; gap: 1px; background: #222; border: 1px solid #444; border-radius: 3px; padding: 1px;">
-                        <button type="button" class="btn-shape-dash active" data-dash="solid" style="padding: 2px 4px; font-size: 9px; font-weight: bold;" title="Trazo Continuo Sólido">— Lín</button>
-                        <button type="button" class="btn-shape-dash" data-dash="rivets" style="padding: 2px 4px; font-size: 9px; font-weight: bold;" title="Remaches / Puntos Redondos (ideal aviación y blindaje)">••• Rem</button>
-                        <button type="button" class="btn-shape-dash" data-dash="dashed" style="padding: 2px 4px; font-size: 9px; font-weight: bold;" title="Trazo Discontinuo / Guiones">- - Gui</button>
+                        <button type="button" class="btn-shape-dash active" data-dash="solid" onclick="window.updateShapeStrokeDash &amp;&amp; window.updateShapeStrokeDash('solid')" style="padding: 2px 4px; font-size: 9px; font-weight: bold;" title="Trazo Continuo Sólido">— Lín</button>
+                        <button type="button" class="btn-shape-dash" data-dash="rivets" onclick="window.updateShapeStrokeDash &amp;&amp; window.updateShapeStrokeDash('rivets')" style="padding: 2px 4px; font-size: 9px; font-weight: bold;" title="Remaches / Puntos Redondos (ideal aviación y blindaje)">••• Rem</button>
+                        <button type="button" class="btn-shape-dash" data-dash="dashed" onclick="window.updateShapeStrokeDash &amp;&amp; window.updateShapeStrokeDash('dashed')" style="padding: 2px 4px; font-size: 9px; font-weight: bold;" title="Trazo Discontinuo / Guiones">- - Gui</button>
                     </div>
                 </div>
 
@@ -380,47 +433,6 @@
                 </div>
             </div>
 
-            <div class="ribbon-divider"></div>
-
-            <!-- Grupo: Formas (Catálogo con Selector de Trazo / Remaches) -->
-            <div class="ribbon-group" id="group-shapes">
-                <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
-                    <!-- Selector Rápido de Trazo: Continuo / Remaches / Guiones -->
-                    <div class="shape-catalog-dash-selector" style="display: flex; gap: 1px; background: #222; border: 1px solid #444; border-radius: 3px; padding: 1px; margin-bottom: 1px;">
-                        <button type="button" class="btn-catalog-dash active" data-dash="solid" style="padding: 1px 3px; font-size: 8.5px;" title="Trazo Continuo Sólido">— Lín</button>
-                        <button type="button" class="btn-catalog-dash" data-dash="rivets" style="padding: 1px 3px; font-size: 8.5px;" title="Remaches / Puntos Redondos (Línea, Rectángulo, Círculo, etc.)">••• Rem</button>
-                        <button type="button" class="btn-catalog-dash" data-dash="dashed" style="padding: 1px 3px; font-size: 8.5px;" title="Trazo Discontinuo / Guiones">- - Gui</button>
-                    </div>
-                    <div class="ribbon-grid-tools" style="grid-template-columns: repeat(4, 1fr); gap: 2px;">
-                        <button data-mode="line" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Línea (Sólida o Remaches)">
-                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><line x1="4" y1="20" x2="20" y2="4"></line></svg>
-                        </button>
-                        <button data-mode="rect" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Rectángulo / Cuadrado (Sólido o Remaches)">
-                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
-                        </button>
-                        <button data-mode="circle" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Círculo / Óvalo (Sólido o Remaches)">
-                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="9"></circle></svg>
-                        </button>
-                        <button data-mode="triangle" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Triángulo">
-                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12,3 21,19 3,19"></polygon></svg>
-                        </button>
-                        <button data-mode="star" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Estrella">
-                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
-                        </button>
-                        <button data-mode="polygon" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Polígono / Hexágono Regular">
-                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12,2 21,7.2 21,17.8 12,23 3,17.8 3,7.2"></polygon></svg>
-                        </button>
-                        <button data-mode="arrow" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Flecha Táctica">
-                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12,2 21,11 15,11 15,22 9,22 9,11 3,11"></polygon></svg>
-                        </button>
-                        <button data-mode="badge" class="tool-btn" style="width: 24px; height: 24px; padding: 2px;" title="Insignia / Escudo Militar">
-                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><path d="M12 2l8 3.5v6.5c0 5-3.5 9.5-8 11-4.5-1.5-8-6-8-11V5.5L12 2z"></path></svg>
-                        </button>
-                    </div>
-                </div>
-                <span class="ribbon-label">Formas</span>
-            </div>
-            
             <div class="ribbon-divider"></div>
 
             <!-- Grupo: Puntas de Pincel -->
@@ -1073,6 +1085,6 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=3.9"></script>
+    <script type="module" src="main.js?v=4.0"></script>
 </body>
 </html>

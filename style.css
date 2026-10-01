@@ -111,10 +111,15 @@ body, html {
     border-radius: 3px;
     cursor: pointer;
     transition: all 0.15s ease;
+    user-select: none;
+    -webkit-user-select: none;
 }
 .btn-shape-dash:hover, .btn-catalog-dash:hover {
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
+}
+.btn-shape-dash:focus, .btn-catalog-dash:focus {
+    outline: none !important;
 }
 .btn-shape-dash.active, .btn-catalog-dash.active {
     background: #0078d7 !important;
