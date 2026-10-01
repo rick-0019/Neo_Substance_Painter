@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=4.0';
-import { DecalSystem } from './decals.js?v=4.0';
-import { LayerManager } from './layers.js?v=4.0';
-import { PapercraftEngine } from './papercraft.js?v=4.0';
-import { SelectionManager } from './selection.js?v=4.0';
+import { Painter } from './painter.js?v=4.1';
+import { DecalSystem } from './decals.js?v=4.1';
+import { LayerManager } from './layers.js?v=4.1';
+import { PapercraftEngine } from './papercraft.js?v=4.1';
+import { SelectionManager } from './selection.js?v=4.1';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -1279,7 +1279,9 @@ toolButtons.forEach(btn => {
             }
             if (mode === 'select') {
                 window.decalSystem.isActive = true;
-                window.decalSystem.setMode('2d');
+                if (!window.decalSystem.mode) {
+                    window.decalSystem.setMode('2d');
+                }
             } else if (!isShape) {
                 window.decalSystem.deselectDecal();
                 window.decalSystem.isActive = false;

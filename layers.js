@@ -1028,8 +1028,8 @@ export class LayerManager {
                         e.stopPropagation();
                         this.setActiveLayer(layer.id);
                         if (window.decalSystem) {
-                            window.decalSystem.setMode('2d');
-                            window.decalSystem.selectDecal(decal);
+                            const curMode = window.decalSystem.mode || '2d';
+                            window.decalSystem.selectDecal(decal, curMode);
                         }
                         this.renderUI();
                     });
