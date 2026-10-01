@@ -61,7 +61,7 @@ body, html {
     height: 100%;
     justify-content: flex-start;
     align-items: center;
-    padding: 6px 5px 16px 5px;
+    padding: 3px 3px 13px 3px;
     box-sizing: border-box;
     position: relative;
     flex-shrink: 0;
@@ -69,21 +69,59 @@ body, html {
 
 .ribbon-label {
     position: absolute;
-    bottom: 2px;
-    font-size: 0.70em;
+    bottom: 1px;
+    font-size: 0.68em;
     color: #888;
     text-align: center;
     width: 100%;
     pointer-events: none;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
 }
 
 .ribbon-divider {
     width: 1px;
-    height: 65%;
+    height: 60%;
     background-color: var(--border);
-    margin: 0 3px;
+    margin: 0 1px;
     flex-shrink: 0;
+}
+
+/* Ocultar grupos incompatibles durante el modo forma/calca para eliminar la barra deslizante */
+#ribbon.shape-mode-active #group-brush-tips,
+#ribbon.shape-mode-active #group-brush-size,
+#ribbon.shape-mode-active #group-shapes,
+#ribbon.shape-mode-active #group-textures,
+#ribbon.shape-mode-active #group-papercraft,
+#ribbon.shape-mode-active #group-selection,
+#ribbon.shape-mode-active #group-decals,
+#ribbon.text-mode-active #group-brush-tips,
+#ribbon.text-mode-active #group-brush-size,
+#ribbon.text-mode-active #group-shapes,
+#ribbon.text-mode-active #group-textures,
+#ribbon.text-mode-active #group-papercraft,
+#ribbon.text-mode-active #group-selection,
+#ribbon.text-mode-active #group-decals {
+    display: none !important;
+}
+
+/* Selector de trazo y remaches */
+.btn-shape-dash, .btn-catalog-dash {
+    background: transparent;
+    color: #ccc;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.btn-shape-dash:hover, .btn-catalog-dash:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+.btn-shape-dash.active, .btn-catalog-dash.active {
+    background: #0078d7 !important;
+    color: #ffffff !important;
+    border-color: #005a9e !important;
+    font-weight: bold;
 }
 
 .ribbon-items-vertical {
@@ -164,15 +202,16 @@ body, html {
 
 .ribbon-palette {
     display: grid;
-    grid-template-columns: repeat(6, 18px);
-    grid-template-rows: repeat(3, 18px);
+    grid-template-columns: repeat(6, 15px);
+    grid-template-rows: repeat(3, 15px);
     gap: 2px;
-    height: 60px;
+    height: 52px;
+    align-content: center;
 }
 
 .palette-swatch {
-    width: 18px;
-    height: 18px;
+    width: 15px;
+    height: 15px;
     border: 1px solid #555;
     cursor: pointer;
     box-sizing: border-box;
@@ -946,21 +985,21 @@ input[type=range]::-webkit-slider-runnable-track {
     display: flex;
     align-items: center;
     height: 100%;
-    padding: 0 6px;
+    padding: 0 2px;
 }
 
 .paint-file-menu-btn {
     background-color: #1976d2;
     color: #ffffff;
     border: 1px solid #1565c0;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: bold;
-    padding: 8px 14px;
+    padding: 5px 8px;
     border-radius: 4px;
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.3);
     transition: background-color 0.15s, transform 0.1s;
 }

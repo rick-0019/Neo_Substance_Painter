@@ -413,6 +413,12 @@ export class DecalSystem {
         const shapeBarStrokeVal = document.getElementById('shape-bar-stroke-val');
         const btnShapeStrokeDec = document.getElementById('btn-shape-stroke-dec');
         const btnShapeStrokeInc = document.getElementById('btn-shape-stroke-inc');
+        const shapeBarSpacing = document.getElementById('shape-bar-spacing');
+        const shapeBarSpacingVal = document.getElementById('shape-bar-spacing-val');
+        const btnShapeSpacingDec = document.getElementById('btn-shape-spacing-dec');
+        const btnShapeSpacingInc = document.getElementById('btn-shape-spacing-inc');
+        const btnShapeDashes = document.querySelectorAll('.btn-shape-dash');
+        const btnCatalogDashes = document.querySelectorAll('.btn-catalog-dash');
         const shapeScaleInput = document.getElementById('shape-scale');
         const btnShapeScaleDec = document.getElementById('btn-shape-scale-dec');
         const btnShapeScaleInc = document.getElementById('btn-shape-scale-inc');
@@ -532,6 +538,118 @@ export class DecalSystem {
         btnShapeStrokeInc?.addEventListener('click', () => {
             const cur = parseInt(shapeBarStrokeWidth?.value || 4, 10);
             updateShapeStrokeWidth(cur + 1);
+        });
+
+        const updateShapeStrokeDash = (dashStyle) => {
+            window.currentShapeStrokeDash = dashStyle;
+            btnShapeDashes.forEach(b => {
+                b.classList.toggle('active', b.getAttribute('data-dash') === dashStyle);
+            });
+            btnCatalogDashes.forEach(b => {
+                b.classList.toggle('active', b.getAttribute('data-dash') === dashStyle);
+            });
+
+            if (this.selectedDecalId) {
+                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    if (!decal.shapeOptions) {
+                        decal.shapeOptions = {
+                            type: decal.type || 'rect',
+                            color: '#000000',
+                            strokeWidth: 4,
+                            cornerRadius: 0,
+                            fillColor: '#ffff00',
+                            x1: 0, y1: 0,
+                            x2: decal.width || 200, y2: decal.height || 200
+                        };
+                    }
+                    decal.shapeOptions.strokeDash = dashStyle;
+                    decal.shapeOptions.width = decal.width;
+                    decal.shapeOptions.height = decal.height;
+                    decal.shapeOptions.x1 = 0;
+                    decal.shapeOptions.y1 = 0;
+                    decal.shapeOptions.x2 = decal.width;
+                    decal.shapeOptions.y2 = decal.height;
+                    if (window.painter && window.painter.createShapeCanvas) {
+                        const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
+                        decal.img = newCanvas;
+                        try { decal.dataUrl = newCanvas.toDataURL('image/png'); } catch(_) {}
+                        this.currentDecalImage = newCanvas;
+                        this.syncCurrentDecalToObject(true);
+                        this.render2DPreview();
+                        if (this.layerManager) this.layerManager.renderUI();
+                    }
+                }
+            } else if (window.painter && window.painter.editingShape) {
+                window.painter.editingShape.strokeDash = dashStyle;
+                window.painter.renderEditingShape();
+            }
+        };
+
+        const updateShapeDashSpacing = (val) => {
+            const num = Math.max(2, Math.min(100, parseInt(val, 10) || 10));
+            if (shapeBarSpacing) shapeBarSpacing.value = num;
+            if (shapeBarSpacingVal) shapeBarSpacingVal.textContent = `${num} px`;
+
+            if (this.selectedDecalId) {
+                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    if (!decal.shapeOptions) {
+                        decal.shapeOptions = {
+                            type: decal.type || 'rect',
+                            color: '#000000',
+                            strokeWidth: 4,
+                            cornerRadius: 0,
+                            fillColor: '#ffff00',
+                            x1: 0, y1: 0,
+                            x2: decal.width || 200, y2: decal.height || 200
+                        };
+                    }
+                    decal.shapeOptions.dashSpacing = num;
+                    decal.shapeOptions.width = decal.width;
+                    decal.shapeOptions.height = decal.height;
+                    decal.shapeOptions.x1 = 0;
+                    decal.shapeOptions.y1 = 0;
+                    decal.shapeOptions.x2 = decal.width;
+                    decal.shapeOptions.y2 = decal.height;
+                    if (window.painter && window.painter.createShapeCanvas) {
+                        const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
+                        decal.img = newCanvas;
+                        try { decal.dataUrl = newCanvas.toDataURL('image/png'); } catch(_) {}
+                        this.currentDecalImage = newCanvas;
+                        this.syncCurrentDecalToObject(true);
+                        this.render2DPreview();
+                        if (this.layerManager) this.layerManager.renderUI();
+                    }
+                }
+            } else if (window.painter && window.painter.editingShape) {
+                window.painter.editingShape.dashSpacing = num;
+                window.painter.renderEditingShape();
+            }
+        };
+
+        btnShapeDashes.forEach(btn => {
+            btn.addEventListener('click', () => {
+                updateShapeStrokeDash(btn.getAttribute('data-dash') || 'solid');
+            });
+        });
+
+        btnCatalogDashes.forEach(btn => {
+            btn.addEventListener('click', () => {
+                updateShapeStrokeDash(btn.getAttribute('data-dash') || 'solid');
+            });
+        });
+
+        shapeBarSpacing?.addEventListener('input', (e) => updateShapeDashSpacing(e.target.value));
+        btnShapeSpacingDec?.addEventListener('click', () => {
+            const cur = parseInt(shapeBarSpacing?.value || 10, 10);
+            updateShapeDashSpacing(cur - 2);
+        });
+        btnShapeSpacingInc?.addEventListener('click', () => {
+            const cur = parseInt(shapeBarSpacing?.value || 10, 10);
+            updateShapeDashSpacing(cur + 2);
         });
 
         shapeScaleInput?.addEventListener('input', (e) => {
@@ -901,9 +1019,11 @@ export class DecalSystem {
 
             const isShape = ['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line'].includes(decal.type);
             const shapeBar = document.getElementById('shape-controls');
+            const ribbon = document.getElementById('ribbon');
             if (isShape) {
                 if (shapeBar) shapeBar.style.display = 'flex';
                 if (controls) controls.style.display = 'none';
+                if (ribbon) ribbon.classList.add('shape-mode-active');
 
                 if (!decal.shapeOptions) {
                     decal.shapeOptions = {
@@ -911,6 +1031,8 @@ export class DecalSystem {
                         color: '#000000',
                         strokeColor: '#000000',
                         strokeWidth: 4,
+                        strokeDash: 'solid',
+                        dashSpacing: 10,
                         cornerRadius: 0,
                         size: 2,
                         fillColor: '#ffff00',
@@ -924,9 +1046,25 @@ export class DecalSystem {
                 const shapeBarRadiusVal = document.getElementById('shape-bar-radius-val');
                 const shapeBarStrokeWidth = document.getElementById('shape-bar-stroke-width');
                 const shapeBarStrokeVal = document.getElementById('shape-bar-stroke-val');
+                const shapeBarSpacing = document.getElementById('shape-bar-spacing');
+                const shapeBarSpacingVal = document.getElementById('shape-bar-spacing-val');
                 const shapeScaleInput = document.getElementById('shape-scale');
                 const shapeRotInput = document.getElementById('shape-rotation');
                 const shapeRotVal = document.getElementById('shape-rot-val');
+
+                const currentDash = decal.shapeOptions.strokeDash || 'solid';
+                document.querySelectorAll('.btn-shape-dash').forEach(b => {
+                    b.classList.toggle('active', b.getAttribute('data-dash') === currentDash);
+                });
+                document.querySelectorAll('.btn-catalog-dash').forEach(b => {
+                    b.classList.toggle('active', b.getAttribute('data-dash') === currentDash);
+                });
+
+                if (shapeBarSpacing && shapeBarSpacingVal) {
+                    const sp = decal.shapeOptions.dashSpacing || Math.max(6, Math.round((decal.shapeOptions.strokeWidth || 4) * 2.5));
+                    shapeBarSpacing.value = sp;
+                    shapeBarSpacingVal.textContent = `${sp} px`;
+                }
 
                 if (shapeBarFill) {
                     shapeBarFill.value = (decal.shapeOptions.fillColor && decal.shapeOptions.fillColor !== 'transparent')
@@ -961,6 +1099,7 @@ export class DecalSystem {
             } else {
                 if (shapeBar) shapeBar.style.display = 'none';
                 if (controls) controls.style.display = 'flex';
+                if (ribbon) ribbon.classList.remove('shape-mode-active');
             }
         }
 
@@ -985,6 +1124,8 @@ export class DecalSystem {
         this.selectedDecalId = null;
         this.isActive = false;
         this.clear2DUI();
+        const ribbon = document.getElementById('ribbon');
+        if (ribbon) ribbon.classList.remove('shape-mode-active');
         const controls = document.getElementById('decal-controls');
         if (controls) controls.style.display = 'none';
         const shapeBar = document.getElementById('shape-controls');

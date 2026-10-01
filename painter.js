@@ -546,15 +546,21 @@ export class Painter {
                     const settings = this.getBrushSettings();
                     const radiusInput = document.getElementById('shape-bar-radius');
                     const strokeInput = document.getElementById('shape-bar-stroke-width');
+                    const spacingInput = document.getElementById('shape-bar-spacing');
                     const fillInput = document.getElementById('shape-bar-fill-color');
                     const strokeColorInput = document.getElementById('shape-bar-stroke-color');
+                    const strokeDash = window.currentShapeStrokeDash || 'solid';
+                    const strokeW = strokeInput ? parseInt(strokeInput.value, 10) : 4;
+                    const dashSpacing = spacingInput ? parseInt(spacingInput.value, 10) : Math.max(6, Math.round(strokeW * 2.5));
                     this.editingShape = {
                         type: mode,
                         x1: x, y1: y, x2: x, y2: y,
                         color: strokeColorInput?.value || settings.color || '#000000',
                         fillColor: fillInput?.value || '#ffff00',
                         size: settings.size,
-                        strokeWidth: strokeInput ? parseInt(strokeInput.value, 10) : 4,
+                        strokeWidth: strokeW,
+                        strokeDash: strokeDash,
+                        dashSpacing: dashSpacing,
                         cornerRadius: radiusInput ? parseInt(radiusInput.value, 10) : 0,
                         angle: 0
                     };
@@ -864,15 +870,22 @@ export class Painter {
                 const settings = this.getBrushSettings();
                 const radiusInput = document.getElementById('shape-bar-radius');
                 const strokeInput = document.getElementById('shape-bar-stroke-width');
+                const spacingInput = document.getElementById('shape-bar-spacing');
                 const fillInput = document.getElementById('shape-bar-fill-color');
                 const strokeColorInput = document.getElementById('shape-bar-stroke-color');
+                const strokeDash = window.currentShapeStrokeDash || 'solid';
+                const strokeW = strokeInput ? parseInt(strokeInput.value, 10) : 4;
+                const dashSpacing = spacingInput ? parseInt(spacingInput.value, 10) : Math.max(6, Math.round(strokeW * 2.5));
+
                 this.editingShape = {
                     type: mode,
                     x1: x, y1: y, x2: x, y2: y,
                     color: strokeColorInput?.value || settings.color || '#000000',
                     fillColor: fillInput?.value || '#ffff00',
                     size: settings.size,
-                    strokeWidth: strokeInput ? parseInt(strokeInput.value, 10) : 4,
+                    strokeWidth: strokeW,
+                    strokeDash: strokeDash,
+                    dashSpacing: dashSpacing,
                     cornerRadius: radiusInput ? parseInt(radiusInput.value, 10) : 0,
                     angle: 0
                 };
@@ -1117,7 +1130,9 @@ export class Painter {
         }
 
         const strokeW = Math.max(1, (s.strokeWidth !== undefined ? s.strokeWidth : (s.size ? s.size * 2 : 4)));
-        const pad = Math.ceil(strokeW) + 12;
+        const strokeDash = s.strokeDash || s.dashStyle || 'solid';
+        const spacing = s.dashSpacing || Math.max(6, Math.round(strokeW * 2.5));
+        const pad = Math.ceil(strokeW) + 14;
 
         const canvas = document.createElement('canvas');
         canvas.width = w + pad * 2;
@@ -1127,10 +1142,20 @@ export class Painter {
         ctx.imageSmoothingQuality = 'high';
 
         ctx.lineWidth = strokeW;
-        ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.strokeStyle = s.color || s.strokeColor || '#000000';
         ctx.fillStyle = s.fillColor || '#ffff00';
+
+        if (strokeDash === 'rivets' || strokeDash === 'dots') {
+            ctx.lineCap = 'round';
+            ctx.setLineDash([0.001, spacing]);
+        } else if (strokeDash === 'dashed') {
+            ctx.lineCap = 'butt';
+            ctx.setLineDash([Math.max(4, Math.round(strokeW * 3)), spacing]);
+        } else {
+            ctx.lineCap = 'round';
+            ctx.setLineDash([]);
+        }
 
         const cx = canvas.width / 2;
         const cy = canvas.height / 2;
@@ -1164,15 +1189,16 @@ export class Painter {
         if (shapeCanvas) {
             const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
             if (activeLayer) {
+                const isRivets = s.strokeDash === 'rivets' || s.strokeDash === 'dots';
                 const shapeNames = {
-                    rect: 'Rectángulo',
-                    circle: 'Círculo',
-                    line: 'Línea',
-                    triangle: 'Triángulo',
-                    star: 'Estrella',
-                    polygon: 'Polígono',
-                    arrow: 'Flecha',
-                    badge: 'Insignia'
+                    rect: isRivets ? 'Remaches Rect' : 'Rectángulo',
+                    circle: isRivets ? 'Remaches Círculo' : 'Círculo',
+                    line: isRivets ? 'Remaches Línea' : 'Línea',
+                    triangle: isRivets ? 'Remaches Triángulo' : 'Triángulo',
+                    star: isRivets ? 'Remaches Estrella' : 'Estrella',
+                    polygon: isRivets ? 'Remaches Polígono' : 'Polígono',
+                    arrow: isRivets ? 'Remaches Flecha' : 'Flecha',
+                    badge: isRivets ? 'Remaches Insignia' : 'Insignia'
                 };
                 const count = (activeLayer.decals ? activeLayer.decals.filter(d => d.type === s.type).length : 0) + 1;
                 const shapeName = `${shapeNames[s.type] || 'Forma'} ${count}`;
@@ -1297,11 +1323,24 @@ export class Painter {
         this.ctxUI.translate(-cx, -cy);
         
         const strokeW = Math.max(1, (s.strokeWidth !== undefined ? s.strokeWidth : (s.size ? s.size * 2 : 4)));
+        const strokeDash = s.strokeDash || s.dashStyle || 'solid';
+        const spacing = s.dashSpacing || Math.max(6, Math.round(strokeW * 2.5));
+
         this.ctxUI.lineWidth = strokeW;
-        this.ctxUI.lineCap = 'round';
         this.ctxUI.lineJoin = 'round';
         this.ctxUI.strokeStyle = s.color || s.strokeColor || '#000000';
         this.ctxUI.fillStyle = s.fillColor || '#ffff00';
+
+        if (strokeDash === 'rivets' || strokeDash === 'dots') {
+            this.ctxUI.lineCap = 'round';
+            this.ctxUI.setLineDash([0.001, spacing]);
+        } else if (strokeDash === 'dashed') {
+            this.ctxUI.lineCap = 'butt';
+            this.ctxUI.setLineDash([Math.max(4, Math.round(strokeW * 3)), spacing]);
+        } else {
+            this.ctxUI.lineCap = 'round';
+            this.ctxUI.setLineDash([]);
+        }
         
         if (s.type === 'line') {
             this.ctxUI.beginPath();
