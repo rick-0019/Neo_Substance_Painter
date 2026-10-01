@@ -1,5 +1,126 @@
 import * as THREE from 'three';
 
+export function drawRoundedPolygon(ctx, points, radius) {
+    if (!points || points.length < 3) return;
+    if (radius <= 0) {
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.closePath();
+        return;
+    }
+    const len = points.length;
+    const pLast = points[len - 1];
+    const pFirst = points[0];
+    ctx.moveTo((pLast.x + pFirst.x) / 2, (pLast.y + pFirst.y) / 2);
+    for (let i = 0; i < len; i++) {
+        const pCurr = points[i];
+        const pNext = points[(i + 1) % len];
+        ctx.arcTo(pCurr.x, pCurr.y, pNext.x, pNext.y, radius);
+    }
+    ctx.closePath();
+}
+
+export function drawShapePath(ctx, type, cx, cy, w, h, cornerRadius = 0) {
+    ctx.beginPath();
+    const r = Math.max(0, cornerRadius);
+    const halfW = Math.max(1, w / 2);
+    const halfH = Math.max(1, h / 2);
+
+    switch (type) {
+        case 'line':
+            ctx.moveTo(cx - halfW, cy);
+            ctx.lineTo(cx + halfW, cy);
+            break;
+
+        case 'rect':
+            if (r > 0 && typeof ctx.roundRect === 'function') {
+                ctx.roundRect(cx - halfW, cy - halfH, w, h, Math.min(r, halfW, halfH));
+            } else {
+                ctx.rect(cx - halfW, cy - halfH, w, h);
+            }
+            break;
+
+        case 'circle':
+            ctx.ellipse(cx, cy, halfW, halfH, 0, 0, Math.PI * 2);
+            break;
+
+        case 'triangle': {
+            const points = [
+                { x: cx, y: cy - halfH },
+                { x: cx + halfW, y: cy + halfH },
+                { x: cx - halfW, y: cy + halfH }
+            ];
+            drawRoundedPolygon(ctx, points, Math.min(r, halfH * 0.8));
+            break;
+        }
+
+        case 'polygon': { // Hexágono regular
+            const points = [];
+            for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i - Math.PI / 2;
+                points.push({
+                    x: cx + halfW * Math.cos(angle),
+                    y: cy + halfH * Math.sin(angle)
+                });
+            }
+            drawRoundedPolygon(ctx, points, Math.min(r, halfW * 0.4));
+            break;
+        }
+
+        case 'star': { // Estrella de 5 puntas
+            const points = [];
+            const spikes = 5;
+            let rot = -Math.PI / 2;
+            const step = Math.PI / spikes;
+            for (let i = 0; i < spikes * 2; i++) {
+                const factor = (i % 2 === 0) ? 1.0 : 0.45;
+                points.push({
+                    x: cx + Math.cos(rot) * halfW * factor,
+                    y: cy + Math.sin(rot) * halfH * factor
+                });
+                rot += step;
+            }
+            drawRoundedPolygon(ctx, points, Math.min(r, halfW * 0.25));
+            break;
+        }
+
+        case 'arrow': { // Flecha táctica hacia arriba
+            const headH = halfH;
+            const shaftW = halfW * 0.44;
+            const points = [
+                { x: cx, y: cy - halfH },
+                { x: cx + halfW, y: cy - halfH + headH },
+                { x: cx + shaftW, y: cy - halfH + headH },
+                { x: cx + shaftW, y: cy + halfH },
+                { x: cx - shaftW, y: cy + halfH },
+                { x: cx - shaftW, y: cy - halfH + headH },
+                { x: cx - halfW, y: cy - halfH + headH }
+            ];
+            drawRoundedPolygon(ctx, points, Math.min(r, halfW * 0.3));
+            break;
+        }
+
+        case 'badge': { // Insignia / Escudo
+            const shoulderY = cy + halfH * 0.2;
+            const points = [
+                { x: cx - halfW, y: cy - halfH },
+                { x: cx + halfW, y: cy - halfH },
+                { x: cx + halfW, y: shoulderY },
+                { x: cx, y: cy + halfH },
+                { x: cx - halfW, y: shoulderY }
+            ];
+            drawRoundedPolygon(ctx, points, Math.min(r, halfW * 0.4));
+            break;
+        }
+
+        default:
+            ctx.rect(cx - halfW, cy - halfH, w, h);
+            break;
+    }
+}
+
 export class Painter {
     constructor(scene, camera, renderer, canvas2d, texture, layerManager = null) {
         this.scene = scene;
@@ -303,6 +424,10 @@ export class Painter {
         view3d.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
             const mode = document.getElementById('brush-mode')?.value || 'paint';
+            if (mode === 'select') {
+                if (this.editingShape) this.commitShape();
+                return;
+            }
             if (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '3d') {
                 return;
             }
@@ -405,7 +530,7 @@ export class Painter {
                 return;
             }
 
-            if (['line', 'rect', 'circle', 'star'].includes(mode)) {
+            if (['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode)) {
                 const rect = this.renderer.domElement.getBoundingClientRect();
                 this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
                 this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -419,11 +544,18 @@ export class Painter {
                     
                     this.saveUndoState();
                     const settings = this.getBrushSettings();
+                    const radiusInput = document.getElementById('shape-bar-radius');
+                    const strokeInput = document.getElementById('shape-bar-stroke-width');
+                    const fillInput = document.getElementById('shape-bar-fill-color');
+                    const strokeColorInput = document.getElementById('shape-bar-stroke-color');
                     this.editingShape = {
                         type: mode,
                         x1: x, y1: y, x2: x, y2: y,
-                        color: settings.color,
+                        color: strokeColorInput?.value || settings.color || '#000000',
+                        fillColor: fillInput?.value || '#ffff00',
                         size: settings.size,
+                        strokeWidth: strokeInput ? parseInt(strokeInput.value, 10) : 4,
+                        cornerRadius: radiusInput ? parseInt(radiusInput.value, 10) : 0,
                         angle: 0
                     };
                     this.dragMode = 'create';
@@ -492,7 +624,7 @@ export class Painter {
                     const dx = curX - this.editingShape.x1;
                     const dy = curY - this.editingShape.y1;
 
-                    if (['circle', 'star'].includes(this.editingShape.type) || e.shiftKey) {
+                    if (['circle', 'star', 'polygon', 'badge'].includes(this.editingShape.type) || e.shiftKey) {
                         const dim = Math.max(Math.abs(dx), Math.abs(dy));
                         this.editingShape.x2 = this.editingShape.x1 + (dx >= 0 ? 1 : -1) * dim;
                         this.editingShape.y2 = this.editingShape.y1 + (dy >= 0 ? 1 : -1) * dim;
@@ -648,6 +780,10 @@ export class Painter {
             if (e.button !== 0) return;
             if (window.decalSystem && window.decalSystem.decal2D && window.decalSystem.decal2D.isDragging) return;
             const mode = document.getElementById('brush-mode')?.value || 'paint';
+            if (mode === 'select') {
+                if (this.editingShape) this.commitShape();
+                return;
+            }
             if (window.decalSystem && window.decalSystem.isTextMode && mode !== 'text') {
                 window.decalSystem.cancelDecal();
             }
@@ -716,7 +852,7 @@ export class Painter {
                 }
             }
             
-            if (['line', 'rect', 'circle', 'star'].includes(mode)) {
+            if (['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode)) {
                 if (window.decalSystem && window.decalSystem.selectedDecalId) {
                     const hit = window.decalSystem.hitTest2D(x, y);
                     if (hit) {
@@ -726,11 +862,18 @@ export class Painter {
                 }
 
                 const settings = this.getBrushSettings();
+                const radiusInput = document.getElementById('shape-bar-radius');
+                const strokeInput = document.getElementById('shape-bar-stroke-width');
+                const fillInput = document.getElementById('shape-bar-fill-color');
+                const strokeColorInput = document.getElementById('shape-bar-stroke-color');
                 this.editingShape = {
                     type: mode,
                     x1: x, y1: y, x2: x, y2: y,
-                    color: settings.color,
+                    color: strokeColorInput?.value || settings.color || '#000000',
+                    fillColor: fillInput?.value || '#ffff00',
                     size: settings.size,
+                    strokeWidth: strokeInput ? parseInt(strokeInput.value, 10) : 4,
+                    cornerRadius: radiusInput ? parseInt(radiusInput.value, 10) : 0,
                     angle: 0
                 };
                 this.dragMode = 'create';
@@ -838,7 +981,7 @@ export class Painter {
                 if (this.dragMode === 'create') {
                     const dx = x - s.x1;
                     const dy = y - s.y1;
-                    if (['circle', 'star'].includes(s.type) || e.shiftKey) {
+                    if (['circle', 'star', 'polygon', 'badge'].includes(s.type) || e.shiftKey) {
                         const dim = Math.max(Math.abs(dx), Math.abs(dy));
                         s.x2 = s.x1 + (dx >= 0 ? 1 : -1) * dim;
                         s.y2 = s.y1 + (dy >= 0 ? 1 : -1) * dim;
@@ -866,7 +1009,7 @@ export class Painter {
                     const ry = cy + dx * Math.sin(-s.angle) + dy * Math.cos(-s.angle);
                     
                     const isCorner = ['nw', 'ne', 'sw', 'se'].includes(this.dragMode);
-                    if (isCorner && !e.altKey && (['circle', 'star'].includes(s.type) || e.shiftKey)) {
+                    if (isCorner && !e.altKey && (['circle', 'star', 'polygon', 'badge'].includes(s.type) || e.shiftKey)) {
                         // Mantener proporción al arrastrar esquinas
                         if (this.dragMode === 'se') {
                             const diffX = rx - s.x1;
@@ -960,14 +1103,13 @@ export class Painter {
     
     createShapeCanvas(s) {
         if (!s) return null;
-        const dx = Math.abs(s.x2 - s.x1);
-        const dy = Math.abs(s.y2 - s.y1);
-        if (dx < 2 && dy < 2) return null;
+        const dx = Math.abs((s.x2 !== undefined ? s.x2 : s.width) - (s.x1 || 0));
+        const dy = Math.abs((s.y2 !== undefined ? s.y2 : s.height) - (s.y1 || 0));
+        const w = Math.max(10, Math.round(dx || s.width || 100));
+        const h = Math.max(10, Math.round(dy || s.height || 100));
 
-        const strokeW = Math.max(1, s.size * 2);
-        const pad = Math.ceil(strokeW) + 8;
-        const w = Math.max(10, Math.round(dx));
-        const h = Math.max(10, Math.round(dy));
+        const strokeW = Math.max(1, (s.strokeWidth !== undefined ? s.strokeWidth : (s.size ? s.size * 2 : 4)));
+        const pad = Math.ceil(strokeW) + 12;
 
         const canvas = document.createElement('canvas');
         canvas.width = w + pad * 2;
@@ -979,60 +1121,25 @@ export class Painter {
         ctx.lineWidth = strokeW;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.strokeStyle = s.color || '#000000';
-        ctx.fillStyle = s.color || '#000000';
+        ctx.strokeStyle = s.color || s.strokeColor || '#000000';
+        ctx.fillStyle = s.fillColor || '#ffff00';
 
         const cx = canvas.width / 2;
         const cy = canvas.height / 2;
 
-        ctx.beginPath();
         if (s.type === 'line') {
-            const rawDx = s.x2 - s.x1;
-            const rawDy = s.y2 - s.y1;
+            const rawDx = (s.x2 !== undefined && s.x1 !== undefined) ? (s.x2 - s.x1) : w;
+            const rawDy = (s.y2 !== undefined && s.y1 !== undefined) ? (s.y2 - s.y1) : h;
+            ctx.beginPath();
             ctx.moveTo(cx - rawDx / 2, cy - rawDy / 2);
             ctx.lineTo(cx + rawDx / 2, cy + rawDy / 2);
             ctx.stroke();
-        } else if (s.type === 'rect') {
-            ctx.rect(cx - w / 2, cy - h / 2, w, h);
+        } else {
+            drawShapePath(ctx, s.type, cx, cy, w, h, s.cornerRadius || 0);
             if (s.fillColor && s.fillColor !== 'transparent') {
-                ctx.fillStyle = s.fillColor;
                 ctx.fill();
             }
             if (s.color && s.color !== 'transparent') {
-                ctx.strokeStyle = s.color;
-                ctx.stroke();
-            }
-        } else if (s.type === 'circle') {
-            ctx.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2);
-            if (s.fillColor && s.fillColor !== 'transparent') {
-                ctx.fillStyle = s.fillColor;
-                ctx.fill();
-            }
-            if (s.color && s.color !== 'transparent') {
-                ctx.strokeStyle = s.color;
-                ctx.stroke();
-            }
-        } else if (s.type === 'star') {
-            const rx = w / 2;
-            const ry = h / 2;
-            const spikes = 5;
-            let rot = (Math.PI / 2) * 3;
-            const step = Math.PI / spikes;
-            ctx.moveTo(cx, cy - ry);
-            for (let i = 0; i < spikes; i++) {
-                ctx.lineTo(cx + Math.cos(rot) * rx, cy + Math.sin(rot) * ry);
-                rot += step;
-                ctx.lineTo(cx + Math.cos(rot) * (rx * 0.4), cy + Math.sin(rot) * (ry * 0.4));
-                rot += step;
-            }
-            ctx.lineTo(cx, cy - ry);
-            ctx.closePath();
-            if (s.fillColor && s.fillColor !== 'transparent') {
-                ctx.fillStyle = s.fillColor;
-                ctx.fill();
-            }
-            if (s.color && s.color !== 'transparent') {
-                ctx.strokeStyle = s.color;
                 ctx.stroke();
             }
         }
@@ -1053,7 +1160,11 @@ export class Painter {
                     rect: 'Rectángulo',
                     circle: 'Círculo',
                     line: 'Línea',
-                    star: 'Estrella'
+                    triangle: 'Triángulo',
+                    star: 'Estrella',
+                    polygon: 'Polígono',
+                    arrow: 'Flecha',
+                    badge: 'Insignia'
                 };
                 const count = (activeLayer.decals ? activeLayer.decals.filter(d => d.type === s.type).length : 0) + 1;
                 const shapeName = `${shapeNames[s.type] || 'Forma'} ${count}`;
@@ -1169,68 +1280,32 @@ export class Painter {
         
         const cx = (s.x1 + s.x2) / 2;
         const cy = (s.y1 + s.y2) / 2;
+        const w = Math.max(2, Math.abs(s.x2 - s.x1));
+        const h = Math.max(2, Math.abs(s.y2 - s.y1));
         
         this.ctxUI.save();
         this.ctxUI.translate(cx, cy);
         this.ctxUI.rotate(s.angle || 0);
         this.ctxUI.translate(-cx, -cy);
         
-        this.ctxUI.lineWidth = s.size * 2;
+        const strokeW = Math.max(1, (s.strokeWidth !== undefined ? s.strokeWidth : (s.size ? s.size * 2 : 4)));
+        this.ctxUI.lineWidth = strokeW;
         this.ctxUI.lineCap = 'round';
         this.ctxUI.lineJoin = 'round';
-        this.ctxUI.strokeStyle = s.color;
-        this.ctxUI.fillStyle = s.color;
+        this.ctxUI.strokeStyle = s.color || s.strokeColor || '#000000';
+        this.ctxUI.fillStyle = s.fillColor || '#ffff00';
         
-        this.ctxUI.beginPath();
         if (s.type === 'line') {
+            this.ctxUI.beginPath();
             this.ctxUI.moveTo(s.x1, s.y1);
             this.ctxUI.lineTo(s.x2, s.y2);
             this.ctxUI.stroke();
-        } else if (s.type === 'rect') {
-            const minX = Math.min(s.x1, s.x2);
-            const minY = Math.min(s.y1, s.y2);
-            this.ctxUI.rect(minX, minY, Math.abs(s.x2 - s.x1), Math.abs(s.y2 - s.y1));
+        } else {
+            drawShapePath(this.ctxUI, s.type, cx, cy, w, h, s.cornerRadius || 0);
             if (s.fillColor && s.fillColor !== 'transparent') {
-                this.ctxUI.fillStyle = s.fillColor;
                 this.ctxUI.fill();
             }
             if (s.color && s.color !== 'transparent') {
-                this.ctxUI.strokeStyle = s.color;
-                this.ctxUI.stroke();
-            }
-        } else if (s.type === 'circle') {
-            const rx = Math.abs(s.x2 - s.x1) / 2;
-            const ry = Math.abs(s.y2 - s.y1) / 2;
-            this.ctxUI.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-            if (s.fillColor && s.fillColor !== 'transparent') {
-                this.ctxUI.fillStyle = s.fillColor;
-                this.ctxUI.fill();
-            }
-            if (s.color && s.color !== 'transparent') {
-                this.ctxUI.strokeStyle = s.color;
-                this.ctxUI.stroke();
-            }
-        } else if (s.type === 'star') {
-            const rx = Math.abs(s.x2 - s.x1) / 2;
-            const ry = Math.abs(s.y2 - s.y1) / 2;
-            const spikes = 5;
-            let rot = Math.PI / 2 * 3;
-            let step = Math.PI / spikes;
-            this.ctxUI.moveTo(cx, cy - ry);
-            for (let i = 0; i < spikes; i++) {
-                this.ctxUI.lineTo(cx + Math.cos(rot) * rx, cy + Math.sin(rot) * ry);
-                rot += step;
-                this.ctxUI.lineTo(cx + Math.cos(rot) * (rx * 0.4), cy + Math.sin(rot) * (ry * 0.4));
-                rot += step;
-            }
-            this.ctxUI.lineTo(cx, cy - ry);
-            this.ctxUI.closePath();
-            if (s.fillColor && s.fillColor !== 'transparent') {
-                this.ctxUI.fillStyle = s.fillColor;
-                this.ctxUI.fill();
-            }
-            if (s.color && s.color !== 'transparent') {
-                this.ctxUI.strokeStyle = s.color;
                 this.ctxUI.stroke();
             }
         }

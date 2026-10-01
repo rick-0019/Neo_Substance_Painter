@@ -1220,20 +1220,31 @@ toolButtons.forEach(btn => {
             if (window.decalSystem.isTextMode && mode !== 'text') {
                 window.decalSystem.cancelDecal();
             }
-            window.decalSystem.deselectDecal();
-            window.decalSystem.isActive = false;
+            if (mode === 'select') {
+                window.decalSystem.isActive = true;
+                window.decalSystem.setMode('2d');
+            } else {
+                window.decalSystem.deselectDecal();
+                window.decalSystem.isActive = false;
+            }
         }
         
         toolButtons.forEach(b => b.classList.remove('active'));
-        btnSelectionMain?.classList.remove('active');
+        document.getElementById('btn-select-rect')?.classList.remove('active');
+        document.getElementById('btn-select-lasso')?.classList.remove('active');
         targetBtn.classList.add('active');
         brushModeInput.value = mode;
     });
 });
 
-// --- Menú y Herramientas de Selección / Enmascarado ---
-const btnSelectionMain = document.getElementById('btn-selection-main');
-const selectionMenu = document.getElementById('selection-dropdown-menu');
+// --- Herramientas de Marco / Área de Selección (Raster / Enmascarado) ---
+const btnSelectRect = document.getElementById('btn-select-rect');
+const btnSelectLasso = document.getElementById('btn-select-lasso');
+const btnQuickFill = document.getElementById('btn-quick-fill-sel');
+const btnQuickInvert = document.getElementById('btn-quick-invert-sel');
+const btnQuickDel = document.getElementById('btn-quick-del-sel');
+const btnQuickDesel = document.getElementById('btn-quick-desel');
+const btnQuickCamo = document.getElementById('btn-quick-camo-sel');
 const maskIndicator = document.getElementById('selection-mask-indicator');
 
 function activateSelectionMode(mode) {
@@ -1249,7 +1260,8 @@ function activateSelectionMode(mode) {
     document.getElementById('btn-eyedropper')?.classList.remove('active');
 
     toolButtons.forEach(b => b.classList.remove('active'));
-    if (btnSelectionMain) btnSelectionMain.classList.add('active');
+    btnSelectRect?.classList.toggle('active', mode === 'select_rect');
+    btnSelectLasso?.classList.toggle('active', mode === 'select_lasso');
     if (brushModeInput) brushModeInput.value = mode;
     if (painter) painter.previousMode = 'paint';
 
@@ -1258,85 +1270,42 @@ function activateSelectionMode(mode) {
     });
 }
 
-btnSelectionMain?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (!selectionMenu) return;
-    const isVisible = selectionMenu.style.display === 'flex';
-    if (isVisible) {
-        selectionMenu.style.display = 'none';
-    } else {
-        const rect = btnSelectionMain.getBoundingClientRect();
-        selectionMenu.style.top = `${rect.bottom + 2}px`;
-        selectionMenu.style.left = `${rect.left}px`;
-        selectionMenu.style.display = 'flex';
+function applySelectionFill() {
+    if (!selectionManager || !selectionManager.active) return;
+    const brushColor = document.getElementById('brush-color')?.value || '#2e7d32';
+    selectionManager.fillContent(layerManager, brushColor);
+    if (painter) {
+        painter.needsUpdate = true;
+        painter.forceUpdate = true;
+    }
+}
+
+function applySelectionToCamo() {
+    if (!selectionManager || !selectionManager.active) return;
+    const brushColor = document.getElementById('brush-color')?.value || '#2e7d32';
+    const camoLayer = layerManager.addCamoLayer(brushColor);
+    selectionManager.fillContent(layerManager, '#FFFFFF');
+    selectionManager.deselect();
+    layerManager.setEditingTarget(camoLayer.id, 'mask');
+    if (painter) {
+        painter.needsUpdate = true;
+        painter.forceUpdate = true;
+    }
+}
+
+btnSelectRect?.addEventListener('click', () => activateSelectionMode('select_rect'));
+btnSelectLasso?.addEventListener('click', () => activateSelectionMode('select_lasso'));
+btnQuickFill?.addEventListener('click', applySelectionFill);
+btnQuickInvert?.addEventListener('click', () => selectionManager.invert());
+btnQuickDel?.addEventListener('click', () => {
+    selectionManager.deleteContent(layerManager);
+    if (painter) {
+        painter.needsUpdate = true;
+        painter.forceUpdate = true;
     }
 });
-
-document.addEventListener('click', (e) => {
-    if (selectionMenu && selectionMenu.style.display === 'flex') {
-        if (!selectionMenu.contains(e.target) && e.target !== btnSelectionMain && !btnSelectionMain.contains(e.target)) {
-            selectionMenu.style.display = 'none';
-        }
-    }
-});
-
-document.querySelectorAll('.selection-item[data-action]').forEach(item => {
-    item.addEventListener('click', (e) => {
-        const action = item.getAttribute('data-action');
-        if (selectionMenu) selectionMenu.style.display = 'none';
-
-        function applySelectionFill() {
-            if (!selectionManager || !selectionManager.active) return;
-            const brushColor = document.getElementById('brush-color')?.value || '#2e7d32';
-            selectionManager.fillContent(layerManager, brushColor);
-            if (painter) {
-                painter.needsUpdate = true;
-                painter.forceUpdate = true;
-            }
-        }
-
-        function applySelectionToCamo() {
-            if (!selectionManager || !selectionManager.active) return;
-            const brushColor = document.getElementById('brush-color')?.value || '#2e7d32';
-            const camoLayer = layerManager.addCamoLayer(brushColor);
-            selectionManager.fillContent(layerManager, '#FFFFFF');
-            selectionManager.deselect();
-            layerManager.setEditingTarget(camoLayer.id, 'mask');
-            if (painter) {
-                painter.needsUpdate = true;
-                painter.forceUpdate = true;
-            }
-        }
-
-        switch (action) {
-            case 'select_rect':
-                activateSelectionMode('select_rect');
-                break;
-            case 'select_lasso':
-                activateSelectionMode('select_lasso');
-                break;
-            case 'fill_selection':
-                applySelectionFill();
-                break;
-            case 'selection_to_camo':
-                applySelectionToCamo();
-                break;
-            case 'invert_selection':
-                selectionManager.invert();
-                break;
-            case 'delete_selected_content':
-                selectionManager.deleteContent(layerManager);
-                if (painter) {
-                    painter.needsUpdate = true;
-                    painter.forceUpdate = true;
-                }
-                break;
-            case 'deselect_all':
-                selectionManager.deselect();
-                break;
-        }
-    });
-});
+btnQuickDesel?.addEventListener('click', () => selectionManager.deselect());
+btnQuickCamo?.addEventListener('click', applySelectionToCamo);
 
 // --- Indicador de Estado de Máscara de Capa (Substance Painter) y Selección ---
 function updateMaskFloatingIndicator() {
@@ -2302,6 +2271,12 @@ window.addEventListener('keydown', (e) => {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
     if (e.key === 'f' || e.key === 'F') {
         frameModel();
+    }
+    if ((e.key === 'v' || e.key === 'V') && !e.ctrlKey && !e.metaKey) {
+        document.getElementById('btn-tool-select')?.click();
+    }
+    if ((e.key === 'b' || e.key === 'B') && !e.ctrlKey && !e.metaKey) {
+        document.querySelector('.tool-btn[data-mode="paint"]')?.click();
     }
     if ((e.key === 'i' || e.key === 'I') && !e.ctrlKey && !e.metaKey) {
         activateEyedropper();

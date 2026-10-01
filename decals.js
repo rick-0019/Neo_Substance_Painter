@@ -361,6 +361,9 @@ export class DecalSystem {
                 decal.shapeOptions = {
                     type: decal.type || 'rect',
                     color: '#000000',
+                    strokeColor: '#000000',
+                    strokeWidth: 4,
+                    cornerRadius: 0,
                     size: 2,
                     fillColor: 'transparent',
                     x1: 0, y1: 0,
@@ -395,6 +398,14 @@ export class DecalSystem {
         const shapeBarFill = document.getElementById('shape-bar-fill-color');
         const shapeBarFillNone = document.getElementById('btn-shape-bar-fill-none');
         const shapeBarStroke = document.getElementById('shape-bar-stroke-color');
+        const shapeBarRadius = document.getElementById('shape-bar-radius');
+        const shapeBarRadiusVal = document.getElementById('shape-bar-radius-val');
+        const btnShapeRadiusZero = document.getElementById('btn-shape-radius-zero');
+        const btnShapeRadiusInc = document.getElementById('btn-shape-radius-inc');
+        const shapeBarStrokeWidth = document.getElementById('shape-bar-stroke-width');
+        const shapeBarStrokeVal = document.getElementById('shape-bar-stroke-val');
+        const btnShapeStrokeDec = document.getElementById('btn-shape-stroke-dec');
+        const btnShapeStrokeInc = document.getElementById('btn-shape-stroke-inc');
         const shapeScaleInput = document.getElementById('shape-scale');
         const btnShapeScaleDec = document.getElementById('btn-shape-scale-dec');
         const btnShapeScaleInc = document.getElementById('btn-shape-scale-inc');
@@ -412,6 +423,97 @@ export class DecalSystem {
         shapeBarFill?.addEventListener('input', (e) => updateSelectedShape(e.target.value, undefined));
         shapeBarFillNone?.addEventListener('click', () => updateSelectedShape('transparent', undefined));
         shapeBarStroke?.addEventListener('input', (e) => updateSelectedShape(undefined, e.target.value));
+
+        const updateShapeRadius = (val) => {
+            const num = Math.max(0, Math.min(60, parseInt(val, 10) || 0));
+            if (shapeBarRadius) shapeBarRadius.value = num;
+            if (shapeBarRadiusVal) shapeBarRadiusVal.textContent = `${num} px`;
+            
+            if (this.selectedDecalId) {
+                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    if (!decal.shapeOptions) {
+                        decal.shapeOptions = {
+                            type: decal.type || 'rect',
+                            color: '#000000',
+                            strokeWidth: 4,
+                            cornerRadius: 0,
+                            fillColor: '#ffff00',
+                            x1: 0, y1: 0,
+                            x2: decal.width || 200, y2: decal.height || 200
+                        };
+                    }
+                    decal.shapeOptions.cornerRadius = num;
+                    if (window.painter && window.painter.createShapeCanvas) {
+                        const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
+                        decal.img = newCanvas;
+                        try { decal.dataUrl = newCanvas.toDataURL('image/png'); } catch(_) {}
+                        this.currentDecalImage = newCanvas;
+                        this.syncCurrentDecalToObject(true);
+                        this.render2DPreview();
+                        if (this.layerManager) this.layerManager.renderUI();
+                    }
+                }
+            } else if (window.painter && window.painter.editingShape) {
+                window.painter.editingShape.cornerRadius = num;
+                window.painter.renderEditingShape();
+            }
+        };
+
+        const updateShapeStrokeWidth = (val) => {
+            const num = Math.max(1, Math.min(50, parseInt(val, 10) || 4));
+            if (shapeBarStrokeWidth) shapeBarStrokeWidth.value = num;
+            if (shapeBarStrokeVal) shapeBarStrokeVal.textContent = `${num} px`;
+            
+            if (this.selectedDecalId) {
+                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    if (!decal.shapeOptions) {
+                        decal.shapeOptions = {
+                            type: decal.type || 'rect',
+                            color: '#000000',
+                            strokeWidth: 4,
+                            cornerRadius: 0,
+                            fillColor: '#ffff00',
+                            x1: 0, y1: 0,
+                            x2: decal.width || 200, y2: decal.height || 200
+                        };
+                    }
+                    decal.shapeOptions.strokeWidth = num;
+                    if (window.painter && window.painter.createShapeCanvas) {
+                        const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
+                        decal.img = newCanvas;
+                        try { decal.dataUrl = newCanvas.toDataURL('image/png'); } catch(_) {}
+                        this.currentDecalImage = newCanvas;
+                        this.syncCurrentDecalToObject(true);
+                        this.render2DPreview();
+                        if (this.layerManager) this.layerManager.renderUI();
+                    }
+                }
+            } else if (window.painter && window.painter.editingShape) {
+                window.painter.editingShape.strokeWidth = num;
+                window.painter.renderEditingShape();
+            }
+        };
+
+        shapeBarRadius?.addEventListener('input', (e) => updateShapeRadius(e.target.value));
+        btnShapeRadiusZero?.addEventListener('click', () => updateShapeRadius(0));
+        btnShapeRadiusInc?.addEventListener('click', () => {
+            const cur = parseInt(shapeBarRadius?.value || 0, 10);
+            updateShapeRadius(cur + 5);
+        });
+
+        shapeBarStrokeWidth?.addEventListener('input', (e) => updateShapeStrokeWidth(e.target.value));
+        btnShapeStrokeDec?.addEventListener('click', () => {
+            const cur = parseInt(shapeBarStrokeWidth?.value || 4, 10);
+            updateShapeStrokeWidth(cur - 1);
+        });
+        btnShapeStrokeInc?.addEventListener('click', () => {
+            const cur = parseInt(shapeBarStrokeWidth?.value || 4, 10);
+            updateShapeStrokeWidth(cur + 1);
+        });
 
         shapeScaleInput?.addEventListener('input', (e) => {
             const scale = parseFloat(e.target.value) / 100;
@@ -778,7 +880,7 @@ export class DecalSystem {
                 thumb.style.backgroundImage = decal.dataUrl ? `url(${decal.dataUrl})` : (decal.img && decal.img.src ? `url(${decal.img.src})` : '');
             }
 
-            const isShape = ['rect', 'circle', 'star', 'line'].includes(decal.type);
+            const isShape = ['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line'].includes(decal.type);
             const shapeBar = document.getElementById('shape-controls');
             if (isShape) {
                 if (shapeBar) shapeBar.style.display = 'flex';
@@ -788,14 +890,21 @@ export class DecalSystem {
                     decal.shapeOptions = {
                         type: decal.type,
                         color: '#000000',
+                        strokeColor: '#000000',
+                        strokeWidth: 4,
+                        cornerRadius: 0,
                         size: 2,
-                        fillColor: 'transparent',
+                        fillColor: '#ffff00',
                         x1: 0, y1: 0,
                         x2: decal.width || 200, y2: decal.height || 200
                     };
                 }
                 const shapeBarFill = document.getElementById('shape-bar-fill-color');
                 const shapeBarStroke = document.getElementById('shape-bar-stroke-color');
+                const shapeBarRadius = document.getElementById('shape-bar-radius');
+                const shapeBarRadiusVal = document.getElementById('shape-bar-radius-val');
+                const shapeBarStrokeWidth = document.getElementById('shape-bar-stroke-width');
+                const shapeBarStrokeVal = document.getElementById('shape-bar-stroke-val');
                 const shapeScaleInput = document.getElementById('shape-scale');
                 const shapeRotInput = document.getElementById('shape-rotation');
                 const shapeRotVal = document.getElementById('shape-rot-val');
@@ -809,6 +918,16 @@ export class DecalSystem {
                     shapeBarStroke.value = (decal.shapeOptions.color && decal.shapeOptions.color !== 'transparent')
                         ? decal.shapeOptions.color
                         : '#000000';
+                }
+                if (shapeBarRadius && shapeBarRadiusVal) {
+                    const rad = decal.shapeOptions.cornerRadius || 0;
+                    shapeBarRadius.value = rad;
+                    shapeBarRadiusVal.textContent = `${rad} px`;
+                }
+                if (shapeBarStrokeWidth && shapeBarStrokeVal) {
+                    const sw = decal.shapeOptions.strokeWidth || 4;
+                    shapeBarStrokeWidth.value = sw;
+                    shapeBarStrokeVal.textContent = `${sw} px`;
                 }
                 if (shapeScaleInput && decal.baseWidth) {
                     const scalePct = Math.round((decal.width / decal.baseWidth) * 100);
@@ -865,7 +984,7 @@ export class DecalSystem {
         const activeLayer = this.layerManager.getActiveLayer();
         if (!activeLayer) return;
         const decal = activeLayer.getDecal(this.selectedDecalId);
-        if (!decal || !['rect', 'circle', 'star', 'line'].includes(decal.type)) return;
+        if (!decal || !['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line'].includes(decal.type)) return;
 
         if (!decal.shapeOptions) {
             decal.shapeOptions = {
@@ -1815,7 +1934,12 @@ export class DecalSystem {
     }
 
     onPointerDown2D(e) {
-        if (e.button !== 0 || this.mode !== '2d') return;
+        if (e.button !== 0) return;
+        const currentBrushMode = document.getElementById('brush-mode')?.value;
+        if (currentBrushMode === 'select' && this.mode !== '2d') {
+            this.mode = '2d';
+        }
+        if (this.mode !== '2d') return;
         const { x, y } = this.getCanvas2DCoords(e);
 
         // 1. Si hay una calca seleccionada, verificar si se hizo clic en sus nodos o su interior
@@ -1854,6 +1978,10 @@ export class DecalSystem {
     }
 
     onPointerMove2D(e) {
+        const currentBrushMode = document.getElementById('brush-mode')?.value;
+        if (currentBrushMode === 'select' && this.mode !== '2d') {
+            this.mode = '2d';
+        }
         if (this.mode !== '2d') return;
         const { x, y } = this.getCanvas2DCoords(e);
 

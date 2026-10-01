@@ -822,7 +822,11 @@ export class LayerManager {
                     text: '🔤',
                     rect: '🟦',
                     circle: '⭕',
+                    triangle: '🔺',
                     star: '⭐',
+                    polygon: '⬡',
+                    arrow: '➡️',
+                    badge: '🛡️',
                     line: '📏',
                     decal: '🏷️'
                 };

@@ -86,61 +86,28 @@
                 <input type="file" id="input-obj" accept=".obj" style="display: none;">
             </div>
 
-            <!-- Grupo: Seleccionar / Enmascarar (Estilo MS Paint / Modelismo) -->
-            <div class="ribbon-group" id="group-selection" style="position: relative;">
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60px; min-width: 58px;">
-                    <button type="button" id="btn-selection-main" class="tool-btn" style="width: 54px; height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 2px;" title="Herramientas de Selección (M / L)">
-                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" stroke-dasharray="3,2" fill="none">
-                            <rect x="3" y="3" width="18" height="18" rx="1"></rect>
-                        </svg>
-                        <span style="font-size: 0.68em; display: flex; align-items: center; gap: 2px; line-height: 1;">
-                            Selección <span style="font-size: 0.7em;">▼</span>
-                        </span>
-                    </button>
+            <!-- Grupo: Marco / Área de Selección (Raster / Enmascarar) -->
+            <div class="ribbon-group" id="group-selection">
+                <div style="display: flex; align-items: center; gap: 5px; height: 60px;">
+                    <div class="ribbon-grid-tools" style="grid-template-columns: repeat(2, 1fr); width: 62px;">
+                        <button type="button" data-mode="select_rect" id="btn-select-rect" class="tool-btn" style="width: 28px; height: 26px;" title="Marco Rectangular (M) - Seleccionar zona rectangular para pintar o rellenar">
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" stroke-dasharray="3,2" fill="none"><rect x="3" y="3" width="18" height="18" rx="1"></rect></svg>
+                        </button>
+                        <button type="button" data-mode="select_lasso" id="btn-select-lasso" class="tool-btn" style="width: 28px; height: 26px;" title="Lazo Libre (L) - Seleccionar forma libre a mano alzada">
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" stroke-dasharray="3,2" fill="none"><path d="M4 14c-1-3 0-8 5-10 6-2 11 2 11 7 0 7-8 10-12 7-3-2-5 0-4 2"></path></svg>
+                        </button>
+                        <button type="button" id="btn-quick-fill-sel" class="tool-btn" style="width: 28px; height: 24px; font-size: 11px;" title="Rellenar selección con color actual (Alt+Supr / Enter)">🎨</button>
+                        <button type="button" id="btn-quick-desel" class="tool-btn" style="width: 28px; height: 24px; font-size: 11px;" title="Deseleccionar área (Esc)">✖</button>
+                    </div>
+                    <div id="selection-quick-actions" style="display: flex; flex-direction: column; gap: 3px;">
+                        <div style="display: flex; gap: 2px;">
+                            <button type="button" id="btn-quick-invert-sel" class="ribbon-btn" style="padding: 2px 4px; font-size: 10px; min-width: 54px;" title="Invertir selección (Ctrl+Shift+I)">🔄 Invertir</button>
+                            <button type="button" id="btn-quick-del-sel" class="ribbon-btn" style="padding: 2px 4px; font-size: 10px; min-width: 32px; background-color: #842029; border-color: #5c161c;" title="Borrar contenido dentro del área (Supr)">🗑️</button>
+                        </div>
+                        <button type="button" id="btn-quick-camo-sel" class="ribbon-btn" style="padding: 2px 4px; font-size: 10px; min-width: 90px; background: #2e7d32; border-color: #1b5e20;" title="Crear Capa Camuflaje desde la selección">🎭 Nueva Máscara</button>
+                    </div>
                 </div>
-                <span class="ribbon-label">Selección</span>
-
-                <!-- Menú Desplegable Flotante -->
-                <div id="selection-dropdown-menu" class="selection-dropdown" style="display: none;">
-                    <div class="selection-dropdown-header">Herramientas de Selección (3D y 2D)</div>
-                    <button type="button" class="selection-item" data-action="select_rect" title="Selección Rectangular (M)">
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" stroke-dasharray="3,2" fill="none"><rect x="3" y="3" width="18" height="18" rx="1"></rect></svg>
-                        <span>Marco rectangular (3D / 2D)</span>
-                        <kbd>M</kbd>
-                    </button>
-                    <button type="button" class="selection-item" data-action="select_lasso" title="Selección de Forma Libre / Lazo (L)">
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" stroke-dasharray="3,2" fill="none"><path d="M4 14c-1-3 0-8 5-10 6-2 11 2 11 7 0 7-8 10-12 7-3-2-5 0-4 2"></path></svg>
-                        <span>Lazo libre (3D / 2D)</span>
-                        <kbd>L</kbd>
-                    </button>
-
-                    <div class="selection-dropdown-divider"></div>
-                    <div class="selection-dropdown-header">Acciones de Selección</div>
-                    <button type="button" class="selection-item" data-action="fill_selection" title="Rellenar área seleccionada con el color actual (Alt+Supr / Enter)">
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M19 11l-8-8-8.5 8.5a2.12 2.12 0 0 0 0 3l5.5 5.5a2.12 2.12 0 0 0 3 0L19 11Z" fill="currentColor" fill-opacity="0.3"></path><path d="m5 2 5 5"></path><path d="M2 13h15"></path><path d="M22 20a2 2 0 1 1-4 0c0-1.6 2-3 2-3s2 1.4 2 3Z" fill="currentColor"></path></svg>
-                        <span><u>R</u>ellenar selección</span>
-                        <kbd>Alt+Supr</kbd>
-                    </button>
-                    <button type="button" class="selection-item" data-action="selection_to_camo" title="Crear nueva Capa de Camuflaje desde esta Selección">
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M12 3a9 9 0 0 0 0 18c4.97 0 9-3.58 9-8s-4.03-10-9-10Z" fill="currentColor" fill-opacity="0.3"></path><path d="M9 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm6 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm-6 4a3 3 0 0 0 6 0"></path></svg>
-                        <span>Crear Capa Camuflaje</span>
-                    </button>
-                    <button type="button" class="selection-item" data-action="invert_selection" title="Invertir Selección (Ctrl + Shift + I)">
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M12 2v20M12 2a10 10 0 0 1 0 20z" fill="currentColor" fill-opacity="0.3"></path><circle cx="12" cy="12" r="10" stroke-dasharray="3,2"></circle></svg>
-                        <span><u>I</u>nvertir selección</span>
-                        <kbd>Ctrl+Shift+I</kbd>
-                    </button>
-                    <button type="button" class="selection-item" data-action="delete_selected_content" title="Borrar contenido dentro de la selección (Delete / Supr)">
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                        <span><u>B</u>orrar contenido</span>
-                        <kbd>Supr</kbd>
-                    </button>
-                    <button type="button" class="selection-item" data-action="deselect_all" title="Deseleccionar todo (Esc)">
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" fill="none"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                        <span>Deseleccionar</span>
-                        <kbd>Esc</kbd>
-                    </button>
-                </div>
+                <span class="ribbon-label">Marco / Área</span>
             </div>
             <div class="ribbon-divider"></div>
 
@@ -161,11 +128,16 @@
 
             <!-- Grupo: Herramientas -->
             <div class="ribbon-group">
-                <div class="ribbon-grid-tools">
-                    <button data-mode="paint" class="tool-btn active" title="Lápiz / Pincel">
+                <div class="ribbon-grid-tools" style="grid-template-columns: repeat(4, 1fr); gap: 3px;">
+                    <button data-mode="select" class="tool-btn" id="btn-tool-select" title="Seleccionar y Manipular Objetos (V) - Mover, rotar, escalar y editar formas, pegatinas y texto">
+                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 3l7 18 3-7 7-3L3 3z"></path>
+                        </svg>
+                    </button>
+                    <button data-mode="paint" class="tool-btn active" title="Lápiz / Pincel (B)">
                         <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
                     </button>
-                    <button data-mode="fill" class="tool-btn" title="Relleno de Color">
+                    <button data-mode="fill" class="tool-btn" title="Relleno de Color (G)">
                         <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M19.33 11.22l-8.56-8.56a2 2 0 0 0-2.83 0l-5.66 5.66a2 2 0 0 0 0 2.83l8.56 8.56a2 2 0 0 0 2.83 0l5.66-5.66a2 2 0 0 0 0-2.83z"></path>
                             <path d="M2 14l6 6"></path><path d="M16 4l4 4"></path>
@@ -182,7 +154,7 @@
                             <line x1="12" y1="2" x2="22" y2="22"></line>
                         </svg>
                     </button>
-                    <button data-mode="erase" class="tool-btn" title="Goma de Borrar">
+                    <button data-mode="erase" class="tool-btn" title="Goma de Borrar (E)">
                         <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20"></path>
                             <path d="M16 15l-5-5"></path>
@@ -194,7 +166,7 @@
                             <polygon points="17,17 23,17 20,11" fill="currentColor" stroke-width="0"></polygon>
                         </svg>
                     </button>
-                    <button data-mode="text" class="tool-btn" id="btn-tool-text" title="Texto (Ab) - Agregar texto con fuentes, tamaño y rotación">
+                    <button data-mode="text" class="tool-btn" id="btn-tool-text" title="Texto (Ab / T) - Agregar texto con fuentes, tamaño y rotación">
                         <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
                             <polyline points="4 7 4 4 20 4 20 7"></polyline>
                             <line x1="9" y1="20" x2="15" y2="20"></line>
@@ -333,6 +305,32 @@
                     </div>
                 </div>
 
+                <!-- Grosor de Borde (Stroke Width) -->
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #ccc;">
+                        <span>Grosor</span>
+                        <span id="shape-bar-stroke-val">4 px</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 2px;">
+                        <button type="button" id="btn-shape-stroke-dec" class="size-step-btn" style="width: 18px; height: 18px;" title="Menos grosor (-1 px)">-</button>
+                        <input type="range" id="shape-bar-stroke-width" min="1" max="50" value="4" style="width: 40px;">
+                        <button type="button" id="btn-shape-stroke-inc" class="size-step-btn" style="width: 18px; height: 18px;" title="Más grosor (+1 px)">+</button>
+                    </div>
+                </div>
+
+                <!-- Redondeo de Esquinas (Corner Radius) -->
+                <div id="shape-bar-radius-group" style="display: flex; flex-direction: column; gap: 2px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #ccc;">
+                        <span>Redondeo</span>
+                        <span id="shape-bar-radius-val">0 px</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 2px;">
+                        <button type="button" id="btn-shape-radius-zero" class="size-step-btn" style="width: 18px; height: 18px; font-size: 10px;" title="Sin redondeo (0 px)">0</button>
+                        <input type="range" id="shape-bar-radius" min="0" max="60" value="0" style="width: 44px;">
+                        <button type="button" id="btn-shape-radius-inc" class="size-step-btn" style="width: 18px; height: 18px;" title="Más redondeo (+5 px)">+</button>
+                    </div>
+                </div>
+
                 <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
 
                 <!-- Tamaño / Escala -->
@@ -375,20 +373,32 @@
 
             <div class="ribbon-divider"></div>
 
-            <!-- Grupo: Formas -->
-            <div class="ribbon-group">
-                <div class="ribbon-grid-tools" style="grid-template-columns: repeat(2, 1fr);">
+            <!-- Grupo: Formas (Catálogo Ampliado) -->
+            <div class="ribbon-group" id="group-shapes">
+                <div class="ribbon-grid-tools" style="grid-template-columns: repeat(4, 1fr); gap: 3px;">
                     <button data-mode="line" class="tool-btn" title="Línea">
-                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><line x1="4" y1="20" x2="20" y2="4"></line></svg>
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><line x1="4" y1="20" x2="20" y2="4"></line></svg>
                     </button>
-                    <button data-mode="rect" class="tool-btn" title="Rectángulo">
-                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                    <button data-mode="rect" class="tool-btn" title="Rectángulo / Cuadrado (Con redondeo)">
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
                     </button>
-                    <button data-mode="circle" class="tool-btn" title="Círculo">
-                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="9"></circle></svg>
+                    <button data-mode="circle" class="tool-btn" title="Círculo / Óvalo">
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="9"></circle></svg>
+                    </button>
+                    <button data-mode="triangle" class="tool-btn" title="Triángulo">
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12,3 21,19 3,19"></polygon></svg>
                     </button>
                     <button data-mode="star" class="tool-btn" title="Estrella">
-                        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                    </button>
+                    <button data-mode="polygon" class="tool-btn" title="Polígono / Hexágono Regular">
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12,2 21,7.2 21,17.8 12,23 3,17.8 3,7.2"></polygon></svg>
+                    </button>
+                    <button data-mode="arrow" class="tool-btn" title="Flecha Táctica">
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><polygon points="12,2 21,11 15,11 15,22 9,22 9,11 3,11"></polygon></svg>
+                    </button>
+                    <button data-mode="badge" class="tool-btn" title="Insignia / Escudo Militar">
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"><path d="M12 2l8 3.5v6.5c0 5-3.5 9.5-8 11-4.5-1.5-8-6-8-11V5.5L12 2z"></path></svg>
                     </button>
                 </div>
                 <span class="ribbon-label">Formas</span>
