@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=4.7';
-import { DecalSystem } from './decals.js?v=4.7';
-import { LayerManager } from './layers.js?v=4.7';
-import { PapercraftEngine } from './papercraft.js?v=4.7';
-import { SelectionManager } from './selection.js?v=4.7';
+import { Painter } from './painter.js?v=5.0';
+import { DecalSystem } from './decals.js?v=5.0';
+import { LayerManager } from './layers.js?v=5.0';
+import { PapercraftEngine } from './papercraft.js?v=5.0';
+import { SelectionManager } from './selection.js?v=5.0';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -2652,6 +2652,11 @@ let lastUIAnimUpdate = 0;
 function animate(time) {
     requestAnimationFrame(animate);
     controls.update();
+
+    // Actualizar orientación y escala visual de los nodos del Gizmo 3D con la cámara
+    if (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '3d' && window.decalSystem.selectionGizmo3D?.visible) {
+        window.decalSystem.update3DSelectionGizmo();
+    }
 
     const isSelectionActive = selectionManager && (selectionManager.active || selectionManager.creating);
 

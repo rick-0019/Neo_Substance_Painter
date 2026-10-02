@@ -70,7 +70,23 @@ export class DecalSystem {
 
         this.selectedDecalId = null; // ID de la pegatina actualmente seleccionada
 
+        // Variables del Gizmo de selección 3D con nodos interactivos
+        this.selectionGizmo3D = null;
+        this.gizmoFrame = null;
+        this.gizmoStem = null;
+        this.gizmoHandles = {};
+        this.gizmoHandleMeshes = [];
+        this.isDraggingGizmo = false;
+        this.gizmoHandleType = null;
+        this.gizmoStartMouse = { x: 0, y: 0 };
+        this.gizmoScreenCenter = { x: 0, y: 0 };
+        this.gizmoInitialScale = 100;
+        this.gizmoInitialRotation = 0;
+        this.gizmoInitialDist = 0;
+        this.gizmoInitialAngle = 0;
+
         this.setupPreviewMesh();
+        this.setupSelectionGizmo3D();
         this.setupEvents();
     }
 
@@ -116,6 +132,7 @@ export class DecalSystem {
             }
 
             if (this.previewGroup) this.previewGroup.visible = false;
+            if (this.selectionGizmo3D) this.selectionGizmo3D.visible = false;
             const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
             const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
             if (decal) {
@@ -218,6 +235,236 @@ export class DecalSystem {
         this.previewMesh.visible = false;
         this.previewBorder.visible = false;
         this.previewGroup.visible = false;
+    }
+
+    setupSelectionGizmo3D() {
+        this.selectionGizmo3D = new THREE.Group();
+        this.selectionGizmo3D.name = 'selectionGizmo3D';
+        this.selectionGizmo3D.visible = false;
+
+        // Marco rectangular delimitador en 3D con línea discontinua idéntica a 2D
+        const frameMat = new THREE.LineDashedMaterial({
+            color: 0x0078d7,
+            dashSize: 0.015,
+            gapSize: 0.01,
+            linewidth: 1.5,
+            depthTest: false,
+            transparent: true,
+            opacity: 0.95
+        });
+        const frameGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(-0.5, -0.5, 0),
+            new THREE.Vector3( 0.5, -0.5, 0),
+            new THREE.Vector3( 0.5,  0.5, 0),
+            new THREE.Vector3(-0.5,  0.5, 0),
+            new THREE.Vector3(-0.5, -0.5, 0)
+        ]);
+        this.gizmoFrame = new THREE.Line(frameGeo, frameMat);
+        this.gizmoFrame.computeLineDistances();
+        this.gizmoFrame.renderOrder = 9998;
+        this.selectionGizmo3D.add(this.gizmoFrame);
+
+        // Línea hacia el nodo de rotación (fina y azul como en 2D)
+        const stemMat = new THREE.LineBasicMaterial({
+            color: 0x0078d7,
+            linewidth: 1.5,
+            depthTest: false,
+            transparent: true,
+            opacity: 0.95
+        });
+        const stemGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0.5, 0),
+            new THREE.Vector3(0, 0.65, 0)
+        ]);
+        this.gizmoStem = new THREE.Line(stemGeo, stemMat);
+        this.gizmoStem.renderOrder = 9998;
+        this.selectionGizmo3D.add(this.gizmoStem);
+
+        // Nodos interactivos: HUECOS (sin relleno opaco, interior 100% transparente para ver el modelo)
+        this.gizmoHandleMeshes = [];
+        this.gizmoHandles = {};
+
+        // Halo blanco sutil de 1px exterior para contraste
+        const haloMat = new THREE.LineBasicMaterial({
+            color: 0xffffff,
+            depthTest: false,
+            transparent: true,
+            opacity: 0.75,
+            linewidth: 3
+        });
+        // Borde azul principal
+        const borderMat = new THREE.LineBasicMaterial({
+            color: 0x0078d7,
+            depthTest: false,
+            linewidth: 1.5
+        });
+
+        const squareGeo = new THREE.PlaneGeometry(1, 1);
+        const squareEdges = new THREE.EdgesGeometry(squareGeo);
+
+        const circlePoints = [];
+        for (let i = 0; i <= 24; i++) {
+            const theta = (i / 24) * Math.PI * 2;
+            circlePoints.push(new THREE.Vector3(Math.cos(theta) * 0.5, Math.sin(theta) * 0.5, 0));
+        }
+        const circleEdges = new THREE.BufferGeometry().setFromPoints(circlePoints);
+
+        const createNode = (type, isCircle = false) => {
+            const group = new THREE.Group();
+            group.userData.handleType = type;
+            group.renderOrder = 9999;
+
+            // 1. Halo exterior blanco sutil
+            const halo = isCircle 
+                ? new THREE.LineLoop(circleEdges, haloMat)
+                : new THREE.LineSegments(squareEdges, haloMat);
+            halo.scale.set(1.15, 1.15, 1);
+            halo.renderOrder = 9999;
+            group.add(halo);
+
+            // 2. Trazo azul nítido (SIN malla de fondo, interior 100% transparente como en 2D)
+            const border = isCircle 
+                ? new THREE.LineLoop(circleEdges, borderMat)
+                : new THREE.LineSegments(squareEdges, borderMat);
+            border.userData.handleType = type;
+            border.renderOrder = 10000;
+            group.add(border);
+
+            // 3. Collider invisible (opacidad 0) amplio para agarrar fácilmente con el cursor
+            const hitMat = new THREE.MeshBasicMaterial({
+                transparent: true,
+                opacity: 0,
+                depthWrite: false,
+                side: THREE.DoubleSide
+            });
+            const collider = new THREE.Mesh(squareGeo, hitMat);
+            collider.scale.set(3.0, 3.0, 1);
+            collider.userData.handleType = type;
+            group.add(collider);
+
+            this.gizmoHandleMeshes.push(collider);
+            this.gizmoHandles[type] = group;
+            this.selectionGizmo3D.add(group);
+            return group;
+        };
+
+        // 4 esquinas para escalar
+        createNode('nw');
+        createNode('ne');
+        createNode('sw');
+        createNode('se');
+
+        // 4 bordes para ajustar anchura/altura
+        createNode('n');
+        createNode('s');
+        createNode('w');
+        createNode('e');
+
+        // Nodo superior circular para rotación
+        createNode('rotate', true);
+
+        this.scene.add(this.selectionGizmo3D);
+    }
+
+    update3DSelectionGizmo() {
+        if (!this.selectionGizmo3D) return;
+
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+
+        // Solo visible si está activo, en modo 3D y con una pegatina / forma / texto válido y visible
+        if (!this.isActive || !this.selectedDecalId || this.mode !== '3d' || !decal || decal.visible === false) {
+            this.selectionGizmo3D.visible = false;
+            return;
+        }
+
+        // Si la cámara enfoca desde atrás del modelo (backfacing), ocultar para evitar ver a través del avión
+        if (this.camera && this.projectorPosition && this.projectorNormal) {
+            const camDir = new THREE.Vector3().subVectors(this.camera.position, this.projectorPosition).normalize();
+            if (camDir.dot(this.projectorNormal) < -0.12) {
+                this.selectionGizmo3D.visible = false;
+                return;
+            }
+        }
+
+        this.selectionGizmo3D.visible = true;
+
+        // Posicionar justo sobre la superficie en la ubicación del proyector
+        const offsetPos = this.projectorPosition.clone().addScaledVector(this.projectorNormal, 0.003);
+        this.selectionGizmo3D.position.copy(offsetPos);
+
+        if (this.currentProjectorOrientation) {
+            this.selectionGizmo3D.rotation.copy(this.currentProjectorOrientation);
+        }
+
+        const size = this.currentProjectorSize || new THREE.Vector3(1, 1, 1);
+        const halfW = size.x / 2;
+        const halfH = size.y / 2;
+
+        // Actualizar marco exterior rectangular (cerrado para línea discontinua completa)
+        const framePts = [
+            new THREE.Vector3(-halfW, -halfH, 0),
+            new THREE.Vector3( halfW, -halfH, 0),
+            new THREE.Vector3( halfW,  halfH, 0),
+            new THREE.Vector3(-halfW,  halfH, 0),
+            new THREE.Vector3(-halfW, -halfH, 0)
+        ];
+        this.gizmoFrame.geometry.setFromPoints(framePts);
+
+        // Distancia dinámica para trazo punteado y tamaño de nodos
+        let dist = 1.0;
+        if (this.camera) {
+            dist = this.camera.position.distanceTo(offsetPos);
+        }
+
+        // Escalar longitud de trazo punteado según zoom
+        if (this.gizmoFrame.material.isLineDashedMaterial) {
+            this.gizmoFrame.material.dashSize = Math.max(0.008, dist * 0.009);
+            this.gizmoFrame.material.gapSize = Math.max(0.005, dist * 0.006);
+            this.gizmoFrame.computeLineDistances();
+        }
+
+        // Tamaño pequeño y compacto idéntico al 2D (sin tapar figuras)
+        const baseSize = this.getModelBaseSize();
+        let handleSize = Math.max(baseSize * 0.008, Math.min(size.x, size.y) * 0.035);
+        if (this.camera) {
+            handleSize = Math.max(baseSize * 0.006, dist * 0.011);
+        }
+
+        // Vástago de rotación corto y limpio como en 2D
+        const stemLen = Math.max(size.y * 0.12, handleSize * 2.8);
+        const stemPts = [
+            new THREE.Vector3(0, halfH, 0),
+            new THREE.Vector3(0, halfH + stemLen, 0)
+        ];
+        this.gizmoStem.geometry.setFromPoints(stemPts);
+
+        const setNode = (type, x, y, visible = true, isRotate = false) => {
+            const g = this.gizmoHandles[type];
+            if (!g) return;
+            g.visible = visible;
+            if (visible) {
+                g.position.set(x, y, 0);
+                const s = isRotate ? handleSize * 1.15 : handleSize;
+                g.scale.set(s, s, 1);
+            }
+        };
+
+        // Esquinas (escala)
+        setNode('nw', -halfW,  halfH);
+        setNode('ne',  halfW,  halfH);
+        setNode('sw', -halfW, -halfH);
+        setNode('se',  halfW, -halfH);
+
+        // Bordes (ajuste anchura/altura)
+        const showEdges = size.x > handleSize * 4 && size.y > handleSize * 4;
+        setNode('n', 0,  halfH, showEdges);
+        setNode('s', 0, -halfH, showEdges);
+        setNode('w', -halfW, 0, showEdges);
+        setNode('e',  halfW, 0, showEdges);
+
+        // Rotación (círculo superior)
+        setNode('rotate', 0, halfH + stemLen, true, true);
     }
 
     setupEvents() {
@@ -848,6 +1095,38 @@ export class DecalSystem {
             this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
             this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
             this.raycaster.setFromCamera(this.mouse, this.camera);
+
+            // 1. Clic en los nodos interactivos del gizmo 3D (esquinas para escalar, círculo superior para rotar)
+            if (this.isActive && this.mode === '3d' && this.selectionGizmo3D?.visible && this.gizmoHandleMeshes?.length) {
+                const handleIntersects = this.raycaster.intersectObjects(this.gizmoHandleMeshes, true);
+                if (handleIntersects.length > 0) {
+                    const hitObj = handleIntersects[0].object;
+                    const hType = hitObj.userData.handleType || hitObj.parent?.userData?.handleType;
+                    if (hType) {
+                        this.isDraggingGizmo = true;
+                        this.gizmoHandleType = hType;
+                        this.gizmoStartMouse = { x: e.clientX, y: e.clientY };
+                        this.gizmoInitialScale = this.projectorScale;
+                        this.gizmoInitialRotation = this.projectorRotation;
+
+                        const projScreen = this.projectorPosition.clone().project(this.camera);
+                        this.gizmoScreenCenter = {
+                            x: ((projScreen.x + 1) / 2) * rect.width + rect.left,
+                            y: ((-projScreen.y + 1) / 2) * rect.height + rect.top
+                        };
+                        this.gizmoInitialDist = Math.hypot(e.clientX - this.gizmoScreenCenter.x, e.clientY - this.gizmoScreenCenter.y);
+                        this.gizmoInitialAngle = Math.atan2(e.clientY - this.gizmoScreenCenter.y, e.clientX - this.gizmoScreenCenter.x);
+
+                        view3d.style.cursor = (hType === 'rotate') ? 'crosshair' : 'nwse-resize';
+                        try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+                        return;
+                    }
+                }
+            }
+
+            // 2. Raycast a la superficie del modelo 3D
             const intersects = this.mesh ? this.raycaster.intersectObject(this.mesh, true) : [];
             const hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
 
@@ -855,15 +1134,33 @@ export class DecalSystem {
                 const clickedDecal = this.findDecalAt3D(hit);
                 if (clickedDecal && clickedDecal.id !== this.selectedDecalId) {
                     this.selectDecal(clickedDecal, '3d');
-                } else if (this.isActive) {
+                    this.isLocked = false;
+                    this.isDragging3D = true;
+                    this.raycastSurface(e);
+                    view3d.style.cursor = 'grabbing';
+                    try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
+                    e.stopPropagation();
+                    return;
+                } else if (clickedDecal && clickedDecal.id === this.selectedDecalId) {
+                    this.isLocked = false;
+                    this.isDragging3D = true;
+                    this.raycastSurface(e);
+                    view3d.style.cursor = 'grabbing';
+                    try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
+                    e.stopPropagation();
+                    return;
+                } else if (this.isActive && currentBrushMode !== 'select') {
                     this.setMode('3d');
+                    this.isLocked = false;
+                    this.isDragging3D = true;
+                    this.raycastSurface(e);
+                    view3d.style.cursor = 'grabbing';
+                    try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
+                    e.stopPropagation();
+                    return;
+                } else if (currentBrushMode === 'select') {
+                    this.deselectDecal();
                 }
-                this.isLocked = false;
-                this.isDragging3D = true;
-                this.raycastSurface(e);
-                view3d.style.cursor = 'grabbing';
-                e.stopPropagation();
-                return;
             } else {
                 if (this.selectedDecalId && currentBrushMode === 'select') {
                     this.deselectDecal();
@@ -872,45 +1169,120 @@ export class DecalSystem {
         });
 
         view3d.addEventListener('pointermove', (e) => {
-            if (!this.isActive || this.mode === '2d') {
-                if (this.mesh) {
-                    const currentBrushMode = document.getElementById('brush-mode')?.value;
-                    if (currentBrushMode === 'select' || this.isActive) {
-                        const rect = view3d.getBoundingClientRect();
-                        this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-                        this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-                        this.raycaster.setFromCamera(this.mouse, this.camera);
-                        const intersects = this.raycaster.intersectObject(this.mesh, true);
-                        const hit = intersects.find(i => i.object.isMesh && i.uv);
-                        if (hit && this.findDecalAt3D(hit)) {
-                            view3d.style.cursor = 'pointer';
-                        } else if (!this.isDragging3D) {
-                            view3d.style.cursor = '';
+            // A. Manipulación con nodos 3D (Escalado / Rotación)
+            if (this.isDraggingGizmo) {
+                const activeLayer = this.layerManager?.getActiveLayer();
+                const decal = activeLayer?.getDecal(this.selectedDecalId);
+
+                if (this.gizmoHandleType === 'rotate') {
+                    const curAngle = Math.atan2(e.clientY - this.gizmoScreenCenter.y, e.clientX - this.gizmoScreenCenter.x);
+                    const delta = curAngle - this.gizmoInitialAngle;
+                    this.projectorRotation = this.gizmoInitialRotation - delta;
+
+                    const deg = Math.round((this.projectorRotation * 180 / Math.PI) % 360);
+                    const normDeg = deg > 180 ? deg - 360 : (deg < -180 ? deg + 360 : deg);
+                    const rotInput = document.getElementById('decal-rotation');
+                    const rotLabel = document.getElementById('decal-rot-label');
+                    if (rotInput) rotInput.value = normDeg;
+                    if (rotLabel) rotLabel.textContent = `${normDeg}°`;
+                    if (this.isTextMode) {
+                        const textRot = document.getElementById('text-rotation');
+                        const textRotLabel = document.getElementById('text-rot-val');
+                        if (textRot) textRot.value = normDeg;
+                        if (textRotLabel) textRotLabel.textContent = `${normDeg}°`;
+                        if (this.textOptions) this.textOptions.rotation = normDeg;
+                    }
+
+                    this._doUpdatePreviewTransform();
+                    if (decal) {
+                        decal.projectorRotation = this.projectorRotation;
+                        decal.rotation = this.projectorRotation;
+                        this.update3DUnwrapForDecal(decal, true);
+                    }
+                    view3d.style.cursor = 'crosshair';
+                } else {
+                    const curDist = Math.hypot(e.clientX - this.gizmoScreenCenter.x, e.clientY - this.gizmoScreenCenter.y);
+                    if (this.gizmoInitialDist > 5) {
+                        const ratio = curDist / this.gizmoInitialDist;
+                        const newScale = Math.max(10, Math.min(300, Math.round(this.gizmoInitialScale * ratio)));
+                        this.projectorScale = newScale;
+
+                        const scaleInput = document.getElementById('decal-scale');
+                        if (scaleInput) scaleInput.value = newScale;
+
+                        this._doUpdatePreviewTransform();
+                        if (decal) {
+                            decal.projectorScale = this.projectorScale;
+                            this.update3DUnwrapForDecal(decal, true);
                         }
                     }
+                    view3d.style.cursor = 'nwse-resize';
                 }
                 return;
             }
 
-            if (this.isDragging3D || !this.isLocked) {
+            // B. Arrastre de la pegatina sobre la superficie 3D
+            if (this.isDragging3D || (!this.isLocked && this.isActive && this.mode === '3d')) {
                 this.raycastSurface(e);
                 view3d.style.cursor = 'grabbing';
-            } else if (this.mesh) {
-                const rect = view3d.getBoundingClientRect();
-                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-                this.raycaster.setFromCamera(this.mouse, this.camera);
-                const intersects = this.raycaster.intersectObject(this.mesh, true);
-                const hit = intersects.find(i => i.object.isMesh && i.uv);
-                if (hit && this.findDecalAt3D(hit)) {
-                    view3d.style.cursor = 'pointer';
-                } else if (!this.isDragging3D) {
-                    view3d.style.cursor = '';
+                return;
+            }
+
+            // C. Hover y cambio dinámico de cursor sobre nodos 3D o pegatinas
+            const rect = view3d.getBoundingClientRect();
+            this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            this.raycaster.setFromCamera(this.mouse, this.camera);
+
+            if (this.isActive && this.mode === '3d' && this.selectionGizmo3D?.visible && this.gizmoHandleMeshes?.length) {
+                const handleIntersects = this.raycaster.intersectObjects(this.gizmoHandleMeshes, true);
+                if (handleIntersects.length > 0) {
+                    const hitObj = handleIntersects[0].object;
+                    const hType = hitObj.userData.handleType || hitObj.parent?.userData?.handleType;
+                    if (hType === 'rotate') {
+                        view3d.style.cursor = 'crosshair';
+                    } else if (['nw', 'se'].includes(hType)) {
+                        view3d.style.cursor = 'nwse-resize';
+                    } else if (['ne', 'sw'].includes(hType)) {
+                        view3d.style.cursor = 'nesw-resize';
+                    } else if (['n', 's'].includes(hType)) {
+                        view3d.style.cursor = 'ns-resize';
+                    } else if (['w', 'e'].includes(hType)) {
+                        view3d.style.cursor = 'ew-resize';
+                    } else {
+                        view3d.style.cursor = 'pointer';
+                    }
+                    return;
+                }
+            }
+
+            if (this.mesh) {
+                const currentBrushMode = document.getElementById('brush-mode')?.value;
+                if (currentBrushMode === 'select' || this.isActive) {
+                    const intersects = this.raycaster.intersectObject(this.mesh, true);
+                    const hit = intersects.find(i => i.object.isMesh && i.uv);
+                    if (hit && this.findDecalAt3D(hit)) {
+                        view3d.style.cursor = 'pointer';
+                    } else if (!this.isDragging3D && !this.isDraggingGizmo) {
+                        view3d.style.cursor = '';
+                    }
                 }
             }
         });
 
-        window.addEventListener('pointerup', () => {
+        window.addEventListener('pointerup', (e) => {
+            if (this.isDraggingGizmo) {
+                this.isDraggingGizmo = false;
+                this.gizmoHandleType = null;
+                const activeLayer = this.layerManager?.getActiveLayer();
+                const decal = activeLayer?.getDecal(this.selectedDecalId);
+                if (decal) {
+                    this.syncCurrentDecalToObject(true);
+                    this.update3DUnwrapForDecal(decal, true);
+                }
+                view3d.style.cursor = '';
+                try { view3d.releasePointerCapture(e.pointerId); } catch (_) {}
+            }
             if (this.isDragging3D) {
                 this.isDragging3D = false;
                 this.isLocked = true;
@@ -924,6 +1296,7 @@ export class DecalSystem {
                     this.syncCurrentDecalToObject(true);
                 }
                 view3d.style.cursor = '';
+                try { view3d.releasePointerCapture(e.pointerId); } catch (_) {}
             }
         });
 
@@ -1253,8 +1626,10 @@ export class DecalSystem {
             this.mode = preferredMode;
         } else if (decal.mode) {
             this.mode = decal.mode;
+        } else if (this.mode) {
+            this.mode = this.mode;
         } else {
-            this.mode = '3d';
+            this.mode = '2d';
         }
 
         // Posicionar proyector 3D si la calca tiene datos o calcularlos por su UV
@@ -1463,6 +1838,7 @@ export class DecalSystem {
         this.selectedDecalId = null;
         this.isActive = false;
         if (this.previewGroup) this.previewGroup.visible = false;
+        if (this.selectionGizmo3D) this.selectionGizmo3D.visible = false;
         this.clear2DUI();
         const ribbon = document.getElementById('ribbon');
         const shapeBar = document.getElementById('shape-controls');
@@ -1857,7 +2233,8 @@ export class DecalSystem {
     cancelDecal() {
         this.isActive = false;
         this.isLocked = false;
-        this.previewGroup.visible = false;
+        if (this.previewGroup) this.previewGroup.visible = false;
+        if (this.selectionGizmo3D) this.selectionGizmo3D.visible = false;
         this.clear2DUI();
         const controls = document.getElementById('decal-controls');
         const thumb = document.getElementById('decal-preview-thumb');
@@ -2014,6 +2391,8 @@ export class DecalSystem {
         this.fallbackPlane.visible = false;
         this.fallbackBorder.visible = false;
         if (this.previewGroup) this.previewGroup.visible = false;
+
+        this.update3DSelectionGizmo();
     }
 
     getMeshesToBake() {

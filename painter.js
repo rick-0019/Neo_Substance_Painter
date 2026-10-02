@@ -750,7 +750,7 @@ export class Painter {
                         this.clearUI();
                         if (this.layerManager) this.layerManager.recomposite();
                     } else {
-                        this.commitShape();
+                        this.commitShape('3d');
                     }
                 }
                 else if (this.editingShape && this.dragMode) {
@@ -763,7 +763,7 @@ export class Painter {
                         this.clearUI();
                         if (this.layerManager) this.layerManager.recomposite();
                     } else {
-                        this.commitShape();
+                        this.commitShape('2d');
                     }
                 }
                 if (this.transformState && this.transformState.isDragging) {
@@ -1180,12 +1180,13 @@ export class Painter {
         return canvas;
     }
 
-    commitShape() {
+    commitShape(targetMode = '2d') {
         if (!this.editingShape) return;
         const s = this.editingShape;
 
         // 1. Generar canvas de alta fidelidad y agregarlo como objeto vivo a la capa activa
         const shapeCanvas = this.createShapeCanvas(s);
+        let createdShapeObj = null;
         if (shapeCanvas) {
             const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
             if (activeLayer) {
@@ -1207,7 +1208,7 @@ export class Painter {
                 const w = shapeCanvas.width;
                 const h = shapeCanvas.height;
 
-                const shapeObj = {
+                createdShapeObj = {
                     id: 'shape_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
                     name: shapeName,
                     type: s.type,
@@ -1221,18 +1222,16 @@ export class Painter {
                     baseWidth: w,
                     baseHeight: h,
                     rotation: s.angle || 0,
+                    mode: targetMode,
                     opacity: 1.0,
                     visible: true
                 };
 
-                activeLayer.addDecal(shapeObj);
-                if (window.decalSystem) {
-                    window.decalSystem.setMode('2d');
-                    window.decalSystem.selectDecal(shapeObj);
-                }
+                activeLayer.addDecal(createdShapeObj);
             }
         }
 
+        // Limpiar el dibujo temporal antes de seleccionar
         this.editingShape = null;
         this.dragMode = null;
         this.clearUI();
@@ -1242,6 +1241,12 @@ export class Painter {
         }
         this.needsUpdate = true;
         this.forceUpdate = true;
+
+        // Seleccionar la figura en el modo en que fue dibujada (2D o 3D) para no saltar de vista
+        if (window.decalSystem && createdShapeObj) {
+            window.decalSystem.setMode(targetMode);
+            window.decalSystem.selectDecal(createdShapeObj, targetMode);
+        }
     }
     
     hitTestShape(x, y) {
