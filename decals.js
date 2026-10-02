@@ -116,6 +116,14 @@ export class DecalSystem {
             }
 
             if (this.previewGroup) this.previewGroup.visible = false;
+            const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+            const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+            if (decal) {
+                decal.mode = '2d';
+                decal.unwrappedCanvas = null;
+                this.syncCurrentDecalToObject(true);
+            }
+
             if (this.isActive) {
                 // Sincronizar sliders con valores 2D
                 const scaleInput = document.getElementById('decal-scale');
@@ -139,9 +147,15 @@ export class DecalSystem {
                 this.render2DPreview();
             }
         } else {
+            if (this.previewGroup) this.previewGroup.visible = false;
+            this.clear2DUI();
+
+            const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+            const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+
             if (this.isActive) {
                 // Si cambiamos a 3D y tenemos decal2D, sincronizar posición del proyector 3D
-                if (this.decal2D && this.mesh) {
+                if (this.decal2D && this.mesh && (!this.projectorPosition || this.projectorPosition.lengthSq() < 0.001)) {
                     const u = this.decal2D.x / this.canvas.width;
                     const v = 1 - (this.decal2D.y / this.canvas.height);
                     const pt3D = this.find3DPointFromUV(u, v);
@@ -151,7 +165,6 @@ export class DecalSystem {
                     }
                 }
 
-                if (this.previewGroup) this.previewGroup.visible = true;
                 const scaleInput = document.getElementById('decal-scale');
                 const rotInput = document.getElementById('decal-rotation');
                 const rotLabel = document.getElementById('decal-rot-label');
@@ -168,8 +181,11 @@ export class DecalSystem {
                     if (this.textOptions) this.textOptions.rotation = deg;
                 }
 
-                this.updatePreviewTransform();
-                this.render2DPreview();
+                this._doUpdatePreviewTransform();
+                if (decal) {
+                    decal.mode = '3d';
+                    this.update3DUnwrapForDecal(decal, true);
+                }
             }
         }
     }
@@ -197,10 +213,11 @@ export class DecalSystem {
         const planeGeo = new THREE.PlaneGeometry(1, 1);
         this.fallbackPlane = new THREE.Mesh(planeGeo, this.previewMaterial);
         this.fallbackBorder = new THREE.LineSegments(new THREE.EdgesGeometry(planeGeo), lineMat);
-        this.previewGroup.add(this.fallbackPlane);
-        this.previewGroup.add(this.fallbackBorder);
         this.fallbackPlane.visible = false;
         this.fallbackBorder.visible = false;
+        this.previewMesh.visible = false;
+        this.previewBorder.visible = false;
+        this.previewGroup.visible = false;
     }
 
     setupEvents() {
@@ -261,51 +278,47 @@ export class DecalSystem {
         });
 
         scaleInput?.addEventListener('input', (e) => {
+            const scale = parseFloat(e.target.value) / 100;
+            this.projectorScale = parseFloat(e.target.value);
+            this.decal2D.width = Math.round(this.decal2D.baseWidth * scale);
+            this.decal2D.height = Math.round(this.decal2D.baseHeight * scale);
+
             if (this.mode === '2d') {
-                const scale = parseFloat(e.target.value) / 100;
-                this.decal2D.width = this.decal2D.baseWidth * scale;
-                this.decal2D.height = this.decal2D.baseHeight * scale;
                 this.scheduleSync(false);
             } else {
-                this.projectorScale = parseFloat(e.target.value);
-                this.updatePreviewTransform();
-                if (this.lastHit) this.sync2DFrom3D(this.lastHit);
+                this._doUpdatePreviewTransform();
+                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    this.schedule3DUnwrap(decal);
+                }
             }
         });
         scaleInput?.addEventListener('change', () => {
-            if (this.mode === '2d') this.syncCurrentDecalToObject(true);
+            if (this.mode === '2d') {
+                this.syncCurrentDecalToObject(true);
+            } else {
+                this._doUpdatePreviewTransform();
+                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    this.update3DUnwrapForDecal(decal, true);
+                }
+            }
         });
 
         btnScaleDec?.addEventListener('click', () => {
             if (!scaleInput) return;
             scaleInput.value = Math.max(10, parseInt(scaleInput.value, 10) - 10);
-            if (this.mode === '2d') {
-                const scale = parseFloat(scaleInput.value) / 100;
-                this.decal2D.width = this.decal2D.baseWidth * scale;
-                this.decal2D.height = this.decal2D.baseHeight * scale;
-                this.syncCurrentDecalToObject(true);
-                this.render2DPreview();
-            } else {
-                this.projectorScale = parseFloat(scaleInput.value);
-                this.updatePreviewTransform();
-                if (this.lastHit) this.sync2DFrom3D(this.lastHit);
-            }
+            scaleInput.dispatchEvent(new Event('input'));
+            scaleInput.dispatchEvent(new Event('change'));
         });
 
         btnScaleInc?.addEventListener('click', () => {
             if (!scaleInput) return;
             scaleInput.value = Math.min(300, parseInt(scaleInput.value, 10) + 10);
-            if (this.mode === '2d') {
-                const scale = parseFloat(scaleInput.value) / 100;
-                this.decal2D.width = this.decal2D.baseWidth * scale;
-                this.decal2D.height = this.decal2D.baseHeight * scale;
-                this.syncCurrentDecalToObject(true);
-                this.render2DPreview();
-            } else {
-                this.projectorScale = parseFloat(scaleInput.value);
-                this.updatePreviewTransform();
-                if (this.lastHit) this.sync2DFrom3D(this.lastHit);
-            }
+            scaleInput.dispatchEvent(new Event('input'));
+            scaleInput.dispatchEvent(new Event('change'));
         });
 
         const btnRotDec = document.getElementById('btn-decal-rot-dec');
@@ -315,8 +328,14 @@ export class DecalSystem {
             deg = Math.max(-180, Math.min(180, deg));
             if (rotInput) rotInput.value = deg;
             if (rotLabel) rotLabel.textContent = `${deg}°`;
+            this.decal2D.rotation = (deg * Math.PI) / 180;
+            this.projectorRotation = (deg * Math.PI) / 180;
+
+            if (this.isTextMode && this.textOptions) {
+                this.textOptions.rotation = deg;
+            }
+
             if (this.mode === '2d') {
-                this.decal2D.rotation = (deg * Math.PI) / 180;
                 if (isFinal) {
                     this.syncCurrentDecalToObject(true);
                     this.render2DPreview();
@@ -324,9 +343,16 @@ export class DecalSystem {
                     this.scheduleSync(false);
                 }
             } else {
-                this.projectorRotation = (deg * Math.PI) / 180;
-                this.updatePreviewTransform();
-                if (this.lastHit) this.sync2DFrom3D(this.lastHit);
+                this._doUpdatePreviewTransform();
+                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    if (isFinal) {
+                        this.update3DUnwrapForDecal(decal, true);
+                    } else {
+                        this.schedule3DUnwrap(decal);
+                    }
+                }
             }
         };
 
@@ -353,7 +379,12 @@ export class DecalSystem {
         chkPassthrough?.addEventListener('change', (e) => {
             this.allowPassthrough = e.target.checked;
             if (this.mode === '3d' && this.isActive) {
-                this.updatePreviewTransform();
+                this._doUpdatePreviewTransform();
+                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    this.update3DUnwrapForDecal(decal, true);
+                }
             }
         });
 
@@ -810,7 +841,6 @@ export class DecalSystem {
         view3d.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
             const currentBrushMode = document.getElementById('brush-mode')?.value;
-            // Actuar si estamos en modo select, texto, o cuando decalSystem está activo o si hay un modelo
             const isSelectOrDecal = (currentBrushMode === 'select') || this.isActive || (currentBrushMode === 'text');
             if (!isSelectOrDecal && !this.mesh) return;
 
@@ -822,37 +852,19 @@ export class DecalSystem {
             const hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
 
             if (hit) {
-                const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
                 const clickedDecal = this.findDecalAt3D(hit);
-
-                if (clickedDecal) {
-                    // Seleccionar la pegatina tocada en 3D
+                if (clickedDecal && clickedDecal.id !== this.selectedDecalId) {
                     this.selectDecal(clickedDecal, '3d');
-                    this.projectorPosition.copy(hit.point);
-                    this.projectorNormal.copy(worldNormal);
-                    this.updatePreviewTransform();
-                    this.isDragging3D = true;
-                    view3d.style.cursor = 'grabbing';
-                    e.stopPropagation();
-                    return;
-                }
-
-                if (this.selectedDecalId) {
-                    // Si ya hay una pegatina seleccionada y se hace clic en otro punto del modelo 3D:
-                    // posicionarla allí y permitir arrastrarla suavemente sobre la curvatura
+                } else if (this.isActive) {
                     this.setMode('3d');
-                    this.projectorPosition.copy(hit.point);
-                    this.projectorNormal.copy(worldNormal);
-                    this.updatePreviewTransform();
-                    this.sync2DFrom3D(hit);
-                    this.syncCurrentDecalToObject(false);
-                    this.isDragging3D = true;
-                    view3d.style.cursor = 'grabbing';
-                    e.stopPropagation();
-                    return;
                 }
+                this.isLocked = false;
+                this.isDragging3D = true;
+                this.raycastSurface(e);
+                view3d.style.cursor = 'grabbing';
+                e.stopPropagation();
+                return;
             } else {
-                // Clic en el fondo vacío de la vista 3D
                 if (this.selectedDecalId && currentBrushMode === 'select') {
                     this.deselectDecal();
                 }
@@ -860,35 +872,40 @@ export class DecalSystem {
         });
 
         view3d.addEventListener('pointermove', (e) => {
-            const rect = view3d.getBoundingClientRect();
-            this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-            this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-            if (this.isDragging3D && this.isActive) {
-                this.raycaster.setFromCamera(this.mouse, this.camera);
-                const intersects = this.mesh ? this.raycaster.intersectObject(this.mesh, true) : [];
-                const hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
-                if (hit) {
-                    this.lastHit = hit;
-                    this.projectorPosition.copy(hit.point);
-                    const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
-                    this.projectorNormal.copy(worldNormal);
-                    this.updatePreviewTransform();
-                    this.sync2DFrom3D(hit);
-                    this.syncCurrentDecalToObject(false);
-                    view3d.style.cursor = 'grabbing';
-                }
-            } else if (this.mesh) {
-                const currentBrushMode = document.getElementById('brush-mode')?.value;
-                if (currentBrushMode === 'select' || this.isActive) {
-                    this.raycaster.setFromCamera(this.mouse, this.camera);
-                    const intersects = this.raycaster.intersectObject(this.mesh, true);
-                    const hit = intersects.find(i => i.object.isMesh && i.uv);
-                    if (hit && this.findDecalAt3D(hit)) {
-                        view3d.style.cursor = 'pointer';
-                    } else if (!this.isDragging3D) {
-                        view3d.style.cursor = '';
+            if (!this.isActive || this.mode === '2d') {
+                if (this.mesh) {
+                    const currentBrushMode = document.getElementById('brush-mode')?.value;
+                    if (currentBrushMode === 'select' || this.isActive) {
+                        const rect = view3d.getBoundingClientRect();
+                        this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                        this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                        this.raycaster.setFromCamera(this.mouse, this.camera);
+                        const intersects = this.raycaster.intersectObject(this.mesh, true);
+                        const hit = intersects.find(i => i.object.isMesh && i.uv);
+                        if (hit && this.findDecalAt3D(hit)) {
+                            view3d.style.cursor = 'pointer';
+                        } else if (!this.isDragging3D) {
+                            view3d.style.cursor = '';
+                        }
                     }
+                }
+                return;
+            }
+
+            if (this.isDragging3D || !this.isLocked) {
+                this.raycastSurface(e);
+                view3d.style.cursor = 'grabbing';
+            } else if (this.mesh) {
+                const rect = view3d.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && i.uv);
+                if (hit && this.findDecalAt3D(hit)) {
+                    view3d.style.cursor = 'pointer';
+                } else if (!this.isDragging3D) {
+                    view3d.style.cursor = '';
                 }
             }
         });
@@ -896,7 +913,16 @@ export class DecalSystem {
         window.addEventListener('pointerup', () => {
             if (this.isDragging3D) {
                 this.isDragging3D = false;
-                this.syncCurrentDecalToObject(true);
+                this.isLocked = true;
+                if (this.mode === '3d') {
+                    const activeLayer = this.layerManager?.getActiveLayer();
+                    const decal = activeLayer?.getDecal(this.selectedDecalId);
+                    if (decal) {
+                        this.update3DUnwrapForDecal(decal, true);
+                    }
+                } else {
+                    this.syncCurrentDecalToObject(true);
+                }
                 view3d.style.cursor = '';
             }
         });
@@ -923,7 +949,7 @@ export class DecalSystem {
         this.previewMaterial.needsUpdate = true;
 
         this.isActive = true;
-        this.isLocked = true;
+        this.isLocked = false;
 
         // Inicializar dimensiones 2D con fidelidad 1:1 y aspecto original
         const baseDim = 400;
@@ -970,6 +996,7 @@ export class DecalSystem {
                 baseWidth: w,
                 baseHeight: h,
                 rotation: 0,
+                mode: this.mode || '3d',
                 opacity: 1.0,
                 visible: true
             };
@@ -1016,33 +1043,60 @@ export class DecalSystem {
         this.projectorScale = 100;
         this.projectorRotation = 0;
 
-        // Posicionar por defecto al centro del modelo en 3D
-        if (this.mesh) {
-            const box = new THREE.Box3().setFromObject(this.mesh);
-            const center = box.getCenter(new THREE.Vector3());
-            const size = box.getSize(new THREE.Vector3());
-            this.projectorPosition.set(center.x, center.y, center.z + size.z * 0.5);
-            this.projectorNormal.set(0, 0, 1);
-
-            const rayOrigin = new THREE.Vector3(center.x, center.y + size.y * 0.3, center.z + size.z * 1.5);
-            const rayDir = new THREE.Vector3(0, 0, -1);
-            this.raycaster.set(rayOrigin, rayDir);
+        // Posicionar en la superficie real de una pieza visible (nunca flotando en el aire)
+        let hit = null;
+        if (this.mesh && this.camera) {
+            this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
             const intersects = this.raycaster.intersectObject(this.mesh, true);
-            const hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
+            hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
+
+            // Si el rayo central da en un hueco vacío entre piezas, proyectar hacia la primera pieza
+            if (!hit) {
+                const candidateMeshes = this.getMeshesToBake();
+                for (const m of candidateMeshes) {
+                    if (m.geometry && m.geometry.attributes.position && m.geometry.attributes.position.count > 0) {
+                        const pos = m.geometry.attributes.position;
+                        const v0 = new THREE.Vector3(pos.getX(0), pos.getY(0), pos.getZ(0)).applyMatrix4(m.matrixWorld);
+                        const rayOrigin = v0.clone().add(this.camera.position.clone().sub(v0).normalize().multiplyScalar(3));
+                        const rayDir = v0.clone().sub(rayOrigin).normalize();
+                        this.raycaster.set(rayOrigin, rayDir);
+                        const inters = this.raycaster.intersectObject(m, true);
+                        hit = inters.find(i => i.uv && i.face);
+                        if (hit) break;
+                    }
+                }
+            }
+
             if (hit) {
                 this.lastHit = hit;
                 this.projectorPosition.copy(hit.point);
-                const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+                let normal = hit.face.normal.clone();
+                if (hit.object.geometry && hit.object.geometry.attributes.normal) {
+                    const normAttr = hit.object.geometry.attributes.normal;
+                    const a = hit.face.a, b = hit.face.b, c = hit.face.c;
+                    if (a !== undefined && b !== undefined && c !== undefined) {
+                        const nA = new THREE.Vector3().fromBufferAttribute(normAttr, a);
+                        const nB = new THREE.Vector3().fromBufferAttribute(normAttr, b);
+                        const nC = new THREE.Vector3().fromBufferAttribute(normAttr, c);
+                        normal = new THREE.Vector3().add(nA).add(nB).add(nC).normalize();
+                    }
+                }
+                const worldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
                 this.projectorNormal.copy(worldNormal);
-                this.sync2DFrom3D(hit);
+                this._doUpdatePreviewTransform();
+                if (this.mode === '3d' && decalObj) {
+                    this.update3DUnwrapForDecal(decalObj, true);
+                } else {
+                    this.sync2DFrom3D(hit);
+                    this.syncCurrentDecalToObject(false);
+                }
+            } else {
+                this.isLocked = false;
             }
         }
 
-        if (this.mode === '2d') {
+        if (this.previewGroup) {
             this.previewGroup.visible = false;
-        } else {
-            this.previewGroup.visible = true;
-            this.updatePreviewTransform();
         }
 
         if (this.layerManager) {
@@ -1057,7 +1111,11 @@ export class DecalSystem {
         if (this.texture) {
             this.texture.needsUpdate = true;
         }
-        this.render2DPreview();
+        if (this.mode === '2d') {
+            this.render2DPreview();
+        } else {
+            this.clear2DUI();
+        }
     }
 
     find3DPointFromUV(u, v) {
@@ -1110,6 +1168,41 @@ export class DecalSystem {
 
     findDecalAt3D(hit) {
         if (!hit) return null;
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        if (!activeLayer || !activeLayer.decals || activeLayer.decals.length === 0) return null;
+
+        // 1. Verificar si el clic cayó sobre píxeles visibles de una calca 3D desempaquetada
+        if (hit.uv) {
+            for (let i = activeLayer.decals.length - 1; i >= 0; i--) {
+                const d = activeLayer.decals[i];
+                if (d.visible === false) continue;
+                if (d.mode === '3d' && d.unwrappedCanvas && d.unwrappedCtx) {
+                    const px = Math.floor(hit.uv.x * d.unwrappedCanvas.width);
+                    const py = Math.floor((1 - hit.uv.y) * d.unwrappedCanvas.height);
+                    try {
+                        const pixel = d.unwrappedCtx.getImageData(px, py, 1, 1).data;
+                        if (pixel[3] > 10) return d;
+                    } catch (_) {}
+                }
+            }
+        }
+
+        // 2. Distancia en espacio 3D al proyector
+        if (hit.point) {
+            const baseSize = this.getModelBaseSize();
+            for (let i = activeLayer.decals.length - 1; i >= 0; i--) {
+                const d = activeLayer.decals[i];
+                if (d.visible === false) continue;
+                if (d.projectorPosition) {
+                    const radius = baseSize * ((d.projectorScale || 100) / 100) * 0.7;
+                    if (hit.point.distanceTo(d.projectorPosition) <= radius) {
+                        return d;
+                    }
+                }
+            }
+        }
+
+        // 3. Respaldo por UV 2D
         if (hit.uv) {
             const uvX = hit.uv.x * this.canvas.width;
             const uvY = (1 - hit.uv.y) * this.canvas.height;
@@ -1117,20 +1210,6 @@ export class DecalSystem {
             if (byUV) return byUV;
         }
 
-        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-        if (!activeLayer || !activeLayer.decals) return null;
-
-        for (let i = activeLayer.decals.length - 1; i >= 0; i--) {
-            const d = activeLayer.decals[i];
-            if (d.visible === false) continue;
-            if (d.projectorPosition && hit.point) {
-                const baseSize = this.getModelBaseSize();
-                const radius = baseSize * ((d.projectorScale || 100) / 100) * 0.7;
-                if (hit.point.distanceTo(d.projectorPosition) <= radius) {
-                    return d;
-                }
-            }
-        }
         return null;
     }
 
@@ -1172,8 +1251,10 @@ export class DecalSystem {
 
         if (preferredMode) {
             this.mode = preferredMode;
-        } else if (!this.mode) {
-            this.mode = '2d';
+        } else if (decal.mode) {
+            this.mode = decal.mode;
+        } else {
+            this.mode = '3d';
         }
 
         // Posicionar proyector 3D si la calca tiene datos o calcularlos por su UV
@@ -1404,8 +1485,18 @@ export class DecalSystem {
         const textControls = document.getElementById('text-controls');
         if (textControls) textControls.style.display = 'none';
         this.canvas.style.cursor = 'default';
-        if (this.painter) this.painter.uiNeedsUpdate = true;
-        if (this.layerManager) this.layerManager.renderUI();
+        if (this.layerManager) {
+            this.layerManager.recomposite();
+            this.layerManager.renderUI();
+        }
+        if (this.painter) {
+            this.painter.needsUpdate = true;
+            this.painter.forceUpdate = true;
+            this.painter.uiNeedsUpdate = true;
+        }
+        if (this.texture) {
+            this.texture.needsUpdate = true;
+        }
     }
 
     updateSelectedShapeFillFromColor(col) {
@@ -1450,6 +1541,12 @@ export class DecalSystem {
             if (this.layerManager) this.layerManager.renderUI();
         }
     }
+    _isDecalInLayer(decalId) {
+        if (!decalId || !this.layerManager) return false;
+        const activeLayer = this.layerManager.getActiveLayer();
+        if (!activeLayer || !activeLayer.decals) return false;
+        return activeLayer.decals.some(d => d.id === decalId);
+    }
 
     findDecalAt(canvasX, canvasY) {
         const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
@@ -1458,6 +1555,18 @@ export class DecalSystem {
         for (let i = activeLayer.decals.length - 1; i >= 0; i--) {
             const d = activeLayer.decals[i];
             if (d.visible === false) continue;
+
+            if (d.mode === '3d' && d.unwrappedCanvas && d.unwrappedCtx) {
+                const px = Math.floor(canvasX);
+                const py = Math.floor(canvasY);
+                if (px >= 0 && px < d.unwrappedCanvas.width && py >= 0 && py < d.unwrappedCanvas.height) {
+                    try {
+                        const pixel = d.unwrappedCtx.getImageData(px, py, 1, 1).data;
+                        if (pixel[3] > 10) return d;
+                    } catch (_) {}
+                }
+            }
+
             const dx = canvasX - d.x;
             const dy = canvasY - d.y;
             const cos = Math.cos(-d.rotation);
@@ -1545,11 +1654,9 @@ export class DecalSystem {
         this.layerManager.recomposite();
         if (this.painter) {
             this.painter.needsUpdate = true;
-            if (force) {
-                this.painter.forceUpdate = true;
-            }
+            this.painter.forceUpdate = true;
         }
-        if (force && this.texture) {
+        if (this.texture) {
             this.texture.needsUpdate = true;
         }
     }
@@ -1785,10 +1892,31 @@ export class DecalSystem {
         if (hit) {
             this.lastHit = hit;
             this.projectorPosition.copy(hit.point);
-            const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+            let normal = hit.face.normal.clone();
+            if (hit.object.geometry && hit.object.geometry.attributes.normal) {
+                const normAttr = hit.object.geometry.attributes.normal;
+                const a = hit.face.a, b = hit.face.b, c = hit.face.c;
+                if (a !== undefined && b !== undefined && c !== undefined) {
+                    const nA = new THREE.Vector3().fromBufferAttribute(normAttr, a);
+                    const nB = new THREE.Vector3().fromBufferAttribute(normAttr, b);
+                    const nC = new THREE.Vector3().fromBufferAttribute(normAttr, c);
+                    normal = new THREE.Vector3().add(nA).add(nB).add(nC).normalize();
+                }
+            }
+            const worldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
             this.projectorNormal.copy(worldNormal);
-            this.updatePreviewTransform();
-            this.sync2DFrom3D(hit);
+            this._doUpdatePreviewTransform();
+
+            if (this.mode === '3d') {
+                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                if (decal) {
+                    this.schedule3DUnwrap(decal);
+                }
+            } else {
+                this.sync2DFrom3D(hit);
+                this.syncCurrentDecalToObject(false);
+            }
         }
     }
 
@@ -1800,73 +1928,14 @@ export class DecalSystem {
         this.decal2D.x = hit.uv.x * w;
         this.decal2D.y = (1 - hit.uv.y) * h;
 
-        let syncDone = false;
+        const scale = (this.projectorScale || 100) / 100;
+        this.decal2D.width = Math.round(this.decal2D.baseWidth * scale);
+        this.decal2D.height = Math.round(this.decal2D.baseHeight * scale);
+        this.decal2D.rotation = this.projectorRotation || 0;
 
-        if (hit.face && hit.object && hit.object.geometry) {
-            const geom = hit.object.geometry;
-            const pos = geom.attributes.position;
-            const uvs = geom.attributes.uv;
-            const a = hit.face.a, b = hit.face.b, c = hit.face.c;
-
-            if (pos && uvs && a !== undefined && b !== undefined && c !== undefined) {
-                const pA = new THREE.Vector3().fromBufferAttribute(pos, a).applyMatrix4(hit.object.matrixWorld);
-                const pB = new THREE.Vector3().fromBufferAttribute(pos, b).applyMatrix4(hit.object.matrixWorld);
-                const pC = new THREE.Vector3().fromBufferAttribute(pos, c).applyMatrix4(hit.object.matrixWorld);
-
-                const uvA = new THREE.Vector2(uvs.getX(a) * w, (1 - uvs.getY(a)) * h);
-                const uvB = new THREE.Vector2(uvs.getX(b) * w, (1 - uvs.getY(b)) * h);
-                const uvC = new THREE.Vector2(uvs.getX(c) * w, (1 - uvs.getY(c)) * h);
-
-                const e1 = new THREE.Vector3().subVectors(pB, pA);
-                const e2 = new THREE.Vector3().subVectors(pC, pA);
-
-                const u1 = new THREE.Vector2().subVectors(uvB, uvA);
-                const u2 = new THREE.Vector2().subVectors(uvC, uvA);
-
-                const orientation = this.currentProjectorOrientation || new THREE.Euler();
-                const projX = new THREE.Vector3(1, 0, 0).applyEuler(orientation);
-
-                const e11 = e1.dot(e1);
-                const e12 = e1.dot(e2);
-                const e22 = e2.dot(e2);
-                const det = e11 * e22 - e12 * e12;
-
-                if (Math.abs(det) > 1e-8) {
-                    const d1 = projX.dot(e1);
-                    const d2 = projX.dot(e2);
-                    const alpha = (d1 * e22 - d2 * e12) / det;
-                    const beta = (e11 * d2 - e12 * d1) / det;
-
-                    const v2D = new THREE.Vector2(
-                        alpha * u1.x + beta * u2.x,
-                        alpha * u1.y + beta * u2.y
-                    );
-
-                    const len2D = v2D.length();
-                    if (len2D > 0.0001) {
-                        this.decal2D.rotation = Math.atan2(v2D.y, v2D.x);
-
-                        const size3DX = this.currentProjectorSize ? this.currentProjectorSize.x : (this.getModelBaseSize() * (this.projectorScale / 100));
-                        const pxWidth = size3DX * len2D;
-                        if (pxWidth > 15 && pxWidth < w * 0.9) {
-                            const aspect = (this.decal2D.baseWidth && this.decal2D.baseHeight) ? (this.decal2D.baseWidth / this.decal2D.baseHeight) : 1;
-                            this.decal2D.width = Math.round(pxWidth);
-                            this.decal2D.height = Math.round(pxWidth / aspect);
-                            syncDone = true;
-                        }
-                    }
-                }
-            }
+        if (this.mode === '2d') {
+            this.render2DPreview();
         }
-
-        if (!syncDone) {
-            const scale = (this.projectorScale || 100) / 100;
-            this.decal2D.width = this.decal2D.baseWidth * scale;
-            this.decal2D.height = this.decal2D.baseHeight * scale;
-            this.decal2D.rotation = this.projectorRotation || 0;
-        }
-
-        this.render2DPreview();
     }
 
     getModelBaseSize() {
@@ -1876,24 +1945,41 @@ export class DecalSystem {
         return Math.max(0.1, Math.max(size.x, size.y, size.z) * 0.25);
     }
 
-    updatePreviewTransform() {
+    updatePreviewTransform(forceImmediate = false) {
+        if (!this.previewGroup || !this.isActive) return;
+        if (forceImmediate) {
+            if (this._transformRaf) {
+                cancelAnimationFrame(this._transformRaf);
+                this._transformRaf = null;
+            }
+            this._doUpdatePreviewTransform();
+            return;
+        }
+        if (this._transformRaf) return;
+        this._transformRaf = requestAnimationFrame(() => {
+            this._transformRaf = null;
+            this._doUpdatePreviewTransform();
+        });
+    }
+
+    _doUpdatePreviewTransform() {
         if (!this.previewGroup || !this.isActive) return;
 
-        // 1. Orientación alineada con la normal de la superficie
-        const up = new THREE.Vector3(0, 1, 0);
-        if (Math.abs(this.projectorNormal.dot(up)) > 0.95) {
-            up.set(1, 0, 0);
-        }
-
+        // 1. Orientación estable referenciada a la cámara para evitar que rote o salte bruscamente al cruzar caras
         const zAxis = this.projectorNormal.clone().normalize();
-        const xAxis = new THREE.Vector3().crossVectors(up, zAxis).normalize();
+        let up = this.camera ? this.camera.up.clone() : new THREE.Vector3(0, 1, 0);
+        let xAxis = new THREE.Vector3().crossVectors(up, zAxis).normalize();
+        if (xAxis.lengthSq() < 0.01) {
+            up = new THREE.Vector3(1, 0, 0);
+            xAxis = new THREE.Vector3().crossVectors(up, zAxis).normalize();
+        }
         const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
 
         const rotMatrix = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
         const baseQuat = new THREE.Quaternion().setFromRotationMatrix(rotMatrix);
 
         // Giro del usuario alrededor de la normal
-        const angleQuat = new THREE.Quaternion().setFromAxisAngle(this.projectorNormal, this.projectorRotation);
+        const angleQuat = new THREE.Quaternion().setFromAxisAngle(zAxis, this.projectorRotation);
         const finalQuat = angleQuat.multiply(baseQuat);
 
         // 2. Escala con relación de aspecto
@@ -1921,53 +2007,13 @@ export class DecalSystem {
         this.currentProjectorOrientation = orientation;
         this.currentProjectorSize = size;
 
-        // 3. Generar DecalGeometry adaptada a la curvatura 3D (soportando múltiples mallas como fuselaje + alas)
-        const candidateMeshes = this.getMeshesToBake();
-        const decalGeos = [];
-
-        for (const targetMesh of candidateMeshes) {
-            try {
-                let geo = new DecalGeometry(targetMesh, this.projectorPosition, orientation, size);
-                geo = this.filterDecalGeometry(geo, this.projectorNormal, this.allowPassthrough);
-                if (geo.attributes.position && geo.attributes.position.count > 0) {
-                    decalGeos.push(geo);
-                } else {
-                    geo.dispose();
-                }
-            } catch (err) {
-                // Silenciosamente continuar con las otras mallas
-            }
-        }
-
-        if (decalGeos.length > 0) {
-            const decalGeo = this.mergeDecalGeometries(decalGeos);
-            this.previewMesh.geometry.dispose();
-            this.previewMesh.geometry = decalGeo;
-            this.previewMesh.visible = true;
-
-            const edges = new THREE.EdgesGeometry(decalGeo);
-            this.previewBorder.geometry.dispose();
-            this.previewBorder.geometry = edges;
-            this.previewBorder.visible = true;
-
-            this.fallbackPlane.visible = false;
-            this.fallbackBorder.visible = false;
-
-            this.previewGroup.position.set(0, 0, 0);
-            this.previewGroup.quaternion.identity();
-            this.previewGroup.scale.set(1, 1, 1);
-            return;
-        }
-
-        // Respaldo plano si el cursor sale de la malla
-        const offsetPoint = this.projectorPosition.clone().addScaledVector(this.projectorNormal, 0.003);
-        this.previewGroup.position.copy(offsetPoint);
-        this.previewGroup.quaternion.copy(finalQuat);
-        this.previewGroup.scale.set(scaleX, scaleY, 1);
+        // Mantener previewMesh oculto: la calca se renderiza directamente y con máxima fluidez 
+        // a través de la textura del modelo 3D (state.texture), evitando duplicados / fantasmas y líneas cyan.
         this.previewMesh.visible = false;
         this.previewBorder.visible = false;
-        this.fallbackPlane.visible = true;
-        this.fallbackBorder.visible = true;
+        this.fallbackPlane.visible = false;
+        this.fallbackBorder.visible = false;
+        if (this.previewGroup) this.previewGroup.visible = false;
     }
 
     getMeshesToBake() {
@@ -2079,13 +2125,16 @@ export class DecalSystem {
     }
 
     // ==========================================
-    // PREVISUALIZACIÓN 2D GPU DESDE MODO 3D
+    // PREVISUALIZACIÓN Y DESPLIEGUE MULTI-PIEZA 3D -> 2D (GPU)
     // ==========================================
 
     initPreviewBake() {
         if (this.previewBakeMaterial) return;
 
-        this.previewRenderTarget = new THREE.WebGLRenderTarget(512, 512, {
+        const w = this.canvas ? this.canvas.width : 2048;
+        const h = this.canvas ? this.canvas.height : 2048;
+
+        this.previewRenderTarget = new THREE.WebGLRenderTarget(w, h, {
             format: THREE.RGBAFormat,
             type: THREE.UnsignedByteType
         });
@@ -2140,28 +2189,29 @@ export class DecalSystem {
             transparent: true
         });
 
-        this.previewOffscreenCanvas = document.createElement('canvas');
-        this.previewOffscreenCanvas.width = 512;
-        this.previewOffscreenCanvas.height = 512;
-        this.previewOffscreenCtx = this.previewOffscreenCanvas.getContext('2d');
-        this.previewPixelBuffer = new Uint8Array(512 * 512 * 4);
+        this.previewPixelBuffer = new Uint8Array(w * h * 4);
     }
 
-    schedule2DPreview3D() {
-        if (this._preview3DPending) return;
-        this._preview3DPending = true;
-        requestAnimationFrame(() => {
-            this._preview3DPending = false;
+    schedule3DUnwrap(decal = null) {
+        if (this._unwrapRaf) return;
+        this._unwrapRaf = requestAnimationFrame(() => {
+            this._unwrapRaf = null;
             if (this.isActive && this.mode === '3d') {
-                this.render2DPreview3D();
+                const targetDecal = decal || (this.layerManager?.getActiveLayer()?.getDecal(this.selectedDecalId));
+                if (targetDecal) {
+                    this.update3DUnwrapForDecal(targetDecal, false);
+                }
             }
         });
     }
 
-    render2DPreview3D() {
-        if (!this.isActive || !this.currentDecalImage || !this.ctxUI || !this.renderer || !this.mesh) return;
+    update3DUnwrapForDecal(decal, isFinal = false) {
+        if (!decal || !decal.img || !this.renderer || !this.mesh) return;
 
         this.initPreviewBake();
+
+        const w = this.canvas ? this.canvas.width : 2048;
+        const h = this.canvas ? this.canvas.height : 2048;
 
         const orientation = this.currentProjectorOrientation || new THREE.Euler();
         const size = this.currentProjectorSize || new THREE.Vector3(1, 1, 1);
@@ -2176,17 +2226,19 @@ export class DecalSystem {
         if (meshesToBake.length === 0) return;
 
         while (this.previewBakeScene.children.length > 0) {
-            this.previewBakeScene.remove(this.previewBakeScene.children[0]);
+            const child = this.previewBakeScene.children[0];
+            if (child.material) child.material.dispose();
+            this.previewBakeScene.remove(child);
         }
 
-        this.previewBakeMaterial.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
-        this.previewBakeMaterial.uniforms.uProjectorNormal.value.copy(this.projectorNormal);
-        this.previewBakeMaterial.uniforms.uDecalTexture.value = this.decalTexture;
-        this.previewBakeMaterial.uniforms.uAllowPassthrough.value = this.allowPassthrough ? 1.0 : 0.0;
-
         meshesToBake.forEach(m => {
-            const meshClone = new THREE.Mesh(m.geometry, this.previewBakeMaterial);
-            meshClone.material.uniforms.uModelMatrix.value.copy(m.matrixWorld);
+            const mat = this.previewBakeMaterial.clone();
+            mat.uniforms.uModelMatrix.value.copy(m.matrixWorld);
+            mat.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
+            mat.uniforms.uProjectorNormal.value.copy(this.projectorNormal);
+            mat.uniforms.uDecalTexture.value = this.decalTexture;
+            mat.uniforms.uAllowPassthrough.value = this.allowPassthrough ? 1.0 : 0.0;
+            const meshClone = new THREE.Mesh(m.geometry, mat);
             this.previewBakeScene.add(meshClone);
         });
 
@@ -2201,17 +2253,33 @@ export class DecalSystem {
         this.renderer.setRenderTarget(prevTarget);
         this.renderer.setClearColor(prevClearColor, prevClearAlpha);
 
-        this.renderer.readRenderTargetPixels(this.previewRenderTarget, 0, 0, 512, 512, this.previewPixelBuffer);
-        const imgData = new ImageData(new Uint8ClampedArray(this.previewPixelBuffer.buffer), 512, 512);
-        this.previewOffscreenCtx.putImageData(imgData, 0, 0);
+        if (!decal.unwrappedCanvas) {
+            decal.unwrappedCanvas = document.createElement('canvas');
+            decal.unwrappedCanvas.width = w;
+            decal.unwrappedCanvas.height = h;
+            decal.unwrappedCtx = decal.unwrappedCanvas.getContext('2d');
+        }
 
-        this.clear2DUI();
-        this.ctxUI.save();
-        this.ctxUI.imageSmoothingEnabled = true;
-        this.ctxUI.imageSmoothingQuality = 'high';
-        this.ctxUI.globalAlpha = 0.9;
-        this.ctxUI.drawImage(this.previewOffscreenCanvas, 0, 0, this.canvasUI.width, this.canvasUI.height);
-        this.ctxUI.restore();
+        this.renderer.readRenderTargetPixels(this.previewRenderTarget, 0, 0, w, h, this.previewPixelBuffer);
+        const imgData = new ImageData(new Uint8ClampedArray(this.previewPixelBuffer.buffer), w, h);
+        decal.unwrappedCtx.putImageData(imgData, 0, 0);
+
+        decal.mode = '3d';
+        decal.projectorPosition = this.projectorPosition.clone();
+        decal.projectorNormal = this.projectorNormal.clone();
+        decal.projectorScale = this.projectorScale;
+        decal.projectorRotation = this.projectorRotation;
+
+        if (this.layerManager) {
+            this.layerManager.recomposite();
+        }
+        if (this.painter) {
+            this.painter.needsUpdate = true;
+            this.painter.forceUpdate = true;
+        }
+        if (this.texture) {
+            this.texture.needsUpdate = true;
+        }
     }
 
     // ==========================================
@@ -2239,7 +2307,11 @@ export class DecalSystem {
 
         this.clear2DUI();
 
-        // En Modo 2D o 3D, si no hay calca seleccionada, dejar la UI limpia
+        // En modo 3D, la pegatina se desdobla directamente sobre las piezas 2D de la capa mediante su unwrappedCanvas,
+        // respetando con exactitud los contornos de las piezas y sin mostrar el recuadro plano en el fondo vacío.
+        if (this.mode === '3d') return;
+
+        // En Modo 2D, si no hay calca seleccionada, dejar la UI limpia
         if (!this.selectedDecalId) return;
 
         const d = this.decal2D;
@@ -2253,86 +2325,73 @@ export class DecalSystem {
         ctx.translate(d.x, d.y);
         ctx.rotate(d.rotation);
 
-        // Si la calca no estuviera aún en la capa activa, dibujarla aquí
-        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-        const inLayer = activeLayer && activeLayer.decals && activeLayer.decals.some(x => x.id === this.selectedDecalId);
-        if (!inLayer && this.currentDecalImage) {
+        // Dibujar siempre la calcomanía en alta definición nítida en el lienzo 2D
+        if (this.currentDecalImage) {
             ctx.drawImage(this.currentDecalImage, -halfW, -halfH, d.width, d.height);
         }
 
-        // Borde azul de selección (punteado si está en modo proyección 3D)
+        // Borde azul de selección y nodos interactivos siempre disponibles
         ctx.strokeStyle = '#0078d7';
+        ctx.setLineDash([4, 4]);
         ctx.lineWidth = 1.5;
-        if (this.mode === '3d') {
-            ctx.setLineDash([6, 4]);
-        } else {
-            ctx.setLineDash([4, 4]);
-        }
         ctx.strokeRect(-halfW, -halfH, d.width, d.height);
         ctx.setLineDash([]);
 
-        if (this.mode === '2d') {
-            const minDim = Math.min(d.width, d.height);
-            const handleRadius = Math.max(3.5, Math.min(6, Math.round(minDim / 12)));
-            const showEdgeHandles = d.width >= 36 && d.height >= 36;
+        const minDim = Math.min(d.width, d.height);
+        const handleRadius = Math.max(3.5, Math.min(6, Math.round(minDim / 12)));
+        const showEdgeHandles = d.width >= 36 && d.height >= 36;
 
-            const drawHandle = (hx, hy, isRotate = false) => {
-                // Nodos con interior 100% transparente para ver el panelado y la figura debajo
-                if (isRotate) {
-                    ctx.beginPath();
-                    ctx.arc(hx, hy, handleRadius + 1, 0, Math.PI * 2);
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-                    ctx.lineWidth = 3;
-                    ctx.stroke();
-                    ctx.strokeStyle = '#0078d7';
-                    ctx.lineWidth = 1.5;
-                    ctx.stroke();
-                } else {
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-                    ctx.lineWidth = 3;
-                    ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
-                    ctx.strokeStyle = '#0078d7';
-                    ctx.lineWidth = 1.5;
-                    ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
-                }
-            };
-
-            // Esquinas (escala proporcional)
-            drawHandle(-halfW, -halfH);
-            drawHandle( halfW, -halfH);
-            drawHandle(-halfW,  halfH);
-            drawHandle( halfW,  halfH);
-
-            // Bordes (ajuste de anchura o altura) - solo visibles si el tamaño lo amerita
-            if (showEdgeHandles) {
-                drawHandle(0, -halfH);
-                drawHandle(0,  halfH);
-                drawHandle(-halfW, 0);
-                drawHandle( halfW, 0);
+        const drawHandle = (hx, hy, isRotate = false) => {
+            // Nodos con interior 100% transparente para ver el fondo
+            if (isRotate) {
+                ctx.beginPath();
+                ctx.arc(hx, hy, handleRadius + 1, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.strokeStyle = '#0078d7';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            } else {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
+                ctx.strokeStyle = '#0078d7';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
             }
+        };
 
-            // Palo de rotación proporcional
-            const stemLength = Math.max(16, Math.min(28, Math.round(minDim * 0.25 + 10)));
-            ctx.beginPath();
-            ctx.moveTo(0, -halfH);
-            ctx.lineTo(0, -halfH - stemLength);
-            ctx.strokeStyle = '#0078d7';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
+        // Esquinas (escala proporcional)
+        drawHandle(-halfW, -halfH);
+        drawHandle( halfW, -halfH);
+        drawHandle(-halfW,  halfH);
+        drawHandle( halfW,  halfH);
 
-            drawHandle(0, -halfH - stemLength, true);
-        } else {
-            // En modo 3D: Etiqueta limpia que indica la ubicación UV de la proyección 3D
-            ctx.fillStyle = '#0078d7';
-            ctx.font = 'bold 11px sans-serif';
-            ctx.fillText('🌐 Proyección 3D', -halfW + 4, -halfH - 6);
+        // Bordes (ajuste de anchura o altura)
+        if (showEdgeHandles) {
+            drawHandle(0, -halfH);
+            drawHandle(0,  halfH);
+            drawHandle(-halfW, 0);
+            drawHandle( halfW, 0);
         }
+
+        // Palo y nodo de rotación proporcional
+        const stemLength = Math.max(16, Math.min(28, Math.round(minDim * 0.25 + 10)));
+        ctx.beginPath();
+        ctx.moveTo(0, -halfH);
+        ctx.lineTo(0, -halfH - stemLength);
+        ctx.strokeStyle = '#0078d7';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        drawHandle(0, -halfH - stemLength, true);
 
         ctx.restore();
     }
 
     hitTest2D(canvasX, canvasY) {
-        if (!this.isActive || this.mode !== '2d' || !this.selectedDecalId) return null;
+        if (!this.isActive || !this.selectedDecalId) return null;
 
         const d = this.decal2D;
         const dx = canvasX - d.x;
@@ -2384,10 +2443,6 @@ export class DecalSystem {
     onPointerDown2D(e) {
         if (e.button !== 0) return;
         const currentBrushMode = document.getElementById('brush-mode')?.value;
-        if (currentBrushMode === 'select' && this.mode !== '2d') {
-            this.mode = '2d';
-        }
-        if (this.mode !== '2d') return;
         const { x, y } = this.getCanvas2DCoords(e);
 
         // 1. Si hay una calca seleccionada, verificar si se hizo clic en sus nodos o su interior
@@ -2419,18 +2474,13 @@ export class DecalSystem {
             return;
         }
 
-        // 3. Clic en espacio vacío: deseleccionar para dejar el lienzo despejado
-        if (this.selectedDecalId) {
+        // 3. Clic en espacio vacío: deseleccionar para dejar el lienzo despejado si estamos en modo select
+        if (this.selectedDecalId && currentBrushMode === 'select') {
             this.deselectDecal();
         }
     }
 
     onPointerMove2D(e) {
-        const currentBrushMode = document.getElementById('brush-mode')?.value;
-        if (currentBrushMode === 'select' && this.mode !== '2d') {
-            this.mode = '2d';
-        }
-        if (this.mode !== '2d') return;
         const { x, y } = this.getCanvas2DCoords(e);
 
         if (!this.decal2D.isDragging) {

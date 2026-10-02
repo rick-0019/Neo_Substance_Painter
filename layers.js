@@ -58,13 +58,18 @@ export class Layer {
             targetCtx.imageSmoothingEnabled = true;
             targetCtx.imageSmoothingQuality = 'high';
             targetCtx.globalAlpha = (d.opacity !== undefined ? d.opacity : 1.0);
-            const x = d.x * scaleX;
-            const y = d.y * scaleY;
-            const w = d.width * scaleX;
-            const h = d.height * scaleY;
-            targetCtx.translate(x, y);
-            targetCtx.rotate(d.rotation || 0);
-            targetCtx.drawImage(d.img, -w / 2, -h / 2, w, h);
+
+            if (d.mode === '3d' && d.unwrappedCanvas) {
+                targetCtx.drawImage(d.unwrappedCanvas, 0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
+            } else {
+                const x = d.x * scaleX;
+                const y = d.y * scaleY;
+                const w = d.width * scaleX;
+                const h = d.height * scaleY;
+                targetCtx.translate(x, y);
+                targetCtx.rotate(d.rotation || 0);
+                targetCtx.drawImage(d.img, -w / 2, -h / 2, w, h);
+            }
             targetCtx.restore();
         }
     }
@@ -89,9 +94,14 @@ export class Layer {
             this.ctx.imageSmoothingEnabled = true;
             this.ctx.imageSmoothingQuality = 'high';
             this.ctx.globalAlpha = (d.opacity !== undefined ? d.opacity : 1.0);
-            this.ctx.translate(d.x, d.y);
-            this.ctx.rotate(d.rotation || 0);
-            this.ctx.drawImage(d.img, -d.width / 2, -d.height / 2, d.width, d.height);
+
+            if (d.mode === '3d' && d.unwrappedCanvas) {
+                this.ctx.drawImage(d.unwrappedCanvas, 0, 0, this.canvas.width, this.canvas.height);
+            } else {
+                this.ctx.translate(d.x, d.y);
+                this.ctx.rotate(d.rotation || 0);
+                this.ctx.drawImage(d.img, -d.width / 2, -d.height / 2, d.width, d.height);
+            }
             this.ctx.restore();
 
             if (this.hasMask && this.maskCtx) {
@@ -105,6 +115,19 @@ export class Layer {
     unmaskDecal(d) {
         if (!this.maskCtx || !d || !d.img) return;
         try {
+            if (d.mode === '3d' && d.unwrappedCanvas) {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = this.width;
+                tempCanvas.height = this.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(d.unwrappedCanvas, 0, 0);
+                tempCtx.globalCompositeOperation = 'source-in';
+                tempCtx.fillStyle = '#FFFFFF';
+                tempCtx.fillRect(0, 0, this.width, this.height);
+                this.maskCtx.drawImage(tempCanvas, 0, 0);
+                return;
+            }
+
             const w = Math.max(1, Math.round(d.width || d.baseWidth || 100));
             const h = Math.max(1, Math.round(d.height || d.baseHeight || 100));
             const tempCanvas = document.createElement('canvas');
