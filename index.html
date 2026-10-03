@@ -321,6 +321,15 @@
                     </div>
                 </div>
 
+                <!-- Espejo / Flip -->
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 0.72em; color: #ccc; white-space: nowrap;">Espejo</span>
+                    <div style="display: flex; align-items: center; gap: 2px;">
+                        <button type="button" id="btn-text-flip-h" class="size-step-btn" style="width: 20px; height: 20px; font-size: 11px;" title="Espejo horizontal (⇄ Invertir izquierda/derecha)">⇄</button>
+                        <button type="button" id="btn-text-flip-v" class="size-step-btn" style="width: 20px; height: 20px; font-size: 11px;" title="Espejo vertical (⇅ Invertir arriba/abajo)">⇅</button>
+                    </div>
+                </div>
+
                 <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
 
                 <!-- Acciones: Estampar 2D / Estampar 3D / Cancelar -->
@@ -399,6 +408,17 @@
                         <span id="shape-rot-val" style="font-size: 0.72em; width: 26px; text-align: center; color: #fff;">0°</span>
                         <button type="button" id="btn-shape-rot-inc" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Girar +1°">+</button>
                         <input type="range" id="shape-rotation" min="-180" max="180" value="0" style="display: none;">
+                    </div>
+                </div>
+
+                <div class="ribbon-divider" style="height: 48px; margin: 0 1px;"></div>
+
+                <!-- Columna 4b: Espejo / Flip (Horizontal y Vertical) -->
+                <div style="display: flex; flex-direction: column; gap: 2px; justify-content: center; align-items: center;">
+                    <span style="font-size: 0.68em; color: #aaa;">Espejo</span>
+                    <div style="display: flex; gap: 2px;">
+                        <button type="button" id="btn-shape-flip-h" class="size-step-btn" style="width: 18px; height: 18px; font-size: 10px; padding: 0;" title="Espejo horizontal (⇄ Invertir izquierda/derecha)">⇄</button>
+                        <button type="button" id="btn-shape-flip-v" class="size-step-btn" style="width: 18px; height: 18px; font-size: 10px; padding: 0;" title="Espejo vertical (⇅ Invertir arriba/abajo)">⇅</button>
                     </div>
                 </div>
 
@@ -583,6 +603,15 @@
                                 <button type="button" id="btn-decal-rot-dec" class="size-step-btn" title="Girar -1°">-</button>
                                 <input type="range" id="decal-rotation" min="-180" max="180" value="0" style="width: 55px;">
                                 <button type="button" id="btn-decal-rot-inc" class="size-step-btn" title="Girar +1°">+</button>
+                            </div>
+                        </div>
+
+                        <!-- Espejo / Flip -->
+                        <div style="display: flex; flex-direction: column; gap: 2px;">
+                            <label style="font-size: 0.75em; color: #ccc; white-space: nowrap;">Espejo</label>
+                            <div style="display: flex; align-items: center; gap: 2px;">
+                                <button type="button" id="btn-decal-flip-h" class="size-step-btn" style="width: 22px; height: 20px; font-size: 11px;" title="Espejo horizontal (⇄ Invertir izquierda/derecha)">⇄</button>
+                                <button type="button" id="btn-decal-flip-v" class="size-step-btn" style="width: 22px; height: 20px; font-size: 11px;" title="Espejo vertical (⇅ Invertir arriba/abajo)">⇅</button>
                             </div>
                         </div>
 
@@ -1085,6 +1114,6 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=5.0"></script>
+    <script type="module" src="main.js?v=5.2"></script>
 </body>
 </html>

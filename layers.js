@@ -68,6 +68,9 @@ export class Layer {
                 const h = d.height * scaleY;
                 targetCtx.translate(x, y);
                 targetCtx.rotate(d.rotation || 0);
+                if (d.flipH || d.flipV) {
+                    targetCtx.scale(d.flipH ? -1 : 1, d.flipV ? -1 : 1);
+                }
                 targetCtx.drawImage(d.img, -w / 2, -h / 2, w, h);
             }
             targetCtx.restore();
@@ -100,6 +103,9 @@ export class Layer {
             } else {
                 this.ctx.translate(d.x, d.y);
                 this.ctx.rotate(d.rotation || 0);
+                if (d.flipH || d.flipV) {
+                    this.ctx.scale(d.flipH ? -1 : 1, d.flipV ? -1 : 1);
+                }
                 this.ctx.drawImage(d.img, -d.width / 2, -d.height / 2, d.width, d.height);
             }
             this.ctx.restore();
@@ -142,6 +148,9 @@ export class Layer {
             this.maskCtx.save();
             this.maskCtx.translate(d.x, d.y);
             this.maskCtx.rotate(d.rotation || 0);
+            if (d.flipH || d.flipV) {
+                this.maskCtx.scale(d.flipH ? -1 : 1, d.flipV ? -1 : 1);
+            }
             this.maskCtx.drawImage(tempCanvas, -w / 2, -h / 2, w, h);
             this.maskCtx.restore();
         } catch (_) {}
