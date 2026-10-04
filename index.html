@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neo Substance Painter - Pepakura Edition</title>
     <link rel="icon" type="image/x-icon" href="app_icon.ico">
-    <link rel="stylesheet" href="style.css?v=4.0">
+    <link rel="stylesheet" href="style.css?v=5.0">
     <script>
         window.currentShapeStrokeDash = 'solid';
         window.updateShapeStrokeDash = function(dashStyle) {
@@ -269,19 +269,23 @@
 
                 <div class="ribbon-divider" style="height: 45px; margin: 0 2px;"></div>
 
-                <!-- Entrada de Texto -->
+                <!-- Entrada de Texto (Multilínea) -->
                 <div style="display: flex; flex-direction: column; gap: 2px;">
-                    <span style="font-size: 0.72em; color: #ccc; white-space: nowrap;">Texto</span>
-                    <input type="text" id="text-input-value" value="TEXTO" style="width: 85px; height: 22px; font-size: 0.85em; background: #333; color: #fff; border: 1px solid #555; border-radius: 3px; padding: 2px 4px;">
+                    <span style="font-size: 0.72em; color: #ccc; white-space: nowrap;">Texto (Multilínea)</span>
+                    <textarea id="text-input-value" rows="2" placeholder="Texto (Enter = salto de línea)" style="width: 120px; height: 38px; font-size: 0.82em; background: #333; color: #fff; border: 1px solid #555; border-radius: 3px; padding: 2px 4px; resize: none; font-family: inherit; line-height: 1.25; overflow-y: auto; box-sizing: border-box;" title="Escribe una o varias líneas de texto. Presiona Enter para saltar de línea.">TEXTO</textarea>
                 </div>
 
                 <!-- Tipografía, Estilo y Color -->
                 <div style="display: flex; flex-direction: column; gap: 2px;">
-                    <span style="font-size: 0.72em; color: #ccc; white-space: nowrap;">Fuente / Color</span>
+                    <span style="font-size: 0.72em; color: #ccc; white-space: nowrap;">Fuente / Color / Alineación</span>
                     <div style="display: flex; align-items: center; gap: 3px;">
-                        <select id="text-font-family" class="ribbon-select" style="height: 22px; width: 95px; font-size: 0.78em;">
+                        <select id="text-font-family" class="ribbon-select" style="height: 22px; width: 105px; font-size: 0.78em;">
+                            <option value="AmarilloUSAF">Amarillo USAF</option>
+                            <option value="Gunplay">Gunplay</option>
+                            <option value="Gunplay 3D">Gunplay 3D</option>
+                            <option value="Steiner">Steiner</option>
                             <option value="Arial" selected>Arial</option>
-                            <option value="Impact">Impact (Militar)</option>
+                            <option value="Impact">Impact</option>
                             <option value="Courier New">Courier New</option>
                             <option value="Trebuchet MS">Trebuchet MS</option>
                             <option value="Georgia">Georgia</option>
@@ -290,6 +294,9 @@
                         <input type="color" id="text-color" value="#111111" style="width: 20px; height: 20px; padding: 0; border: 1px solid #555; border-radius: 3px; cursor: pointer;" title="Color del Texto">
                         <button type="button" id="btn-text-bold" class="size-step-btn active" style="font-weight: bold; width: 20px; height: 20px;" title="Negrita">B</button>
                         <button type="button" id="btn-text-italic" class="size-step-btn" style="font-style: italic; width: 20px; height: 20px;" title="Cursiva">I</button>
+                        <button type="button" id="btn-text-align-left" class="size-step-btn" style="width: 20px; height: 20px; font-size: 11px;" title="Alinear a la izquierda">⫷</button>
+                        <button type="button" id="btn-text-align-center" class="size-step-btn active" style="width: 20px; height: 20px; font-size: 11px;" title="Centrado">≡</button>
+                        <button type="button" id="btn-text-align-right" class="size-step-btn" style="width: 20px; height: 20px; font-size: 11px;" title="Alinear a la derecha">⫸</button>
                     </div>
                 </div>
 
@@ -303,7 +310,7 @@
                     </div>
                     <div style="display: flex; align-items: center; gap: 2px;">
                         <button type="button" id="btn-text-size-dec" class="size-step-btn" style="width: 18px; height: 18px;" title="Reducir tamaño">-</button>
-                        <input type="range" id="text-font-size" min="14" max="250" value="48" style="width: 45px;">
+                        <input type="range" id="text-font-size" min="4" max="250" value="48" style="width: 45px;">
                         <button type="button" id="btn-text-size-inc" class="size-step-btn" style="width: 18px; height: 18px;" title="Aumentar tamaño">+</button>
                     </div>
                 </div>
@@ -1114,6 +1121,6 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=5.2"></script>
+    <script type="module" src="main.js?v=5.5"></script>
 </body>
 </html>

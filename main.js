@@ -1342,7 +1342,7 @@ toolButtons.forEach(btn => {
         // Si se cambia a cualquier herramienta que no sea texto, desactivar calcomanías y texto
         if (window.decalSystem) {
             if (window.decalSystem.isTextMode && mode !== 'text') {
-                window.decalSystem.cancelDecal();
+                window.decalSystem.cancelDecal(false);
             }
             if (mode === 'select') {
                 window.decalSystem.isActive = true;
@@ -1647,8 +1647,22 @@ textInputVal?.addEventListener('input', (e) => {
     window.decalSystem?.updateTextDecal({ text: e.target.value });
 });
 
+// Precargar tipografías militares y especiales para renderizado en Canvas
+['AmarilloUSAF', 'Gunplay', 'Gunplay 3D', 'Steiner'].forEach(f => {
+    try { document.fonts?.load(`24px "${f}"`); } catch (_) {}
+});
+
 textFontFamily?.addEventListener('change', (e) => {
-    window.decalSystem?.updateTextDecal({ fontFamily: e.target.value });
+    const fam = e.target.value;
+    if (document.fonts?.load) {
+        document.fonts.load(`256px "${fam}"`).then(() => {
+            window.decalSystem?.updateTextDecal({ fontFamily: fam });
+        }).catch(() => {
+            window.decalSystem?.updateTextDecal({ fontFamily: fam });
+        });
+    } else {
+        window.decalSystem?.updateTextDecal({ fontFamily: fam });
+    }
 });
 
 textColor?.addEventListener('input', (e) => {
@@ -1664,7 +1678,8 @@ textFontSize?.addEventListener('input', (e) => {
 document.getElementById('btn-text-size-dec')?.addEventListener('click', () => {
     if (!textFontSize) return;
     const cur = parseInt(textFontSize.value, 10);
-    const next = Math.max(14, cur - 2);
+    const step = cur <= 10 ? 1 : 2;
+    const next = Math.max(4, cur - step);
     textFontSize.value = next;
     if (textSizeVal) textSizeVal.textContent = `${next} px`;
     window.decalSystem?.updateTextDecal({ fontSize: next });
@@ -1673,7 +1688,8 @@ document.getElementById('btn-text-size-dec')?.addEventListener('click', () => {
 document.getElementById('btn-text-size-inc')?.addEventListener('click', () => {
     if (!textFontSize) return;
     const cur = parseInt(textFontSize.value, 10);
-    const next = Math.min(250, cur + 2);
+    const step = cur < 10 ? 1 : 2;
+    const next = Math.min(250, cur + step);
     textFontSize.value = next;
     if (textSizeVal) textSizeVal.textContent = `${next} px`;
     window.decalSystem?.updateTextDecal({ fontSize: next });
@@ -1712,6 +1728,22 @@ btnTextItalic?.addEventListener('click', () => {
     btnTextItalic.classList.toggle('active');
     window.decalSystem?.updateTextDecal({ isItalic: btnTextItalic.classList.contains('active') });
 });
+
+const btnTextAlignLeft = document.getElementById('btn-text-align-left');
+const btnTextAlignCenter = document.getElementById('btn-text-align-center');
+const btnTextAlignRight = document.getElementById('btn-text-align-right');
+
+function setTextAlign(align) {
+    [btnTextAlignLeft, btnTextAlignCenter, btnTextAlignRight].forEach(b => b?.classList.remove('active'));
+    if (align === 'left') btnTextAlignLeft?.classList.add('active');
+    else if (align === 'right') btnTextAlignRight?.classList.add('active');
+    else btnTextAlignCenter?.classList.add('active');
+    window.decalSystem?.updateTextDecal({ align });
+}
+
+btnTextAlignLeft?.addEventListener('click', () => setTextAlign('left'));
+btnTextAlignCenter?.addEventListener('click', () => setTextAlign('center'));
+btnTextAlignRight?.addEventListener('click', () => setTextAlign('right'));
 
 // --- Menú Archivo Desplegable (Estilo MS Paint) ---
 const btnPaintFileMenu = document.getElementById('btn-paint-file-menu');

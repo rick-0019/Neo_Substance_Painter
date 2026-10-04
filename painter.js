@@ -182,7 +182,7 @@ export class Painter {
             );
 
             if (isTextEditing) {
-                if (e.key === 'Enter' && e.target.id === 'text-input-value') {
+                if (e.key === 'Enter' && e.target.id === 'text-input-value' && e.target.tagName !== 'TEXTAREA') {
                     if (this.textState && this.textState.active) {
                         this.commitText();
                     }
@@ -791,7 +791,7 @@ export class Painter {
                 return;
             }
             if (window.decalSystem && window.decalSystem.isTextMode && mode !== 'text') {
-                window.decalSystem.cancelDecal();
+                window.decalSystem.cancelDecal(false);
             }
             
             const rect = this.canvas.getBoundingClientRect();
@@ -1754,9 +1754,17 @@ export class Painter {
         ctx.textBaseline = 'middle';
 
         // Medir ancho para cuadro delimitador
-        const metrics = ctx.measureText(s.text);
-        const w = Math.max(20, metrics.width);
-        const h = Math.max(16, s.fontSize * 1.15);
+        const rawText = (s.text !== undefined && s.text !== null && s.text.length > 0) ? String(s.text) : ' ';
+        const lines = rawText.split(/\r?\n/);
+        let maxW = 20;
+        for (const line of lines) {
+            const lw = ctx.measureText(line || ' ').width;
+            if (lw > maxW) maxW = lw;
+        }
+        const lineHeight = Math.round(s.fontSize * 1.2);
+        const totalH = Math.max(16, lines.length * lineHeight);
+        const w = Math.max(20, Math.ceil(maxW));
+        const h = Math.max(16, Math.ceil(totalH));
         s.boxWidth = w;
         s.boxHeight = h;
 
@@ -1785,7 +1793,10 @@ export class Painter {
 
         // Texto renderizado
         ctx.fillStyle = s.color;
-        ctx.fillText(s.text, 0, 0);
+        const startY = -((lines.length - 1) * lineHeight) / 2;
+        for (let i = 0; i < lines.length; i++) {
+            ctx.fillText(lines[i], 0, startY + (i * lineHeight));
+        }
 
         ctx.restore();
         this.uiNeedsUpdate = true;
@@ -1836,7 +1847,14 @@ export class Painter {
         activeCtx.textAlign = 'center';
         activeCtx.textBaseline = 'middle';
         activeCtx.fillStyle = s.color;
-        activeCtx.fillText(s.text, 0, 0);
+
+        const rawText = (s.text !== undefined && s.text !== null && s.text.length > 0) ? String(s.text) : ' ';
+        const lines = rawText.split(/\r?\n/);
+        const lineHeight = Math.round(s.fontSize * 1.2);
+        const startY = -((lines.length - 1) * lineHeight) / 2;
+        for (let i = 0; i < lines.length; i++) {
+            activeCtx.fillText(lines[i], 0, startY + (i * lineHeight));
+        }
         activeCtx.restore();
 
         this.textState.active = false;

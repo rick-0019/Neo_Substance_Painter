@@ -1671,13 +1671,14 @@ export class DecalSystem {
         if (decal.type === 'text') {
             this.isTextMode = true;
             this.textOptions = Object.assign({
-                text: decal.name ? decal.name.replace(/^Texto:\s*"?/, '').replace(/"?$/, '') : 'TEXTO',
+                text: (decal.textOptions && decal.textOptions.text !== undefined) ? decal.textOptions.text : (decal.name ? decal.name.replace(/^Texto:\s*"?/, '').replace(/"?$/, '') : 'TEXTO'),
                 fontFamily: 'Arial',
                 fontSize: 48,
                 rotation: Math.round((decal.rotation * 180 / Math.PI) % 360),
                 isBold: true,
                 isItalic: false,
-                color: '#111111'
+                color: '#111111',
+                align: 'center'
             }, decal.textOptions || {});
 
             const textInput = document.getElementById('text-input-value');
@@ -1690,7 +1691,7 @@ export class DecalSystem {
             const btnBold = document.getElementById('btn-text-bold');
             const btnItalic = document.getElementById('btn-text-italic');
 
-            if (textInput && this.textOptions.text) textInput.value = this.textOptions.text;
+            if (textInput && this.textOptions.text !== undefined) textInput.value = this.textOptions.text;
             if (fontFam && this.textOptions.fontFamily) fontFam.value = this.textOptions.fontFamily;
             if (fontSize && this.textOptions.fontSize) {
                 fontSize.value = this.textOptions.fontSize;
@@ -1712,15 +1713,23 @@ export class DecalSystem {
                 else btnItalic.classList.remove('active');
             }
 
+            const align = this.textOptions.align || 'center';
+            document.getElementById('btn-text-align-left')?.classList.toggle('active', align === 'left');
+            document.getElementById('btn-text-align-center')?.classList.toggle('active', align === 'center');
+            document.getElementById('btn-text-align-right')?.classList.toggle('active', align === 'right');
+
             const textControls = document.getElementById('text-controls');
             if (textControls) textControls.style.display = 'flex';
             const decalControls = document.getElementById('decal-controls');
             if (decalControls) decalControls.style.display = 'none';
 
-            document.querySelectorAll('.tool-btn[data-mode]').forEach(b => b.classList.remove('active'));
-            document.querySelector('.tool-btn[data-mode="text"]')?.classList.add('active');
-            const brushMode = document.getElementById('brush-mode');
-            if (brushMode) brushMode.value = 'text';
+            const curBrushMode = document.getElementById('brush-mode')?.value;
+            if (curBrushMode !== 'select') {
+                document.querySelectorAll('.tool-btn[data-mode]').forEach(b => b.classList.remove('active'));
+                document.querySelector('.tool-btn[data-mode="text"]')?.classList.add('active');
+                const brushMode = document.getElementById('brush-mode');
+                if (brushMode) brushMode.value = 'text';
+            }
         } else {
             this.isTextMode = false;
             const textControls = document.getElementById('text-controls');
@@ -1853,6 +1862,7 @@ export class DecalSystem {
     deselectDecal() {
         this.selectedDecalId = null;
         this.isActive = false;
+        this.isTextMode = false;
         this.updateFlipUI();
         if (this.previewGroup) this.previewGroup.visible = false;
         if (this.selectionGizmo3D) this.selectionGizmo3D.visible = false;
@@ -1942,32 +1952,54 @@ export class DecalSystem {
     }
 
     findDecalAt(canvasX, canvasY) {
-        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-        if (!activeLayer || !activeLayer.decals || activeLayer.decals.length === 0) return null;
+        if (!this.layerManager) return null;
 
-        for (let i = activeLayer.decals.length - 1; i >= 0; i--) {
-            const d = activeLayer.decals[i];
-            if (d.visible === false) continue;
+        const checkLayerDecals = (layer) => {
+            if (!layer || !layer.decals || layer.decals.length === 0) return null;
+            const hitPad = 6;
+            for (let i = layer.decals.length - 1; i >= 0; i--) {
+                const d = layer.decals[i];
+                if (d.visible === false) continue;
 
-            if (d.mode === '3d' && d.unwrappedCanvas && d.unwrappedCtx) {
-                const px = Math.floor(canvasX);
-                const py = Math.floor(canvasY);
-                if (px >= 0 && px < d.unwrappedCanvas.width && py >= 0 && py < d.unwrappedCanvas.height) {
-                    try {
-                        const pixel = d.unwrappedCtx.getImageData(px, py, 1, 1).data;
-                        if (pixel[3] > 10) return d;
-                    } catch (_) {}
+                if (d.mode === '3d' && d.unwrappedCanvas && d.unwrappedCtx) {
+                    const px = Math.floor(canvasX);
+                    const py = Math.floor(canvasY);
+                    if (px >= 0 && px < d.unwrappedCanvas.width && py >= 0 && py < d.unwrappedCanvas.height) {
+                        try {
+                            const pixel = d.unwrappedCtx.getImageData(px, py, 1, 1).data;
+                            if (pixel[3] > 10) return d;
+                        } catch (_) {}
+                    }
+                }
+
+                const dx = canvasX - d.x;
+                const dy = canvasY - d.y;
+                const cos = Math.cos(-d.rotation);
+                const sin = Math.sin(-d.rotation);
+                const lx = dx * cos - dy * sin;
+                const ly = dx * sin + dy * cos;
+                const halfW = (d.width || 20) / 2 + hitPad;
+                const halfH = (d.height || 20) / 2 + hitPad;
+                if (Math.abs(lx) <= halfW && Math.abs(ly) <= halfH) {
+                    return d;
                 }
             }
+            return null;
+        };
 
-            const dx = canvasX - d.x;
-            const dy = canvasY - d.y;
-            const cos = Math.cos(-d.rotation);
-            const sin = Math.sin(-d.rotation);
-            const lx = dx * cos - dy * sin;
-            const ly = dx * sin + dy * cos;
-            if (Math.abs(lx) <= d.width / 2 && Math.abs(ly) <= d.height / 2) {
-                return d;
+        const activeLayer = this.layerManager.getActiveLayer();
+        const found = checkLayerDecals(activeLayer);
+        if (found) return found;
+
+        if (this.layerManager.layers) {
+            for (let l = this.layerManager.layers.length - 1; l >= 0; l--) {
+                const layer = this.layerManager.layers[l];
+                if (layer === activeLayer || !layer.visible) continue;
+                const d = checkLayerDecals(layer);
+                if (d) {
+                    this.layerManager.setActiveLayer(layer.id);
+                    return d;
+                }
             }
         }
         return null;
@@ -2076,6 +2108,7 @@ export class DecalSystem {
             isBold: document.getElementById('btn-text-bold')?.classList.contains('active') ?? true,
             isItalic: document.getElementById('btn-text-italic')?.classList.contains('active') ?? false,
             color: document.getElementById('text-color')?.value || '#111111',
+            align: 'center',
             mode: currentMode
         }, opts);
 
@@ -2104,21 +2137,38 @@ export class DecalSystem {
         if (o.isBold) style += 'bold ';
         ctx.font = `${style}${renderFontSize}px "${o.fontFamily}", sans-serif`;
 
-        const txt = (o.text !== undefined && o.text !== null && o.text.length > 0) ? o.text : ' ';
-        const metrics = ctx.measureText(txt);
-        const textW = Math.max(20, Math.ceil(metrics.width));
-        const textH = Math.max(20, Math.ceil(renderFontSize * 1.25));
-        const pad = 24;
+        const rawText = (o.text !== undefined && o.text !== null && o.text.length > 0) ? String(o.text) : ' ';
+        const lines = rawText.split(/\r?\n/);
+
+        let maxLineWidth = 20;
+        for (const line of lines) {
+            const m = ctx.measureText(line || ' ');
+            if (m.width > maxLineWidth) maxLineWidth = m.width;
+        }
+
+        const lineHeight = Math.round(renderFontSize * 1.25);
+        const textW = Math.max(20, Math.ceil(maxLineWidth));
+        const textH = Math.max(20, Math.ceil(lines.length * lineHeight));
+        const pad = 28;
         offscreen.width = textW + pad * 2;
         offscreen.height = textH + pad * 2;
 
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.font = `${style}${renderFontSize}px "${o.fontFamily}", sans-serif`;
-        ctx.textAlign = 'center';
+        const align = o.align || 'center';
+        ctx.textAlign = align;
         ctx.textBaseline = 'middle';
         ctx.fillStyle = o.color || '#111111';
-        ctx.fillText(txt, offscreen.width / 2, offscreen.height / 2);
+
+        let drawX = offscreen.width / 2;
+        if (align === 'left') drawX = pad;
+        else if (align === 'right') drawX = offscreen.width - pad;
+
+        const startY = (offscreen.height / 2) - ((lines.length - 1) * lineHeight) / 2;
+        for (let i = 0; i < lines.length; i++) {
+            ctx.fillText(lines[i], drawX, startY + (i * lineHeight));
+        }
 
         this.currentDecalImage = offscreen;
 
@@ -2139,10 +2189,11 @@ export class DecalSystem {
 
         this.isActive = true;
 
-        // Dimensiones proporcionales en 2D
-        const aspect = offscreen.width / offscreen.height;
-        const target2DHeight = Math.max(20, o.fontSize * 2.5);
-        const target2DWidth = target2DHeight * aspect;
+        // Dimensiones proporcionales en 2D: escala homogénea para 1 o más líneas
+        const singleLineNominalHeight = Math.ceil(renderFontSize * 1.25) + pad * 2;
+        const fontScaleFactor = (o.fontSize * 2.5) / singleLineNominalHeight;
+        const target2DHeight = Math.max(2, offscreen.height * fontScaleFactor);
+        const target2DWidth = Math.max(2, offscreen.width * fontScaleFactor);
 
         // Sincronizar / crear objeto de texto en la capa activa
         const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
@@ -2156,7 +2207,8 @@ export class DecalSystem {
             }
 
             const dataUrl = offscreen.toDataURL('image/png');
-            const displayName = (o.text && o.text.trim()) ? `Texto: "${o.text.substring(0, 14)}"` : 'Texto';
+            const cleanText = (o.text || '').replace(/[\r\n]+/g, ' ').trim();
+            const displayName = cleanText ? `Texto: "${cleanText.substring(0, 16)}"` : 'Texto';
 
             if (!textObj) {
                 const count = (activeLayer.decals ? activeLayer.decals.filter(d => d.type === 'text').length : 0) + 1;
@@ -2232,7 +2284,7 @@ export class DecalSystem {
         }
 
         this.projectorRotation = (o.rotation * Math.PI) / 180;
-        this.projectorScale = Math.max(10, Math.min(300, (o.fontSize / 48) * 100));
+        this.projectorScale = Math.max(2, Math.min(300, (o.fontSize / 48) * 100));
 
         // Posicionamiento 3D inicial SOLO si estamos en modo 3D y aún no se ha proyectado
         if (this.mode === '3d') {
@@ -2291,7 +2343,7 @@ export class DecalSystem {
         }
     }
 
-    cancelDecal() {
+    cancelDecal(returnToPaint = true) {
         this.isActive = false;
         this.isLocked = false;
         if (this.previewGroup) this.previewGroup.visible = false;
@@ -2306,11 +2358,13 @@ export class DecalSystem {
             this.isTextMode = false;
             const textControls = document.getElementById('text-controls');
             if (textControls) textControls.style.display = 'none';
-            document.querySelectorAll('.tool-btn[data-mode]').forEach(b => b.classList.remove('active'));
-            const paintBtn = document.querySelector('.tool-btn[data-mode="paint"]');
-            if (paintBtn) paintBtn.classList.add('active');
-            const brushMode = document.getElementById('brush-mode');
-            if (brushMode) brushMode.value = 'paint';
+            if (returnToPaint) {
+                document.querySelectorAll('.tool-btn[data-mode]').forEach(b => b.classList.remove('active'));
+                const paintBtn = document.querySelector('.tool-btn[data-mode="paint"]');
+                if (paintBtn) paintBtn.classList.add('active');
+                const brushMode = document.getElementById('brush-mode');
+                if (brushMode) brushMode.value = 'paint';
+            }
         }
 
         this.canvas.style.cursor = 'default';
@@ -2997,7 +3051,7 @@ export class DecalSystem {
             if (this.isTextMode) {
                 const textFontSize = document.getElementById('text-font-size');
                 const textSizeVal = document.getElementById('text-size-val');
-                const approxFont = Math.max(14, Math.min(250, Math.round(d.height / 2.5)));
+                const approxFont = Math.max(4, Math.min(250, Math.round(d.height / 2.5)));
                 if (textFontSize) textFontSize.value = approxFont;
                 if (textSizeVal) textSizeVal.textContent = `${approxFont} px`;
                 if (this.textOptions) this.textOptions.fontSize = approxFont;

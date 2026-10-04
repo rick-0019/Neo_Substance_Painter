@@ -1,3 +1,39 @@
+/* Tipografías Militares / Especiales */
+@font-face {
+    font-family: 'AmarilloUSAF';
+    src: local('AmarilloUSAF'), local('Amarillo USAF'), url('fonts/amarurgt.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Gunplay';
+    src: local('Gunplay'), local('Gunplay-Regular'), url('fonts/gunplay%20rg.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Gunplay 3D';
+    src: local('Gunplay 3D'), local('Gunplay3D-Regular'), url('fonts/gunplay%203d.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Steiner';
+    src: local('Steiner'), url('fonts/Steiner.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Steiner';
+    src: local('Steiner Italic'), url('fonts/Steiner%20Italic.otf') format('opentype');
+    font-weight: normal;
+    font-style: italic;
+}
+
 :root {
     --bg-dark: #1e1e1e;
     --bg-ribbon: #2b2b2b;
