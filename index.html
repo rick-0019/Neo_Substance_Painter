@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neo Substance Painter - Pepakura Edition</title>
     <link rel="icon" type="image/x-icon" href="app_icon.ico">
-    <link rel="stylesheet" href="style.css?v=5.0">
+    <link rel="stylesheet" href="style.css?v=6.3">
     <script>
         window.currentShapeStrokeDash = 'solid';
         window.updateShapeStrokeDash = function(dashStyle) {
@@ -89,6 +89,13 @@
                         <div class="paint-menu-text">
                             <span>Exportar PDF A4 (1:1)</span>
                             <small>Documento para imprimir y recortar</small>
+                        </div>
+                    </div>
+                    <div class="paint-menu-item" id="btn-menu-assembler">
+                        <span class="paint-menu-icon">📦</span>
+                        <div class="paint-menu-text">
+                            <span>Ensamblador de Piezas</span>
+                            <small>Ver robot completo 3D y Álbum PDF</small>
                         </div>
                     </div>
                     <div class="paint-menu-divider"></div>
@@ -817,6 +824,16 @@
                             <span style="font-size: 9px;">PDF A4</span>
                         </button>
                     </div>
+                    <div>
+                        <button id="btn-ribbon-assembler" class="ribbon-btn" style="background: #6a1b9a; border-color: #4a148c; height: 44px; min-width: 52px; font-weight: bold; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 1px 2px;" title="Ensamblador 3D Multi-Piezas y Álbum PDF Completo">
+                            <span style="font-size: 1.1em;">📦</span>
+                            <span style="font-size: 8.5px;">Ensamblador</span>
+                        </button>
+                    </div>
+                    <div id="ribbon-assembler-piece-wrapper" style="display: none; flex-direction: column; gap: 2px;">
+                        <span style="font-size: 8px; color: #ce93d8; font-weight: bold; white-space: nowrap;">🧩 Pieza Activa:</span>
+                        <select id="ribbon-active-piece-select" class="ribbon-select" style="font-size: 9.5px; max-width: 110px; background: #2a103c; border-color: #8e24aa; color: #fff;" title="Seleccionar qué pieza del robot estás viendo y pintando en 2D"></select>
+                    </div>
                     <div style="display: flex; flex-direction: column; gap: 3px; font-size: 8.5px; white-space: nowrap;">
                         <label style="display: flex; align-items: center; gap: 2px; cursor: pointer;" title="Mostrar pestañas trapezoidales de pegado">
                             <input type="checkbox" id="ribbon-toggle-flaps" checked> Solapas
@@ -927,16 +944,26 @@
                             <div class="unfold-row">
                                 <label title="Escala relativa al tamaño base original del modelo">Escala (%):</label>
                                 <div style="display: flex; align-items: center; gap: 4px;">
-                                    <input type="number" id="unfold-scale-pct" class="unfold-input" value="100" min="10" max="1000" step="5" style="width: 65px;">
+                                    <input type="number" id="unfold-scale-pct" class="unfold-input" value="100" min="5" max="1000" step="5" style="width: 65px;">
                                     <span style="font-size: 0.8em; color: #888;">%</span>
                                 </div>
                             </div>
                             <div style="display: flex; gap: 3px; margin: 2px 0 6px 0;">
+                                <button type="button" class="btn-scale-quick size-step-btn" data-pct="20" style="flex: 1; font-size: 0.72em;" title="Escalar al 20%">20%</button>
                                 <button type="button" class="btn-scale-quick size-step-btn" data-pct="50" style="flex: 1; font-size: 0.72em;" title="Reducir al 50%">50%</button>
                                 <button type="button" class="btn-scale-quick size-step-btn" data-pct="75" style="flex: 1; font-size: 0.72em;" title="Escalar al 75%">75%</button>
-                                <button type="button" class="btn-scale-quick size-step-btn" data-pct="100" style="flex: 1; font-size: 0.72em; font-weight: bold; color: #00f3ff;" title="Tamaño Original 100%">100%</button>
+                                <button type="button" class="btn-scale-quick size-step-btn" data-pct="100" style="flex: 1; font-size: 0.72em;" title="Tamaño Original 100%">100%</button>
                                 <button type="button" class="btn-scale-quick size-step-btn" data-pct="125" style="flex: 1; font-size: 0.72em;" title="Escalar al 125%">125%</button>
                                 <button type="button" class="btn-scale-quick size-step-btn" data-pct="150" style="flex: 1; font-size: 0.72em;" title="Aumentar al 150%">150%</button>
+                            </div>
+
+                            <!-- Escala Global para Todas las Piezas del Ensamblado -->
+                            <div class="unfold-row" id="unfold-row-global-scale" style="margin: 4px 0 6px 0; padding: 4px 6px; background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 4px; display: flex; align-items: center; justify-content: space-between;">
+                                <label for="unfold-check-global-scale" style="cursor: pointer; display: flex; align-items: center; gap: 6px; color: #00e5ff; font-weight: 600; font-size: 0.75em; user-select: none;" title="Aplica el mismo porcentaje de escala a TODAS las piezas ensambladas simultáneamente">
+                                    <input type="checkbox" id="unfold-check-global-scale" checked style="accent-color: #00e5ff; cursor: pointer;">
+                                    🌐 Escala Global (Ensamble)
+                                </label>
+                                <button type="button" id="btn-unfold-sync-global-scale" class="size-step-btn" style="padding: 1px 6px; font-size: 0.70em; background: #00838f; border-color: #00e5ff; color: #fff;" title="Sincronizar todas las piezas al porcentaje actual">Sincronizar</button>
                             </div>
 
                             <!-- Medidas Físicas Editables en mm (Largo Z, Ancho X, Alto Y) -->
@@ -944,21 +971,21 @@
                                 <div class="unfold-row">
                                     <label title="Largo del modelo armado en eje Z">Largo (Z):</label>
                                     <div style="display: flex; align-items: center; gap: 4px;">
-                                        <input type="number" id="unfold-model-length" class="unfold-input" value="200" min="20" max="2000" step="1" style="width: 70px;">
+                                        <input type="number" id="unfold-model-length" class="unfold-input" value="200" min="1" max="2000" step="1" style="width: 70px;">
                                         <span style="font-size: 0.8em; color: #888;">mm</span>
                                     </div>
                                 </div>
                                 <div class="unfold-row">
                                     <label title="Envergadura / Ancho del modelo armado en eje X">Ancho (X):</label>
                                     <div style="display: flex; align-items: center; gap: 4px;">
-                                        <input type="number" id="unfold-model-width" class="unfold-input" value="134" min="10" max="2000" step="1" style="width: 70px;">
+                                        <input type="number" id="unfold-model-width" class="unfold-input" value="134" min="1" max="2000" step="1" style="width: 70px;">
                                         <span style="font-size: 0.8em; color: #888;">mm</span>
                                     </div>
                                 </div>
                                 <div class="unfold-row">
                                     <label title="Alto del modelo armado en eje Y">Alto (Y):</label>
                                     <div style="display: flex; align-items: center; gap: 4px;">
-                                        <input type="number" id="unfold-model-height" class="unfold-input" value="38" min="5" max="2000" step="1" style="width: 70px;">
+                                        <input type="number" id="unfold-model-height" class="unfold-input" value="38" min="1" max="2000" step="1" style="width: 70px;">
                                         <span style="font-size: 0.8em; color: #888;">mm</span>
                                     </div>
                                 </div>
@@ -1098,6 +1125,13 @@
                                     <option value="landscape">Horizontal (297×210)</option>
                                 </select>
                             </div>
+                            <div class="unfold-row" id="unfold-row-view-scope" style="display: none;">
+                                <label>Mesa Unfold:</label>
+                                <select id="unfold-view-scope" class="ribbon-select" style="width: 140px;" title="Ver plantillas de la pieza actual o de todo el álbum">
+                                    <option value="active" selected>Pieza Activa</option>
+                                    <option value="album">Álbum Completo (Todas)</option>
+                                </select>
+                            </div>
                             <div class="unfold-row">
                                 <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;">
                                     <input type="checkbox" id="unfold-check-a4-guide" checked> Ver guía A4 en lienzo
@@ -1121,6 +1155,7 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=5.5"></script>
+    <script type="module" src="main.js?v=6.7"></script>
+    <script type="module" src="assembler.js?v=6.7"></script>
 </body>
 </html>

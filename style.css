@@ -1429,6 +1429,19 @@ input[type=range]::-webkit-slider-runnable-track {
     color: #ffaa00;
 }
 
+/* --- Ensamblador Multi-Piezas y Álbum PDF --- */
+.assembler-piece-card:hover {
+    background-color: #282828 !important;
+    border-color: #555 !important;
+}
 
+.piece-name-input:hover {
+    background-color: #2c2c2c !important;
+    border-color: #555 !important;
+}
 
-
+.piece-name-input:focus {
+    background-color: #111 !important;
+    border-color: #00e5ff !important;
+    outline: none;
+}

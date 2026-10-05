@@ -24,6 +24,7 @@ export class PapercraftEngine {
         // Dimensiones físicas del modelo armado
         this.modelLengthMm = 200.0;
         this.baseModelLengthMm = 200.0;
+        this.scalePct = 100.0;
         this.wingspanMm = 134.0;
         this.heightMm = 38.0;
         this.ratioX = 0.67;
@@ -133,7 +134,9 @@ export class PapercraftEngine {
         this.ratioZ = sizeZ / ref3dLen;
 
         if (!this.baseModelLengthMm) {
-            this.baseModelLengthMm = this.modelLengthMm || 200.0;
+            this.baseModelLengthMm = (this.scalePct && this.scalePct !== 100 && this.scalePct > 0)
+                ? (this.modelLengthMm / (this.scalePct / 100))
+                : (this.modelLengthMm || 200.0);
         }
 
         this.wingspanMm = Math.round(this.modelLengthMm * this.ratioX * 10) / 10;
@@ -158,6 +161,7 @@ export class PapercraftEngine {
         });
         this.uvSheetSizeMm = Math.max(10, (tot3D / Math.max(1e-4, totUV)) * mmPer3D);
         this.pixelsPerMm = texSize / this.uvSheetSizeMm;
+        this.texSize = texSize;
 
         // 2. Normales 3D de cada cara
         function cross(a, b) { return [a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]]; }
@@ -625,304 +629,320 @@ export class PapercraftEngine {
         const mmToPx = 4.0;
         const sheetGapMm = 20.0;
 
-        // PASADA 1: Dibujar los fondos, marcos y reglas de TODAS las hojas A4
+        // Dibujar cada hoja A4 con su fondo, reglas y piezas correspondientes
         for (let p = 0; p < this.pagesCount; p++) {
             const pageX_px = p * (this.A4_W + sheetGapMm) * mmToPx;
-            const pageY_px = 0;
-            const pageW_px = this.A4_W * mmToPx;
-            const pageH_px = this.A4_H * mmToPx;
-            const margin_px = this.A4_MARGIN * mmToPx;
-
-            // 1. Sombra de la hoja A4
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-            ctx.shadowBlur = 16;
-            ctx.shadowOffsetX = 4;
-            ctx.shadowOffsetY = 6;
-
-            // 2. Fondo blanco puro de papel A4
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(pageX_px, pageY_px, pageW_px, pageH_px);
-            ctx.shadowColor = 'transparent';
-
-            // 3. Encabezado de página
-            ctx.font = 'bold 12px sans-serif';
-            ctx.fillStyle = '#0288d1';
-            ctx.textAlign = 'left';
-            ctx.fillText(`📄 HOJA ${p + 1} DE ${this.pagesCount} (A4 1:1) • ${this.currentScale} (${this.modelLengthMm} mm)`, pageX_px + margin_px + 4, pageY_px + 16);
-
-            // 4. Margen de seguridad de impresión de 5 mm
-            ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
-            ctx.strokeRect(pageX_px + margin_px, pageY_px + margin_px, pageW_px - margin_px * 2, pageH_px - margin_px * 2);
-            ctx.setLineDash([]);
-
-            // 5. Regla de calibración de 50 mm en cada hoja
-            this.drawRulerOnCanvas(ctx, pageX_px + margin_px + 4, pageY_px + 32, mmToPx);
+            this.renderSheetOnCanvas(ctx, p, canvas2d, pageX_px, 0, mmToPx);
         }
 
-        // PASADA 2: Dibujar todas las piezas (la pieza seleccionada o arrastrada va al final para estar siempre encima)
-        const partsToDraw = this.parts.filter(pt => pt !== this.selectedPart);
+        // Si hay una pieza seleccionada, redibujarla sobre su hoja para que sus cotas y marcas queden encima
         if (this.selectedPart) {
-            partsToDraw.push(this.selectedPart);
+            const pageX_px = this.selectedPart.layout.pageIndex * (this.A4_W + sheetGapMm) * mmToPx;
+            this.drawPartOnCanvas(ctx, this.selectedPart, canvas2d, pageX_px, 0, mmToPx, true);
         }
 
-        for (const part of partsToDraw) {
-            const pageX_px = part.layout.pageIndex * (this.A4_W + sheetGapMm) * mmToPx;
-            const pageY_px = 0;
-            const originPxX = pageX_px + part.layout.x * mmToPx;
-            const originPxY = pageY_px + part.layout.y * mmToPx;
-            const rotRad = (part.layout.rotation * Math.PI) / 180;
+        // PASADA 3: Dibujar medición interactiva de la Regla (si está activa)
+        this.drawMeasurementOnCanvas(ctx, mmToPx);
 
-            ctx.save();
-            ctx.translate(originPxX, originPxY);
-            ctx.rotate(rotRad);
+        ctx.restore();
+    }
 
-            // A) Recorte y pintura de la textura
-            if (canvas2d) {
+    /**
+     * Dibuja la línea de cota y medición activa de la regla sobre el canvas
+     */
+    drawMeasurementOnCanvas(ctx, mmToPx = 4.0) {
+        if (!this.activeMeasurement) return;
+        const m = this.activeMeasurement;
+        const x1 = m.start.x * mmToPx;
+        const y1 = m.start.y * mmToPx;
+        const x2 = m.end.x * mmToPx;
+        const y2 = m.end.y * mmToPx;
+
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 6;
+        ctx.strokeStyle = '#ffb300';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        // Puntos extremos (puntos de anclaje)
+        ctx.fillStyle = '#ffb300';
+        ctx.beginPath();
+        ctx.arc(x1, y1, 4, 0, Math.PI * 2);
+        ctx.arc(x2, y2, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Cartela / Badge con la medida exacta en milímetros
+        const midX = (x1 + x2) / 2;
+        const midY = (y1 + y2) / 2;
+        const labelText = `📏 ${m.distMm.toFixed(1)} mm (ΔX: ${m.dx.toFixed(1)}, ΔY: ${m.dy.toFixed(1)})`;
+        ctx.font = 'bold 12px sans-serif';
+        const tm = ctx.measureText(labelText);
+        const bw = tm.width + 16;
+        const bh = 22;
+
+        ctx.fillStyle = 'rgba(20, 20, 20, 0.92)';
+        ctx.strokeStyle = '#ffb300';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') {
+            ctx.roundRect(midX - bw / 2, midY - bh / 2 - 14, bw, bh, 4);
+        } else {
+            ctx.rect(midX - bw / 2, midY - bh / 2 - 14, bw, bh);
+        }
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffecb3';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(labelText, midX, midY - 14);
+        ctx.restore();
+    }
+
+    /**
+     * Renderiza una hoja A4 individual sobre un canvas 2D dado en una posición (pageX_px, pageY_px)
+     */
+    renderSheetOnCanvas(ctx, p, canvas2d, pageX_px, pageY_px = 0, mmToPx = 4.0, customHeader = null) {
+        const pageW_px = this.A4_W * mmToPx;
+        const pageH_px = this.A4_H * mmToPx;
+        const margin_px = this.A4_MARGIN * mmToPx;
+
+        // 1. Sombra de la hoja A4
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+        ctx.shadowBlur = 16;
+        ctx.shadowOffsetX = 4;
+        ctx.shadowOffsetY = 6;
+
+        // 2. Fondo blanco puro de papel A4
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(pageX_px, pageY_px, pageW_px, pageH_px);
+        ctx.shadowColor = 'transparent';
+
+        // 3. Encabezado de página
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillStyle = '#0288d1';
+        ctx.textAlign = 'left';
+        const header = customHeader || `📄 HOJA ${p + 1} DE ${this.pagesCount} (A4 1:1) • ${this.currentScale} (${this.modelLengthMm} mm)`;
+        ctx.fillText(header, pageX_px + margin_px + 4, pageY_px + 16);
+
+        // 4. Margen de seguridad de impresión de 5 mm
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(pageX_px + margin_px, pageY_px + margin_px, pageW_px - margin_px * 2, pageH_px - margin_px * 2);
+        ctx.setLineDash([]);
+
+        // 5. Regla de calibración de 50 mm en cada hoja
+        this.drawRulerOnCanvas(ctx, pageX_px + margin_px + 4, pageY_px + 32, mmToPx);
+
+        // Dibujar las piezas que pertenecen a esta hoja
+        const partsOnPage = this.parts.filter(pt => pt.layout.pageIndex === p);
+        for (const part of partsOnPage) {
+            this.drawPartOnCanvas(ctx, part, canvas2d, pageX_px, pageY_px, mmToPx, false);
+        }
+    }
+
+    /**
+     * Dibuja una pieza de papercraft individual con su textura, pliegues, solapas y cotas
+     */
+    drawPartOnCanvas(ctx, part, canvas2d, pageX_px, pageY_px, mmToPx, isSelectedOverlay = false) {
+        const originPxX = pageX_px + part.layout.x * mmToPx;
+        const originPxY = pageY_px + part.layout.y * mmToPx;
+        const rotRad = (part.layout.rotation * Math.PI) / 180;
+
+        ctx.save();
+        ctx.translate(originPxX, originPxY);
+        ctx.rotate(rotRad);
+
+        // A) Recorte y textura
+        if (canvas2d && part.localTriangles && part.localTriangles.length > 0) {
+            try {
                 ctx.save();
                 ctx.beginPath();
                 for (const tri of part.localTriangles) {
+                    if (!tri || tri.length < 3) continue;
                     ctx.moveTo(tri[0].x * mmToPx, tri[0].y * mmToPx);
                     ctx.lineTo(tri[1].x * mmToPx, tri[1].y * mmToPx);
                     ctx.lineTo(tri[2].x * mmToPx, tri[2].y * mmToPx);
                 }
                 ctx.clip();
 
-                // Mapear textura centrada
-                const ratio = mmToPx / this.pixelsPerMm;
+                const partDrawSize = (part.islandMmPerUV || this.uvSheetSizeMm || 210.0) * mmToPx;
                 ctx.drawImage(
                     canvas2d,
-                    -part.centerU * this.texSize * ratio,
-                    -(1 - part.centerV) * this.texSize * ratio,
-                    this.texSize * ratio,
-                    this.texSize * ratio
+                    -part.centerU * partDrawSize,
+                    -(1 - part.centerV) * partDrawSize,
+                    partDrawSize,
+                    partDrawSize
                 );
                 ctx.restore();
+            } catch (drawErr) {
+                console.warn('Error dibujando textura de pieza en canvas:', drawErr);
             }
+        }
 
-            // B) Líneas de pliegue interiores vivas (línea continua)
-            if (part.internalEdges && part.internalEdges.length > 0) {
+        // B) Líneas de pliegue interiores
+        if (part.internalEdges && part.internalEdges.length > 0) {
+            ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
+            ctx.lineWidth = 0.6;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            for (const edge of part.internalEdges) {
+                ctx.moveTo(edge.p1.x * mmToPx, edge.p1.y * mmToPx);
+                ctx.lineTo(edge.p2.x * mmToPx, edge.p2.y * mmToPx);
+            }
+            ctx.stroke();
+        }
+
+        // C) Solapas (Flaps)
+        if (this.showFlaps && part.tabs && part.tabs.length > 0) {
+            for (const tab of part.tabs) {
+                ctx.fillStyle = 'rgba(235, 235, 235, 0.7)';
+                ctx.beginPath();
+                ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
+                ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
+                ctx.lineTo(tab.tabP2.x * mmToPx, tab.tabP2.y * mmToPx);
+                ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.strokeStyle = this.cutLineColor || '#666666';
+                ctx.lineWidth = 0.7;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
+                ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
+                ctx.lineTo(tab.tabP2.x * mmToPx, tab.tabP2.y * mmToPx);
+                ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
+                ctx.stroke();
+
                 ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
                 ctx.lineWidth = 0.6;
                 ctx.setLineDash([]);
                 ctx.beginPath();
-                for (const edge of part.internalEdges) {
-                    ctx.moveTo(edge.p1.x * mmToPx, edge.p1.y * mmToPx);
-                    ctx.lineTo(edge.p2.x * mmToPx, edge.p2.y * mmToPx);
-                }
-                ctx.stroke();
-            }
-
-            // C) Solapas de pegado (Flaps)
-            if (this.showFlaps && part.tabs && part.tabs.length > 0) {
-                for (const tab of part.tabs) {
-                    // Relleno suave de la pestaña
-                    ctx.fillStyle = 'rgba(235, 235, 235, 0.7)';
-                    ctx.beginPath();
-                    ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
-                    ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
-                    ctx.lineTo(tab.tabP2.x * mmToPx, tab.tabP2.y * mmToPx);
-                    ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    // Línea exterior de corte de solapa
-                    ctx.strokeStyle = this.cutLineColor || '#666666';
-                    ctx.lineWidth = 0.7;
-                    ctx.setLineDash([]);
-                    ctx.beginPath();
-                    ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
-                    ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
-                    ctx.lineTo(tab.tabP2.x * mmToPx, tab.tabP2.y * mmToPx);
-                    ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
-                    ctx.stroke();
-
-                    // Línea de base (doblez - continua)
-                    ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
-                    ctx.lineWidth = 0.6;
-                    ctx.setLineDash([]);
-                    ctx.beginPath();
-                    ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
-                    ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
-                    ctx.stroke();
-
-                    // Número verde en la solapa (solo si mide al menos 4mm para no desbordar)
-                    if (this.showTabNumbers && this.numberPlacement !== 'none' && tab.seamNumber && (tab.baseLen || 10) >= 4.0) {
-                        ctx.font = 'bold 9px sans-serif';
-                        ctx.fillStyle = '#1b5e20';
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
-                        ctx.fillText(`${tab.seamNumber}`, tab.tabCenter.x * mmToPx, tab.tabCenter.y * mmToPx);
-                    }
-                }
-            }
-
-            // D) Líneas de corte perimetrales (Línea fina y tono tenue profesional)
-            ctx.strokeStyle = this.cutLineColor || '#666666';
-            ctx.lineWidth = 0.8;
-            ctx.beginPath();
-            for (const cut of part.boundaryEdges) {
-                ctx.moveTo(cut.p1.x * mmToPx, cut.p1.y * mmToPx);
-                ctx.lineTo(cut.p2.x * mmToPx, cut.p2.y * mmToPx);
-            }
-            ctx.stroke();
-
-            // Números rojos en bordes receptores (SOLO si se elije 'outside' y colocado FUERA de la pieza)
-            if (this.showTabNumbers && this.numberPlacement === 'outside') {
-                ctx.font = 'bold 8px sans-serif';
-                ctx.fillStyle = '#b71c1c';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                for (const cut of part.boundaryEdges) {
-                    if (cut.isTarget && cut.seamNumber && (cut.len || 10) >= 5.0) {
-                        const distMm = 2.5;
-                        const midX = cut.mid ? cut.mid.x : (cut.p1.x + cut.p2.x) * 0.5;
-                        const midY = cut.mid ? cut.mid.y : (cut.p1.y + cut.p2.y) * 0.5;
-                        const nx = cut.nx || 0;
-                        const ny = cut.ny || 0;
-                        const ox = (midX + nx * distMm) * mmToPx;
-                        const oy = (midY + ny * distMm) * mmToPx;
-                        ctx.fillText(`[${cut.seamNumber}]`, ox, oy);
-                    }
-                }
-            }
-
-            // E) Indicador de pieza seleccionada y Cotas de Medición (CAD)
-            if (this.selectedPart === part) {
-                const b = part.bounds;
-                const bx = b.minX * mmToPx - 4;
-                const by = b.minY * mmToPx - 4;
-                const bw = part.wMm * mmToPx + 8;
-                const bh = part.hMm * mmToPx + 8;
-
-                // 1. Recuadro cian punteado de selección
-                ctx.strokeStyle = '#00e5ff';
-                ctx.lineWidth = 1.5;
-                ctx.setLineDash([4, 2]);
-                ctx.strokeRect(bx, by, bw, bh);
-                ctx.setLineDash([]);
-
-                // 2. Cota horizontal (Ancho en mm) en la parte inferior
-                const dimOffsetY = 14;
-                const lineY = by + bh + dimOffsetY;
-                ctx.strokeStyle = '#00e5ff';
-                ctx.fillStyle = '#00e5ff';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(bx, lineY);
-                ctx.lineTo(bx + bw, lineY);
-                ctx.moveTo(bx, lineY - 3); ctx.lineTo(bx, lineY + 3);
-                ctx.moveTo(bx + bw, lineY - 3); ctx.lineTo(bx + bw, lineY + 3);
+                ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
+                ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
                 ctx.stroke();
 
-                ctx.font = 'bold 11px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'top';
-                ctx.fillText(`↔ ${part.wMm.toFixed(1)} mm`, bx + bw / 2, lineY + 3);
-
-                // 3. Cota vertical (Alto en mm) en el lateral derecho
-                const dimOffsetX = 14;
-                const lineX = bx + bw + dimOffsetX;
-                ctx.beginPath();
-                ctx.moveTo(lineX, by);
-                ctx.lineTo(lineX, by + bh);
-                ctx.moveTo(lineX - 3, by); ctx.lineTo(lineX + 3, by);
-                ctx.moveTo(lineX - 3, by + bh); ctx.lineTo(lineX + 3, by + bh);
-                ctx.stroke();
-
-                ctx.save();
-                ctx.translate(lineX + 4, by + bh / 2);
-                ctx.rotate(Math.PI / 2);
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'bottom';
-                ctx.fillText(`↕ ${part.hMm.toFixed(1)} mm`, 0, 0);
-                ctx.restore();
-
-                // 4. Cartela / Badge superior informativa de la pieza
-                const badgeText = `📐 Pieza #${part.id + 1}: ${part.wMm.toFixed(1)} × ${part.hMm.toFixed(1)} mm  (Hoja ${part.layout.pageIndex + 1})`;
-                ctx.font = 'bold 11px sans-serif';
-                const textMetrics = ctx.measureText(badgeText);
-                const badgeW = textMetrics.width + 16;
-                const badgeH = 20;
-                const badgeX = bx + bw / 2 - badgeW / 2;
-                const badgeY = by - badgeH - 8;
-
-                ctx.fillStyle = 'rgba(10, 25, 35, 0.92)';
-                ctx.strokeStyle = '#00e5ff';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                if (typeof ctx.roundRect === 'function') {
-                    ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 4);
-                } else {
-                    ctx.rect(badgeX, badgeY, badgeW, badgeH);
+                if (this.showTabNumbers && this.numberPlacement !== 'none' && tab.seamNumber && (tab.baseLen || 10) >= 4.0) {
+                    ctx.font = 'bold 9px sans-serif';
+                    ctx.fillStyle = '#1b5e20';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(`${tab.seamNumber}`, tab.tabCenter.x * mmToPx, tab.tabCenter.y * mmToPx);
                 }
-                ctx.fill();
-                ctx.stroke();
-
-                ctx.fillStyle = '#00f3ff';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(badgeText, bx + bw / 2, badgeY + badgeH / 2);
             }
-
-            ctx.restore();
         }
 
-        // PASADA 3: Dibujar medición interactiva de la Regla (si está activa)
-        if (this.activeMeasurement) {
-            const m = this.activeMeasurement;
-            const x1 = m.start.x * mmToPx;
-            const y1 = m.start.y * mmToPx;
-            const x2 = m.end.x * mmToPx;
-            const y2 = m.end.y * mmToPx;
+        // D) Líneas de corte perimetrales
+        ctx.strokeStyle = this.cutLineColor || '#666666';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        for (const cut of part.boundaryEdges) {
+            ctx.moveTo(cut.p1.x * mmToPx, cut.p1.y * mmToPx);
+            ctx.lineTo(cut.p2.x * mmToPx, cut.p2.y * mmToPx);
+        }
+        ctx.stroke();
+
+        // Números rojos receptores
+        if (this.showTabNumbers && this.numberPlacement === 'outside') {
+            ctx.font = 'bold 8px sans-serif';
+            ctx.fillStyle = '#b71c1c';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            for (const cut of part.boundaryEdges) {
+                if (cut.isTarget && cut.seamNumber && (cut.len || 10) >= 5.0) {
+                    const distMm = 2.5;
+                    const midX = cut.mid ? cut.mid.x : (cut.p1.x + cut.p2.x) * 0.5;
+                    const midY = cut.mid ? cut.mid.y : (cut.p1.y + cut.p2.y) * 0.5;
+                    const nx = cut.nx || 0;
+                    const ny = cut.ny || 0;
+                    const ox = (midX + nx * distMm) * mmToPx;
+                    const oy = (midY + ny * distMm) * mmToPx;
+                    ctx.fillText(`[${cut.seamNumber}]`, ox, oy);
+                }
+            }
+        }
+
+        // E) Selección / Cotas CAD
+        if (isSelectedOverlay || this.selectedPart === part) {
+            const b = part.bounds;
+            const bx = b.minX * mmToPx - 4;
+            const by = b.minY * mmToPx - 4;
+            const bw = part.wMm * mmToPx + 8;
+            const bh = part.hMm * mmToPx + 8;
+
+            ctx.strokeStyle = '#00e5ff';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 2]);
+            ctx.strokeRect(bx, by, bw, bh);
+            ctx.setLineDash([]);
+
+            const dimOffsetY = 14;
+            const lineY = by + bh + dimOffsetY;
+            ctx.strokeStyle = '#00e5ff';
+            ctx.fillStyle = '#00e5ff';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(bx, lineY);
+            ctx.lineTo(bx + bw, lineY);
+            ctx.moveTo(bx, lineY - 3); ctx.lineTo(bx, lineY + 3);
+            ctx.moveTo(bx + bw, lineY - 3); ctx.lineTo(bx + bw, lineY + 3);
+            ctx.stroke();
+
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(`↔ ${part.wMm.toFixed(1)} mm`, bx + bw / 2, lineY + 3);
+
+            const dimOffsetX = 14;
+            const lineX = bx + bw + dimOffsetX;
+            ctx.beginPath();
+            ctx.moveTo(lineX, by);
+            ctx.lineTo(lineX, by + bh);
+            ctx.moveTo(lineX - 3, by); ctx.lineTo(lineX + 3, by);
+            ctx.moveTo(lineX - 3, by + bh); ctx.lineTo(lineX + 3, by + bh);
+            ctx.stroke();
 
             ctx.save();
-            ctx.shadowColor = 'rgba(0,0,0,0.8)';
-            ctx.shadowBlur = 6;
-            ctx.strokeStyle = '#ffb300';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-            ctx.stroke();
+            ctx.translate(lineX + 4, by + bh / 2);
+            ctx.rotate(Math.PI / 2);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`↕ ${part.hMm.toFixed(1)} mm`, 0, 0);
+            ctx.restore();
 
-            // Puntos extremos (puntos de anclaje)
-            ctx.fillStyle = '#ffb300';
-            ctx.beginPath();
-            ctx.arc(x1, y1, 4, 0, Math.PI * 2);
-            ctx.arc(x2, y2, 4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#000000';
+            const badgeText = `📐 Pieza #${part.id + 1}: ${part.wMm.toFixed(1)} × ${part.hMm.toFixed(1)} mm  (Hoja ${part.layout.pageIndex + 1})`;
+            ctx.font = 'bold 11px sans-serif';
+            const textMetrics = ctx.measureText(badgeText);
+            const badgeW = textMetrics.width + 16;
+            const badgeH = 20;
+            const badgeX = bx + bw / 2 - badgeW / 2;
+            const badgeY = by - badgeH - 8;
+
+            ctx.fillStyle = 'rgba(10, 25, 35, 0.92)';
+            ctx.strokeStyle = '#00e5ff';
             ctx.lineWidth = 1;
-            ctx.stroke();
-
-            // Cartela / Badge con la medida exacta en milímetros
-            const midX = (x1 + x2) / 2;
-            const midY = (y1 + y2) / 2;
-            const labelText = `📏 ${m.distMm.toFixed(1)} mm (ΔX: ${m.dx.toFixed(1)}, ΔY: ${m.dy.toFixed(1)})`;
-            ctx.font = 'bold 12px sans-serif';
-            const tm = ctx.measureText(labelText);
-            const bw = tm.width + 16;
-            const bh = 22;
-
-            ctx.fillStyle = 'rgba(20, 20, 20, 0.92)';
-            ctx.strokeStyle = '#ffb300';
-            ctx.lineWidth = 1.5;
             ctx.beginPath();
             if (typeof ctx.roundRect === 'function') {
-                ctx.roundRect(midX - bw / 2, midY - bh / 2 - 14, bw, bh, 4);
+                ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 4);
             } else {
-                ctx.rect(midX - bw / 2, midY - bh / 2 - 14, bw, bh);
+                ctx.rect(badgeX, badgeY, badgeW, badgeH);
             }
             ctx.fill();
             ctx.stroke();
 
-            ctx.fillStyle = '#ffecb3';
+            ctx.fillStyle = '#00f3ff';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(labelText, midX, midY - 14);
-            ctx.restore();
+            ctx.fillText(badgeText, bx + bw / 2, badgeY + badgeH / 2);
         }
 
         ctx.restore();
@@ -951,7 +971,10 @@ export class PapercraftEngine {
     }
 
     setModelLength(lengthMm) {
-        this.modelLengthMm = Math.max(20, Math.min(1000, Number(lengthMm) || 200));
+        this.modelLengthMm = Math.max(1, Math.min(5000, Number(lengthMm) || 200));
+        if (this.baseModelLengthMm && this.baseModelLengthMm > 0) {
+            this.scalePct = Math.round((this.modelLengthMm / this.baseModelLengthMm) * 100);
+        }
         if (this.mesh) {
             this.analyzeMesh(this.mesh, this.texSize);
         }
@@ -977,60 +1000,75 @@ export class PapercraftEngine {
 
         for (let p = 0; p < this.pagesCount; p++) {
             if (p > 0) doc.addPage('a4', 'portrait');
+            this.renderPageToPDF(doc, p, canvas2d);
+        }
 
-            // Cartela técnica y regla en cada página
-            doc.saveGraphicsState();
-            doc.setDrawColor(0, 120, 215);
-            doc.setLineWidth(0.3);
-            doc.rect(margin, margin, this.A4_W - margin * 2, this.A4_H - margin * 2);
+        this.showPdfPreviewModal(doc, filename);
+    }
 
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(9);
-            doc.setTextColor(0, 120, 215);
-            doc.text(`NEO SUBSTANCE PAINTER • HOJA ${p + 1} DE ${this.pagesCount}`, margin + 60, margin + 6);
+    /**
+     * Renderiza una página individual a un documento jsPDF existente con cartela técnica, reglas y vectorizado
+     */
+    renderPageToPDF(doc, p, canvas2d, pageInfo = {}) {
+        const margin = this.A4_MARGIN;
 
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(7);
-            doc.setTextColor(80, 80, 80);
-            doc.text(`Escala: ${this.currentScale} • Longitud: ${this.modelLengthMm} mm • Envergadura: ${this.wingspanMm} mm`, margin + 60, margin + 10);
+        // Cartela técnica y regla en cada página
+        doc.saveGraphicsState();
+        doc.setDrawColor(0, 120, 215);
+        doc.setLineWidth(0.3);
+        doc.rect(margin, margin, this.A4_W - margin * 2, this.A4_H - margin * 2);
 
-            // Regla de 50 mm
-            doc.setDrawColor(0, 0, 0);
-            doc.setLineWidth(0.2);
-            doc.line(margin + 4, 15, margin + 54, 15);
-            for (let i = 0; i <= 50; i++) {
-                const h = (i % 10 === 0) ? 3.5 : (i % 5 === 0 ? 2.5 : 1.2);
-                doc.line(margin + 4 + i, 15, margin + 4 + i, 15 - h);
-            }
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(5);
-            doc.text('0', margin + 4, 18, { align: 'center' });
-            doc.text('50 mm', margin + 54, 18, { align: 'center' });
-            doc.restoreGraphicsState();
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(0, 120, 215);
+        const pieceTag = pageInfo.pieceName ? ` • ${pageInfo.pieceName.toUpperCase()}` : '';
+        const globalTag = pageInfo.globalPageIndex !== undefined 
+            ? ` • (ÁLBUM: PÁGINA ${pageInfo.globalPageIndex} DE ${pageInfo.totalGlobalPages})` 
+            : '';
+        doc.text(`NEO SUBSTANCE PAINTER${pieceTag} • HOJA ${p + 1} DE ${this.pagesCount}${globalTag}`, margin + 60, margin + 6);
 
-            // Renderizar cada pieza de esta página
-            for (const part of this.parts) {
-                if (part.layout.pageIndex !== p) continue;
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(80, 80, 80);
+        doc.text(`Escala: ${this.currentScale} • Longitud: ${this.modelLengthMm} mm • Envergadura: ${this.wingspanMm} mm`, margin + 60, margin + 10);
 
-                const originX = part.layout.x;
-                const originY = part.layout.y;
-                const rotDeg = part.layout.rotation;
-                const rotRad = (rotDeg * Math.PI) / 180;
+        // Regla de 50 mm
+        doc.setDrawColor(0, 0, 0);
+        doc.setLineWidth(0.2);
+        doc.line(margin + 4, 15, margin + 54, 15);
+        for (let i = 0; i <= 50; i++) {
+            const h = (i % 10 === 0) ? 3.5 : (i % 5 === 0 ? 2.5 : 1.2);
+            doc.line(margin + 4 + i, 15, margin + 4 + i, 15 - h);
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(5);
+        doc.text('0', margin + 4, 18, { align: 'center' });
+        doc.text('50 mm', margin + 54, 18, { align: 'center' });
+        doc.restoreGraphicsState();
 
-                const toPageMm = (pt) => {
-                    const rx = pt.x * Math.cos(rotRad) - pt.y * Math.sin(rotRad);
-                    const ry = pt.x * Math.sin(rotRad) + pt.y * Math.cos(rotRad);
-                    return { x: originX + rx, y: originY + ry };
-                };
-                const toPageDir = (dir) => {
-                    const rx = dir.x * Math.cos(rotRad) - dir.y * Math.sin(rotRad);
-                    const ry = dir.x * Math.sin(rotRad) + dir.y * Math.cos(rotRad);
-                    return { x: rx, y: ry };
-                };
+        // Renderizar cada pieza de esta página
+        for (const part of this.parts) {
+            if (part.layout.pageIndex !== p) continue;
 
-                // A) Textura raster de la pieza
-                if (canvas2d) {
-                    const tempCanvas = document.createElement('canvas');
+            const originX = part.layout.x;
+            const originY = part.layout.y;
+            const rotDeg = part.layout.rotation;
+            const rotRad = (rotDeg * Math.PI) / 180;
+
+            const toPageMm = (pt) => {
+                const rx = pt.x * Math.cos(rotRad) - pt.y * Math.sin(rotRad);
+                const ry = pt.x * Math.sin(rotRad) + pt.y * Math.cos(rotRad);
+                return { x: originX + rx, y: originY + ry };
+            };
+            const toPageDir = (dir) => {
+                const rx = dir.x * Math.cos(rotRad) - dir.y * Math.sin(rotRad);
+                const ry = dir.x * Math.sin(rotRad) + dir.y * Math.cos(rotRad);
+                return { x: rx, y: ry };
+            };
+
+            // A) Textura raster de la pieza
+            if (canvas2d && part.localTriangles && part.localTriangles.length > 0) {
+                try {
                     const padPx = 4;
                     const cosR = Math.cos(rotRad);
                     const sinR = Math.sin(rotRad);
@@ -1039,155 +1077,161 @@ export class PapercraftEngine {
                     let minRx = Infinity, maxRx = -Infinity;
                     let minRy = Infinity, maxRy = -Infinity;
                     for (const tri of part.localTriangles) {
-                        for (const p of tri) {
-                            const rx = p.x * cosR - p.y * sinR;
-                            const ry = p.x * sinR + p.y * cosR;
+                        if (!tri || tri.length < 3) continue;
+                        for (const pt of tri) {
+                            const rx = pt.x * cosR - pt.y * sinR;
+                            const ry = pt.x * sinR + pt.y * cosR;
                             minRx = Math.min(minRx, rx); maxRx = Math.max(maxRx, rx);
                             minRy = Math.min(minRy, ry); maxRy = Math.max(maxRy, ry);
                         }
                     }
 
-                    const bW_px = Math.max(8, Math.ceil((maxRx - minRx) * this.pixelsPerMm) + padPx * 2);
-                    const bH_px = Math.max(8, Math.ceil((maxRy - minRy) * this.pixelsPerMm) + padPx * 2);
-                    tempCanvas.width = bW_px;
-                    tempCanvas.height = bH_px;
-                    const tCtx = tempCanvas.getContext('2d');
-                    tCtx.imageSmoothingEnabled = true;
-                    tCtx.imageSmoothingQuality = 'high';
+                    if (isFinite(minRx) && isFinite(maxRx) && isFinite(minRy) && isFinite(maxRy)) {
+                        const pxPerMm = (this.pixelsPerMm && this.pixelsPerMm > 0) ? this.pixelsPerMm : 10.0;
+                        const bW_px = Math.max(16, Math.ceil((maxRx - minRx) * pxPerMm) + padPx * 2);
+                        const bH_px = Math.max(16, Math.ceil((maxRy - minRy) * pxPerMm) + padPx * 2);
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = bW_px;
+                        tempCanvas.height = bH_px;
+                        const tCtx = tempCanvas.getContext('2d');
+                        tCtx.imageSmoothingEnabled = true;
+                        tCtx.imageSmoothingQuality = 'high';
 
-                    // Situar origen y rotar directamente dentro del canvas antes de dibujar
-                    tCtx.translate(-minRx * this.pixelsPerMm + padPx, -minRy * this.pixelsPerMm + padPx);
-                    tCtx.rotate(rotRad);
+                        // Situar origen y rotar directamente dentro del canvas antes de dibujar
+                        tCtx.translate(-minRx * pxPerMm + padPx, -minRy * pxPerMm + padPx);
+                        tCtx.rotate(rotRad);
 
-                    // Recorte vectorial de triángulos
-                    tCtx.beginPath();
-                    for (const tri of part.localTriangles) {
-                        tCtx.moveTo(tri[0].x * this.pixelsPerMm, tri[0].y * this.pixelsPerMm);
-                        tCtx.lineTo(tri[1].x * this.pixelsPerMm, tri[1].y * this.pixelsPerMm);
-                        tCtx.lineTo(tri[2].x * this.pixelsPerMm, tri[2].y * this.pixelsPerMm);
-                    }
-                    tCtx.clip();
+                        // Recorte vectorial de triángulos
+                        tCtx.beginPath();
+                        for (const tri of part.localTriangles) {
+                            if (!tri || tri.length < 3) continue;
+                            tCtx.moveTo(tri[0].x * pxPerMm, tri[0].y * pxPerMm);
+                            tCtx.lineTo(tri[1].x * pxPerMm, tri[1].y * pxPerMm);
+                            tCtx.lineTo(tri[2].x * pxPerMm, tri[2].y * pxPerMm);
+                        }
+                        tCtx.clip();
 
-                    const texScale = (part.islandMmPerUV ? (part.islandMmPerUV / this.uvSheetSizeMm) : 1.0);
-                    const drawTexSize = this.texSize * texScale;
+                        const partDrawSize = (part.islandMmPerUV || this.uvSheetSizeMm || 210.0) * pxPerMm;
 
-                    tCtx.drawImage(
-                        canvas2d,
-                        -part.centerU * drawTexSize,
-                        -(1 - part.centerV) * drawTexSize,
-                        drawTexSize,
-                        drawTexSize
-                    );
+                        tCtx.drawImage(
+                            canvas2d,
+                            -part.centerU * partDrawSize,
+                            -(1 - part.centerV) * partDrawSize,
+                            partDrawSize,
+                            partDrawSize
+                        );
 
-                    const partImgData = tempCanvas.toDataURL('image/png', 1.0);
-                    const drawW_mm = bW_px / this.pixelsPerMm;
-                    const drawH_mm = bH_px / this.pixelsPerMm;
-                    const drawX_mm = originX + minRx - padPx / this.pixelsPerMm;
-                    const drawY_mm = originY + minRy - padPx / this.pixelsPerMm;
+                        const partImgData = tempCanvas.toDataURL('image/png', 0.95);
+                        const drawW_mm = bW_px / pxPerMm;
+                        const drawH_mm = bH_px / pxPerMm;
+                        const drawX_mm = originX + minRx - padPx / pxPerMm;
+                        const drawY_mm = originY + minRy - padPx / pxPerMm;
 
-                    // Insertar en jsPDF ya rotado (rotación 0), asegurando alineación perfecta sin bugs de jsPDF
-                    doc.addImage(
-                        partImgData,
-                        'PNG',
-                        drawX_mm,
-                        drawY_mm,
-                        drawW_mm,
-                        drawH_mm,
-                        undefined,
-                        'FAST',
-                        0
-                    );
-                }
-
-                // B) Pliegues vivos (línea continua)
-                if (part.internalEdges && part.internalEdges.length > 0) {
-                    doc.setDrawColor(80, 80, 80);
-                    doc.setLineWidth(0.12);
-                    doc.setLineDash([], 0);
-                    for (const edge of part.internalEdges) {
-                        const pA = toPageMm(edge.p1);
-                        const pB = toPageMm(edge.p2);
-                        doc.line(pA.x, pA.y, pB.x, pB.y);
-                    }
-                }
-
-                const hex = this.cutLineColor || '#666666';
-                const r = parseInt(hex.slice(1, 3), 16) || 100;
-                const g = parseInt(hex.slice(3, 5), 16) || 100;
-                const b = parseInt(hex.slice(5, 7), 16) || 100;
-
-                // C) Solapas vectoriales
-                if (this.showFlaps && part.tabs && part.tabs.length > 0) {
-                    for (const tab of part.tabs) {
-                        const b1 = toPageMm(tab.baseP1);
-                        const t1 = toPageMm(tab.tabP1);
-                        const t2 = toPageMm(tab.tabP2);
-                        const b2 = toPageMm(tab.baseP2);
-                        const tc = toPageMm(tab.tabCenter);
-
-                        doc.setDrawColor(r, g, b);
-                        doc.setLineWidth(this.cutLineWidthMm || 0.10);
-                        doc.setLineDash([], 0);
-                        doc.line(b1.x, b1.y, t1.x, t1.y);
-                        doc.line(t1.x, t1.y, t2.x, t2.y);
-                        doc.line(t2.x, t2.y, b2.x, b2.y);
-
-                        doc.setDrawColor(140, 140, 140);
-                        doc.setLineWidth(this.foldLineWidthMm || 0.08);
-                        doc.setLineDash([], 0);
-                        doc.line(b1.x, b1.y, b2.x, b2.y);
-
-                        if (this.showTabNumbers && this.numberPlacement !== 'none' && tab.seamNumber && (tab.baseLen || 10) >= 4.0) {
-                            doc.setFont('helvetica', 'bold');
-                            doc.setFontSize(6);
-                            doc.setTextColor(27, 94, 32);
-                            doc.text(`${tab.seamNumber}`, tc.x, tc.y, { align: 'center', baseline: 'middle' });
+                        if (isFinite(drawX_mm) && isFinite(drawY_mm) && isFinite(drawW_mm) && isFinite(drawH_mm) && drawW_mm > 0 && drawH_mm > 0) {
+                            doc.addImage(
+                                partImgData,
+                                'PNG',
+                                drawX_mm,
+                                drawY_mm,
+                                drawW_mm,
+                                drawH_mm,
+                                undefined,
+                                'FAST',
+                                0
+                            );
                         }
                     }
+                } catch (texErr) {
+                    console.warn('Error rasterizando textura de pieza para PDF:', texErr);
                 }
+            }
 
-                // D) Cortes exteriores (Hairline ultra-fino y tono tenue profesional)
-                doc.setDrawColor(r, g, b);
-                doc.setLineWidth(this.cutLineWidthMm || 0.10);
+            // B) Pliegues vivos (línea continua)
+            if (part.internalEdges && part.internalEdges.length > 0) {
+                doc.setDrawColor(80, 80, 80);
+                doc.setLineWidth(0.12);
                 doc.setLineDash([], 0);
-                for (const cut of part.boundaryEdges) {
-                    const pA = toPageMm(cut.p1);
-                    const pB = toPageMm(cut.p2);
+                for (const edge of part.internalEdges) {
+                    const pA = toPageMm(edge.p1);
+                    const pB = toPageMm(edge.p2);
                     doc.line(pA.x, pA.y, pB.x, pB.y);
+                }
+            }
 
-                    if (this.showTabNumbers && this.numberPlacement === 'outside' && cut.isTarget && cut.seamNumber && (cut.len || 10) >= 5.0) {
-                        const midLocal = cut.mid || { x: (cut.p1.x + cut.p2.x) * 0.5, y: (cut.p1.y + cut.p2.y) * 0.5 };
-                        const nx = cut.nx || 0;
-                        const ny = cut.ny || 0;
-                        const midPage = toPageMm(midLocal);
-                        const normPage = toPageDir({ x: nx, y: ny });
-                        const distMm = 2.5;
-                        const ox = midPage.x + normPage.x * distMm;
-                        const oy = midPage.y + normPage.y * distMm;
+            const hex = this.cutLineColor || '#666666';
+            const r = parseInt(hex.slice(1, 3), 16) || 100;
+            const g = parseInt(hex.slice(3, 5), 16) || 100;
+            const b = parseInt(hex.slice(5, 7), 16) || 100;
 
+            // C) Solapas vectoriales
+            if (this.showFlaps && part.tabs && part.tabs.length > 0) {
+                for (const tab of part.tabs) {
+                    const b1 = toPageMm(tab.baseP1);
+                    const t1 = toPageMm(tab.tabP1);
+                    const t2 = toPageMm(tab.tabP2);
+                    const b2 = toPageMm(tab.baseP2);
+                    const tc = toPageMm(tab.tabCenter);
+
+                    doc.setDrawColor(r, g, b);
+                    doc.setLineWidth(this.cutLineWidthMm || 0.10);
+                    doc.setLineDash([], 0);
+                    doc.line(b1.x, b1.y, t1.x, t1.y);
+                    doc.line(t1.x, t1.y, t2.x, t2.y);
+                    doc.line(t2.x, t2.y, b2.x, b2.y);
+
+                    doc.setDrawColor(140, 140, 140);
+                    doc.setLineWidth(this.foldLineWidthMm || 0.08);
+                    doc.setLineDash([], 0);
+                    doc.line(b1.x, b1.y, b2.x, b2.y);
+
+                    if (this.showTabNumbers && this.numberPlacement !== 'none' && tab.seamNumber && (tab.baseLen || 10) >= 4.0) {
                         doc.setFont('helvetica', 'bold');
-                        doc.setFontSize(5.5);
-                        doc.setTextColor(183, 28, 28);
-                        doc.text(`[${cut.seamNumber}]`, ox, oy, { align: 'center', baseline: 'middle' });
+                        doc.setFontSize(6);
+                        doc.setTextColor(27, 94, 32);
+                        doc.text(`${tab.seamNumber}`, tc.x, tc.y, { align: 'center', baseline: 'middle' });
                     }
                 }
             }
 
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(7);
-            doc.setTextColor(100, 100, 100);
-            doc.text(
-                `NEO SUBSTANCE PAINTER • PLANTILLA 1:1 (A4) • HOJA ${p + 1} DE ${this.pagesCount} • MARGEN: 5mm • NO REESCALAR (100%)`,
-                this.A4_W / 2,
-                this.A4_H - 4,
-                { align: 'center' }
-            );
-        }
+            // D) Cortes exteriores (Hairline ultra-fino y tono tenue profesional)
+            doc.setDrawColor(r, g, b);
+            doc.setLineWidth(this.cutLineWidthMm || 0.10);
+            doc.setLineDash([], 0);
+            for (const cut of part.boundaryEdges) {
+                const pA = toPageMm(cut.p1);
+                const pB = toPageMm(cut.p2);
+                doc.line(pA.x, pA.y, pB.x, pB.y);
 
-        this.showPdfPreviewModal(doc, filename);
-    }
+                if (this.showTabNumbers && this.numberPlacement === 'outside' && cut.isTarget && cut.seamNumber && (cut.len || 10) >= 5.0) {
+                    const midLocal = cut.mid || { x: (cut.p1.x + cut.p2.x) * 0.5, y: (cut.p1.y + cut.p2.y) * 0.5 };
+                    const nx = cut.nx || 0;
+                    const ny = cut.ny || 0;
+                    const midPage = toPageMm(midLocal);
+                    const normPage = toPageDir({ x: nx, y: ny });
+                    const distMm = 2.5;
+                    const ox = midPage.x + normPage.x * distMm;
+                    const oy = midPage.y + normPage.y * distMm;
 
-    showPdfPreviewModal(doc, filename) {
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(5.5);
+                    doc.setTextColor(183, 28, 28);
+                    doc.text(`[${cut.seamNumber}]`, ox, oy, { align: 'center', baseline: 'middle' });
+                }
+            }
+        } // Fin de for (const part of this.parts)
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(100, 100, 100);
+        doc.text(
+            `NEO SUBSTANCE PAINTER • PLANTILLA 1:1 (A4) • HOJA ${p + 1} DE ${this.pagesCount}${globalTag} • MARGEN: 5mm • NO REESCALAR (100%)`,
+            this.A4_W / 2,
+            this.A4_H - 4,
+            { align: 'center' }
+        );
+    } // Fin de renderPageToPDF
+
+    showPdfPreviewModal(doc, filename, totalPages = null) {
         const blob = doc.output('blob');
         const blobUrl = URL.createObjectURL(blob);
 
@@ -1221,7 +1265,8 @@ export class PapercraftEngine {
             });
         }
 
-        document.getElementById('pdf-preview-filename').textContent = `Archivo: ${filename} • ${this.pagesCount} Hojas A4 (1:1) • Modelo: ${this.modelLengthMm} mm`;
+        const pagesText = totalPages ? `${totalPages} Páginas` : `${this.pagesCount} Hojas A4 (1:1)`;
+        document.getElementById('pdf-preview-filename').textContent = `Archivo: ${filename} • ${pagesText} • Modelo: ${Math.round(this.modelLengthMm)} mm`;
         document.getElementById('pdf-preview-iframe').src = blobUrl;
 
         const btnDownload = document.getElementById('btn-pdf-preview-download');
