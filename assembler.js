@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { PapercraftEngine } from './papercraft.js?v=6.3';
+import { PapercraftEngine } from './papercraft.js?v=7.0';
 
 export class ModelAssembler {
     constructor() {
@@ -49,12 +49,19 @@ export class ModelAssembler {
                     <!-- Barra de Acciones Principales -->
                     <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 20px; background: #2a2a2a; border-bottom: 1px solid #383838;">
                         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
-                            <input type="file" id="input-assembler-files" accept=".nsp,.json,.obj" multiple style="display: none;">
+                            <input type="file" id="input-assembler-files" accept=".nsp,.json,.obj,.nspp" multiple style="display: none;">
                             <button type="button" id="btn-assembler-add-file" class="ribbon-btn" style="background: #0288d1; border-color: #0277bd; font-weight: bold; padding: 6px 14px; font-size: 12px; display: flex; align-items: center; gap: 6px;" title="Cargar una o más piezas (.nsp pintadas o .obj)">
                                 <span>➕</span> Cargar Pieza (.nsp / .obj)
                             </button>
                             <button type="button" id="btn-assembler-add-current" class="ribbon-btn" style="background: #e65100; border-color: #bf360c; font-weight: bold; padding: 6px 12px; font-size: 12px; display: flex; align-items: center; gap: 6px;" title="Añadir la pieza que tienes abierta actualmente en el editor">
                                 <span>📌</span> Sumar Pieza Actual del Editor
+                            </button>
+                            <button type="button" id="btn-assembler-save-project" class="ribbon-btn" style="background: #1565c0; border-color: #0d47a1; font-weight: bold; padding: 6px 12px; font-size: 12px; display: flex; align-items: center; gap: 6px;" title="Guardar todo el proyecto ensamblado con todas las piezas y hojas (.nspp)">
+                                <span>💾</span> Guardar Proyecto (.nspp)
+                            </button>
+                            <input type="file" id="input-assembler-project-file" accept=".nspp,.json" style="display: none;">
+                            <button type="button" id="btn-assembler-load-project" class="ribbon-btn" style="background: #37474f; border-color: #263238; font-weight: bold; padding: 6px 12px; font-size: 12px; display: flex; align-items: center; gap: 6px;" title="Abrir un proyecto ensamblado completo (.nspp)">
+                                <span>📂</span> Abrir Proyecto (.nspp)
                             </button>
                             <button type="button" id="btn-assembler-clear" class="ribbon-btn" style="background: #444; border-color: #555; padding: 6px 10px; font-size: 11px;" title="Vaciar la lista de piezas">
                                 🗑️ Vaciar
@@ -186,6 +193,26 @@ export class ModelAssembler {
         // Botón Sumar Pieza Actual del Editor
         document.getElementById('btn-assembler-add-current')?.addEventListener('click', () => {
             this.addCurrentPieceFromEditor();
+        });
+
+        // Botón Guardar Proyecto Ensamblado (.nspp)
+        document.getElementById('btn-assembler-save-project')?.addEventListener('click', () => {
+            this.exportAssemblyProject();
+        });
+
+        // Botón Abrir Proyecto Ensamblado (.nspp)
+        const projectFileInput = document.getElementById('input-assembler-project-file');
+        document.getElementById('btn-assembler-load-project')?.addEventListener('click', () => {
+            if (projectFileInput) {
+                projectFileInput.value = '';
+                projectFileInput.click();
+            }
+        });
+        projectFileInput?.addEventListener('change', async (e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+                await this.loadAssemblyProject(file);
+            }
         });
 
         // Botón Vaciar
@@ -457,6 +484,14 @@ export class ModelAssembler {
 
         // 3. Sincronizar papercraft layout persistente
         if (piece.papercraft && piece.papercraft.parts) {
+            if (window.papercraft && window.papercraft.parts) {
+                window.papercraft.parts.forEach(srcPart => {
+                    const destPart = piece.papercraft.parts.find(p => p.id === srcPart.id);
+                    if (destPart && srcPart.layout) {
+                        destPart.layout = { ...srcPart.layout };
+                    }
+                });
+            }
             if (piece.projectData && piece.projectData.papercraft) {
                 piece.projectData.papercraft.pagesCount = piece.papercraft.pagesCount;
                 piece.projectData.papercraft.partsLayout = piece.papercraft.parts.map(p => ({
@@ -633,6 +668,100 @@ export class ModelAssembler {
     }
 
     /**
+     * Obtiene el número total de hojas A4 globales del ensamble
+     */
+    getTotalSheets() {
+        const activePieces = this.pieces.filter(p => p.visible !== false);
+        let maxIdx = -1;
+        activePieces.forEach(p => {
+            if (p.papercraft && p.papercraft.parts) {
+                p.papercraft.parts.forEach(pt => {
+                    if (pt.layout && typeof pt.layout.pageIndex === 'number') {
+                        if (pt.layout.pageIndex > maxIdx) maxIdx = pt.layout.pageIndex;
+                    }
+                });
+            }
+        });
+        const minNeeded = maxIdx + 1;
+        if (this.sheetsCount === undefined || this.sheetsCount === null || this.sheetsCount < minNeeded) {
+            this.sheetsCount = Math.max(1, minNeeded);
+        }
+        return this.sheetsCount;
+    }
+
+    /**
+     * Añade una nueva hoja A4 vacía al final del ensamble
+     */
+    addSheet() {
+        this.sheetsCount = this.getTotalSheets() + 1;
+        this.updateStatsBadge();
+        this.renderUI();
+    }
+
+    /**
+     * Limpia y compacta las hojas A4 vacías en todo el ensamble
+     */
+    cleanEmptySheets() {
+        this.saveActivePieceToCache();
+
+        const activePieces = this.pieces.filter(p => p.visible !== false);
+        if (activePieces.length === 0) return 0;
+
+        const currentTotal = this.getTotalSheets();
+        const usedSheets = new Set();
+        activePieces.forEach(p => {
+            if (p.papercraft && p.papercraft.parts) {
+                p.papercraft.parts.forEach(pt => {
+                    if (pt.layout && typeof pt.layout.pageIndex === 'number') {
+                        usedSheets.add(pt.layout.pageIndex);
+                    }
+                });
+            }
+        });
+
+        const sortedUsed = Array.from(usedSheets).sort((a, b) => a - b);
+        const remap = new Map();
+        sortedUsed.forEach((oldIdx, newIdx) => {
+            remap.set(oldIdx, newIdx);
+        });
+
+        activePieces.forEach(p => {
+            if (p.papercraft && p.papercraft.parts) {
+                p.papercraft.parts.forEach(pt => {
+                    if (pt.layout && typeof pt.layout.pageIndex === 'number') {
+                        pt.layout.pageIndex = remap.get(pt.layout.pageIndex) ?? 0;
+                    }
+                });
+                const pieceSheets = new Set(p.papercraft.parts.map(pt => pt.layout.pageIndex));
+                p.papercraft.pagesCount = Math.max(1, pieceSheets.size);
+                p.papercraft.notifyChange();
+            }
+        });
+
+        this.sheetsCount = Math.max(1, sortedUsed.length);
+
+        // Sincronizar también con el motor global window.papercraft
+        if (window.papercraft) {
+            if (window.papercraft.parts) {
+                window.papercraft.parts.forEach(pt => {
+                    if (pt.layout && typeof pt.layout.pageIndex === 'number') {
+                        pt.layout.pageIndex = remap.get(pt.layout.pageIndex) ?? 0;
+                    }
+                });
+            }
+            window.papercraft.pagesCount = this.sheetsCount;
+            if (typeof window.papercraft.notifyChange === 'function') window.papercraft.notifyChange();
+        }
+
+        const removed = Math.max(0, currentTotal - this.sheetsCount);
+        this.updateStatsBadge();
+        this.renderUI();
+        if (typeof window.updatePapercraftUI === 'function') window.updatePapercraftUI();
+        if (typeof window.renderUnfoldWorkbench === 'function') window.renderUnfoldWorkbench();
+        return removed;
+    }
+
+    /**
      * Detecta qué pieza de qué modelo ensamblado está debajo del cursor del ratón
      */
     getPartAt(canvasX, canvasY, viewScale = 4.0) {
@@ -649,15 +778,13 @@ export class ModelAssembler {
         const mouseMmX = (canvasX - panX) / (zoom * viewScale);
         const mouseMmY = (canvasY - panY) / (zoom * viewScale);
 
-        let globalSheet = 0;
-        for (const piece of activePieces) {
+        // Búsqueda en orden inverso priorizando la pieza seleccionada
+        const sel = window.papercraft?.selectedPart;
+        for (let pi = activePieces.length - 1; pi >= 0; pi--) {
+            const piece = activePieces[pi];
             if (!piece.papercraft || !piece.papercraft.parts) continue;
-            const pCount = piece.papercraft.pagesCount || 1;
-            const pieceStartSheet = globalSheet;
 
-            // Priorizar la pieza seleccionada si pertenece a este modelo
             const searchOrder = [...piece.papercraft.parts];
-            const sel = window.papercraft?.selectedPart;
             if (sel && searchOrder.includes(sel)) {
                 const idx = searchOrder.indexOf(sel);
                 if (idx > -1) {
@@ -668,9 +795,8 @@ export class ModelAssembler {
 
             for (let i = searchOrder.length - 1; i >= 0; i--) {
                 const part = searchOrder[i];
-                const p = part.layout.pageIndex;
-                const partGlobalSheet = pieceStartSheet + p;
-                const pageOffsetMmX = partGlobalSheet * pagePitchMm;
+                const s = part.layout.pageIndex || 0;
+                const pageOffsetMmX = s * pagePitchMm;
                 const pageMmX = mouseMmX - pageOffsetMmX;
                 const pageMmY = mouseMmY;
 
@@ -685,16 +811,15 @@ export class ModelAssembler {
                     return {
                         part,
                         piece,
-                        localPageIndex: p,
-                        globalPageIndex: partGlobalSheet,
-                        pieceStartSheet,
+                        pageIndex: s,
+                        localPageIndex: s,
+                        globalPageIndex: s,
+                        pieceStartSheet: 0,
                         localX: lx,
                         localY: ly
                     };
                 }
             }
-
-            globalSheet += pCount;
         }
 
         return null;
@@ -728,40 +853,63 @@ export class ModelAssembler {
             const mmToPx = 4.0;
             const sheetGapMm = 20.0;
             const A4_W = 210.0;
-            let globalSheet = 0;
+            const pagePitchMm = A4_W + sheetGapMm;
+            const totalSheets = this.getTotalSheets();
+            const totalAlbumPages = totalSheets + (this.includeCover ? 1 : 0);
 
-            const totalSheets = activePieces.reduce((acc, p) => acc + (p.papercraft?.pagesCount || 1), 0);
+            // Auto-sanitizar coordenadas desfasadas o negativas en piezas
+            activePieces.forEach(piece => {
+                if (piece.papercraft && piece.papercraft.parts) {
+                    piece.papercraft.parts.forEach(part => {
+                        if (part.layout) {
+                            if (part.layout.x < 0 || part.layout.x > A4_W) {
+                                const sheetShift = Math.floor(part.layout.x / pagePitchMm);
+                                if (sheetShift !== 0) {
+                                    part.layout.pageIndex = Math.max(0, (part.layout.pageIndex || 0) + sheetShift);
+                                    part.layout.x = Math.max(10, Math.min(A4_W - 10, part.layout.x - sheetShift * pagePitchMm));
+                                }
+                            }
+                        }
+                    });
+                }
+            });
 
             // PASADA 1: Dibujar cada hoja A4 con sus piezas
-            for (const piece of activePieces) {
-                if (!piece.papercraft) continue;
-                const pCount = piece.papercraft.pagesCount || 1;
-                for (let p = 0; p < pCount; p++) {
-                    const pageX_px = globalSheet * (A4_W + sheetGapMm) * mmToPx;
-                    const header = `📦 [${piece.name}] • HOJA ${p + 1} DE ${pCount} • (ÁLBUM: PÁG. ${globalSheet + 1} DE ${totalSheets})`;
-                    try {
-                        piece.papercraft.renderSheetOnCanvas(ctx, p, piece.textureCanvas, pageX_px, 0, mmToPx, header);
-                    } catch (sheetErr) {
-                        console.warn(`Error al renderizar hoja ${p + 1} de ${piece.name}:`, sheetErr);
+            for (let s = 0; s < totalSheets; s++) {
+                const pageX_px = s * pagePitchMm * mmToPx;
+                const piecesOnSheet = activePieces.filter(p => p.papercraft && p.papercraft.parts.some(pt => pt.layout.pageIndex === s));
+                const title = piecesOnSheet.length > 0 ? piecesOnSheet.map(p => p.name).join(', ') : 'HOJA VACÍA';
+                const albumPageNum = s + (this.includeCover ? 2 : 1);
+                const header = `📦 [${title}] • HOJA ${s + 1} DE ${totalSheets} • (ÁLBUM: PÁG. ${albumPageNum} DE ${totalAlbumPages})`;
+
+                const refEngine = activePieces[0]?.papercraft || window.papercraft;
+                if (refEngine) {
+                    refEngine.renderSheetBackgroundOnCanvas(ctx, pageX_px, 0, mmToPx, header);
+                }
+
+                for (const piece of activePieces) {
+                    if (!piece.papercraft) continue;
+                    const partsOnSheet = piece.papercraft.parts.filter(pt => pt.layout.pageIndex === s);
+                    for (const part of partsOnSheet) {
+                        try {
+                            piece.papercraft.drawPartOnCanvas(ctx, part, piece.textureCanvas, pageX_px, 0, mmToPx, false);
+                        } catch (sheetErr) {
+                            console.warn(`Error al renderizar pieza de ${piece.name} en hoja ${s + 1}:`, sheetErr);
+                        }
                     }
-                    globalSheet++;
                 }
             }
 
             // PASADA 2: Dibujar pieza seleccionada en primer plano con sus cotas de selección
             const selPart = window.papercraft?.selectedPart;
             if (selPart) {
-                let sheetIdx = 0;
-                for (const piece of activePieces) {
-                    if (piece.papercraft && piece.papercraft.parts.includes(selPart)) {
-                        const targetSheet = sheetIdx + (selPart.layout.pageIndex || 0);
-                        const pageX_px = targetSheet * (A4_W + sheetGapMm) * mmToPx;
-                        try {
-                            piece.papercraft.drawPartOnCanvas(ctx, selPart, piece.textureCanvas, pageX_px, 0, mmToPx, true);
-                        } catch (e) {}
-                        break;
-                    }
-                    sheetIdx += (piece.papercraft?.pagesCount || 1);
+                const targetSheet = selPart.layout.pageIndex || 0;
+                const pageX_px = targetSheet * pagePitchMm * mmToPx;
+                const owningPiece = activePieces.find(p => p.papercraft && p.papercraft.parts.includes(selPart));
+                if (owningPiece) {
+                    try {
+                        owningPiece.papercraft.drawPartOnCanvas(ctx, selPart, owningPiece.textureCanvas, pageX_px, 0, mmToPx, true);
+                    } catch (e) {}
                 }
             }
 
@@ -786,12 +934,17 @@ export class ModelAssembler {
             const rawText = await file.text();
             const pieceName = fileName.replace(/\.[^/.]+$/, '');
 
-            if (ext === 'nsp' || ext === 'json') {
+            if (ext === 'nspp') {
+                return await this.loadAssemblyProject(rawText);
+            } else if (ext === 'nsp' || ext === 'json') {
+                if (rawText.includes('"neo_substance_assembler_project"')) {
+                    return await this.loadAssemblyProject(rawText);
+                }
                 return await this.loadNSPPiece(rawText, pieceName);
             } else if (ext === 'obj') {
                 return await this.loadOBJPiece(rawText, pieceName);
             } else {
-                alert(`Formato .${ext} no compatible. Por favor sube un archivo .nsp o .obj.`);
+                alert(`Formato .${ext} no compatible. Por favor sube un archivo .nsp, .obj o .nspp.`);
                 return null;
             }
         } catch (err) {
@@ -1027,12 +1180,23 @@ export class ModelAssembler {
         if (this.group) {
             this.group.add(piece.mesh);
         }
+
+        // Si ya hay piezas existentes en el ensamble, colocar las piezas nuevas en la siguiente hoja disponible
+        if (this.pieces.length > 0 && !piece._skipAutoSheetOffset && piece.papercraft && piece.papercraft.parts) {
+            const offset = this.getTotalSheets();
+            piece.papercraft.parts.forEach(pt => {
+                pt.layout.pageIndex = (pt.layout.pageIndex || 0) + offset;
+            });
+            this.sheetsCount = offset + (piece.papercraft.pagesCount || 1);
+        }
+
         this.pieces.push(piece);
 
         if (!this.activePieceId) {
             this.activePieceId = piece.id;
         }
         this.updateActivePieceSelectors();
+        this.updateStatsBadge();
         this.renderUI();
 
         if (this.is3DMode && this.group && typeof window.frameModel === 'function') {
@@ -1249,8 +1413,8 @@ export class ModelAssembler {
                 return;
             }
 
-            const totalPartPages = activePieces.reduce((acc, p) => acc + (p.papercraft?.pagesCount || 1), 0);
-            const totalAlbumPages = (this.includeCover ? 1 : 0) + totalPartPages;
+            const totalPartSheets = this.getTotalSheets();
+            const totalAlbumPages = (this.includeCover ? 1 : 0) + totalPartSheets;
 
             const doc = new jsPDFClass({
                 orientation: 'portrait',
@@ -1305,7 +1469,7 @@ export class ModelAssembler {
                 doc.setFontSize(9);
                 doc.setTextColor(27, 94, 32);
                 doc.text(`PIEZAS INCLUIDAS: ${activePieces.length}`, margin + 20, margin + 56);
-                doc.text(`HOJAS DE CORTE A4: ${totalPartPages}`, margin + 20, margin + 63);
+                doc.text(`HOJAS DE CORTE A4: ${totalPartSheets}`, margin + 20, margin + 63);
                 doc.text(`TOTAL PÁGINAS ÁLBUM: ${totalAlbumPages}`, margin + 20, margin + 70);
 
                 doc.setFont('helvetica', 'normal');
@@ -1321,7 +1485,6 @@ export class ModelAssembler {
                 doc.text('ÍNDICE Y DISTRIBUCIÓN DE PIEZAS', margin + 14, margin + 90);
 
                 let tableY = margin + 98;
-                let runningPage = 2; // La portada es la página 1
 
                 doc.setFillColor(235, 240, 245);
                 doc.rect(margin + 12, tableY - 5, A4_W - (margin + 12) * 2, 7, 'F');
@@ -1335,9 +1498,20 @@ export class ModelAssembler {
                 tableY += 8;
 
                 activePieces.forEach((p, idx) => {
-                    const count = p.papercraft?.pagesCount || 1;
-                    const endPage = runningPage + count - 1;
-                    const pageRangeStr = count === 1 ? `Página ${runningPage}` : `Páginas ${runningPage} a ${endPage}`;
+                    const pSheets = Array.from(new Set(p.papercraft?.parts?.map(pt => pt.layout.pageIndex) || []))
+                        .filter(s => s >= 0 && s < totalPartSheets)
+                        .sort((a, b) => a - b);
+                    const count = pSheets.length;
+                    let pageRangeStr = 'Sin piezas';
+                    let sheetCountStr = '0 hojas';
+                    if (count > 0) {
+                        sheetCountStr = `${count} hoja${count > 1 ? 's' : ''}`;
+                        if (count === 1) {
+                            pageRangeStr = `Página ${pSheets[0] + (this.includeCover ? 2 : 1)}`;
+                        } else {
+                            pageRangeStr = `Páginas ${pSheets.map(s => s + (this.includeCover ? 2 : 1)).join(', ')}`;
+                        }
+                    }
 
                     doc.setFont('helvetica', 'bold');
                     doc.setFontSize(8.5);
@@ -1349,7 +1523,7 @@ export class ModelAssembler {
                     doc.text(p.name, margin + 26, tableY);
 
                     doc.setTextColor(80, 80, 80);
-                    doc.text(`${count} hoja${count > 1 ? 's' : ''}`, margin + 115, tableY);
+                    doc.text(sheetCountStr, margin + 115, tableY);
 
                     doc.setFont('helvetica', 'bold');
                     doc.setTextColor(0, 120, 215);
@@ -1361,7 +1535,6 @@ export class ModelAssembler {
                     doc.line(margin + 12, tableY + 2.5, A4_W - margin - 12, tableY + 2.5);
 
                     tableY += 7.5;
-                    runningPage += count;
                 });
 
                 // Consejos técnicos de armado al pie de la portada
@@ -1381,7 +1554,7 @@ export class ModelAssembler {
                 doc.setTextColor(70, 70, 70);
                 doc.text('1. Imprime las plantillas seleccionando en tu impresora escala "Tamaño Real" o "100%" (sin ajustar a página).', margin + 16, tipBoxY + 13);
                 doc.text('2. Las líneas grises continuas exteriores corresponden al corte de piezas y solapas.', margin + 16, tipBoxY + 19);
-                doc.text('3. Las solapas de pegado incluyen pestañas en ángulo de 45° preparadas para uniones limpias.', margin + 16, tipBoxY + 25);
+                doc.text('3. Las solapas de pegado incluyen pestañas recortadas para evitar colisiones y montajes.', margin + 16, tipBoxY + 25);
 
                 // Pie de página de la portada
                 doc.setFont('helvetica', 'normal');
@@ -1393,23 +1566,40 @@ export class ModelAssembler {
                 currentGlobalPageIndex = 2;
             }
 
-            // 2. Renderizado de las hojas de cada pieza
-            for (const piece of activePieces) {
-                if (!piece.papercraft) continue;
-                const pagesCount = piece.papercraft.pagesCount || 1;
-                for (let p = 0; p < pagesCount; p++) {
-                    if (this.includeCover || currentGlobalPageIndex > 1) {
-                        doc.addPage('a4', 'portrait');
-                    }
-                    
-                    piece.papercraft.renderPageToPDF(doc, p, piece.textureCanvas, {
-                        pieceName: piece.name,
+            // 2. Renderizado de cada hoja A4 del ensamble
+            for (let s = 0; s < totalPartSheets; s++) {
+                if (this.includeCover || currentGlobalPageIndex > 1) {
+                    doc.addPage('a4', 'portrait');
+                }
+
+                const piecesOnSheet = activePieces.filter(p => p.papercraft && p.papercraft.parts.some(pt => pt.layout.pageIndex === s));
+                const sheetPieceNames = piecesOnSheet.map(p => p.name).join(', ') || 'Varios';
+
+                let isFirstPieceOnSheet = true;
+                for (const piece of activePieces) {
+                    if (!piece.papercraft) continue;
+                    const partsOnSheet = piece.papercraft.parts.filter(pt => pt.layout.pageIndex === s);
+                    if (partsOnSheet.length === 0) continue;
+
+                    piece.papercraft.renderPageToPDF(doc, s, piece.textureCanvas, {
+                        pieceName: sheetPieceNames,
+                        globalPageIndex: currentGlobalPageIndex,
+                        totalGlobalPages: totalAlbumPages,
+                        skipHeader: !isFirstPieceOnSheet
+                    });
+                    isFirstPieceOnSheet = false;
+                }
+
+                // Si la hoja estaba vacía, dibujar el marco y encabezado
+                if (isFirstPieceOnSheet && activePieces[0]?.papercraft) {
+                    activePieces[0].papercraft.renderPageToPDF(doc, s, null, {
+                        pieceName: 'Hoja Vacía',
                         globalPageIndex: currentGlobalPageIndex,
                         totalGlobalPages: totalAlbumPages
                     });
-
-                    currentGlobalPageIndex++;
                 }
+
+                currentGlobalPageIndex++;
             }
 
             // 3. Abrir en la ventana de previsualización con descarga e impresión
@@ -1427,12 +1617,233 @@ export class ModelAssembler {
         }
     }
 
+    /**
+     * Guarda el proyecto de ensamblado completo con todas las piezas en un archivo .nspp
+     */
+    async exportAssemblyProject() {
+        this.saveActivePieceToCache();
+
+        const activePieces = this.pieces;
+        if (activePieces.length === 0) {
+            alert('No hay piezas en el ensamblador para guardar.');
+            return;
+        }
+
+        const totalSheets = this.getTotalSheets();
+
+        const projectData = {
+            version: '6.0',
+            type: 'neo_substance_assembler_project',
+            createdAt: new Date().toISOString(),
+            albumTitle: this.albumTitle || 'Proyecto Ensamblado',
+            globalScalePct: this.globalScalePct || 100,
+            includeCover: this.includeCover !== false,
+            totalSheets: totalSheets,
+            activePieceId: this.activePieceId,
+            pieces: activePieces.map(piece => {
+                let textureDataUrl = null;
+                if (piece.textureCanvas) {
+                    try {
+                        textureDataUrl = piece.textureCanvas.toDataURL('image/png');
+                    } catch (e) {
+                        console.warn('Error al exportar textura de pieza a base64:', piece.name, e);
+                    }
+                }
+                return {
+                    id: piece.id,
+                    name: piece.name,
+                    fileType: piece.fileType,
+                    rawOBJText: piece.rawOBJText,
+                    visible: piece.visible !== false,
+                    projectData: piece.projectData || null,
+                    textureDataUrl: textureDataUrl,
+                    papercraftState: piece.papercraft ? {
+                        modelLengthMm: piece.papercraft.modelLengthMm,
+                        baseModelLengthMm: piece.papercraft.baseModelLengthMm,
+                        scalePct: piece.papercraft.scalePct,
+                        currentScale: piece.papercraft.currentScale,
+                        pagesCount: piece.papercraft.pagesCount,
+                        tabHeightMm: piece.papercraft.tabHeightMm,
+                        tabAngleDeg: piece.papercraft.tabAngleDeg,
+                        cutLineColor: piece.papercraft.cutLineColor,
+                        cutLineWidthMm: piece.papercraft.cutLineWidthMm,
+                        foldLineColor: piece.papercraft.foldLineColor,
+                        foldLineWidthMm: piece.papercraft.foldLineWidthMm,
+                        hideSmoothLines: piece.papercraft.hideSmoothLines,
+                        showTabNumbers: piece.papercraft.showTabNumbers,
+                        numberPlacement: piece.papercraft.numberPlacement,
+                        partsLayout: (piece.papercraft.parts || []).map(p => ({
+                            id: p.id,
+                            layout: { ...p.layout }
+                        }))
+                    } : null
+                };
+            })
+        };
+
+        const json = JSON.stringify(projectData);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const safeTitle = (this.albumTitle || 'Proyecto_Ensamblado').replace(/\s+/g, '_');
+        a.href = url;
+        a.download = `${safeTitle}.nspp`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    /**
+     * Carga un proyecto de ensamblado completo (.nspp o JSON)
+     */
+    async loadAssemblyProject(fileOrData) {
+        try {
+            let jsonText = '';
+            if (typeof fileOrData === 'string') {
+                jsonText = fileOrData;
+            } else if (fileOrData instanceof Blob) {
+                jsonText = await fileOrData.text();
+            } else if (typeof fileOrData === 'object') {
+                jsonText = JSON.stringify(fileOrData);
+            }
+
+            const project = JSON.parse(jsonText);
+            if (project.type !== 'neo_substance_assembler_project' && !Array.isArray(project.pieces)) {
+                throw new Error('El archivo no es un proyecto de ensamblado válido (.nspp).');
+            }
+
+            // Vaciar ensamble actual
+            this.clearAllPieces();
+
+            // Restaurar opciones globales
+            if (project.albumTitle) {
+                this.albumTitle = project.albumTitle;
+                const titleInput = document.getElementById('assembler-album-title');
+                if (titleInput) titleInput.value = project.albumTitle;
+            }
+            if (project.globalScalePct) {
+                this.globalScalePct = project.globalScalePct;
+                const scaleInput = document.getElementById('assembler-global-scale-input');
+                if (scaleInput) scaleInput.value = project.globalScalePct;
+            }
+            if (project.includeCover !== undefined) {
+                this.includeCover = project.includeCover;
+                const coverCheck = document.getElementById('assembler-include-cover');
+                if (coverCheck) coverCheck.checked = project.includeCover;
+            }
+            if (project.totalSheets) {
+                this.sheetsCount = project.totalSheets;
+            }
+
+            // Reconstruir piezas
+            for (const pData of project.pieces) {
+                const size = 2048;
+                const textureCanvas = document.createElement('canvas');
+                textureCanvas.width = size;
+                textureCanvas.height = size;
+                const ctx = textureCanvas.getContext('2d');
+
+                if (pData.textureDataUrl) {
+                    await new Promise((resolve) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            ctx.drawImage(img, 0, 0, size, size);
+                            resolve();
+                        };
+                        img.onerror = resolve;
+                        img.src = pData.textureDataUrl;
+                    });
+                } else if (pData.projectData) {
+                    const comp = await this.compositeNspLayers(pData.projectData, size);
+                    ctx.drawImage(comp, 0, 0, size, size);
+                } else {
+                    ctx.fillStyle = '#f0f0f0';
+                    ctx.fillRect(0, 0, size, size);
+                }
+
+                const texture = new THREE.CanvasTexture(textureCanvas);
+                texture.colorSpace = THREE.SRGBColorSpace;
+                const mesh = this.buildMeshFromOBJ(pData.rawOBJText, texture);
+
+                const piecePapercraft = new PapercraftEngine();
+                const ps = pData.papercraftState;
+                if (ps) {
+                    if (ps.baseModelLengthMm) piecePapercraft.baseModelLengthMm = ps.baseModelLengthMm;
+                    if (ps.modelLengthMm) piecePapercraft.modelLengthMm = ps.modelLengthMm;
+                    if (ps.scalePct !== undefined) piecePapercraft.scalePct = ps.scalePct;
+                    if (ps.currentScale) piecePapercraft.currentScale = ps.currentScale;
+                    if (ps.pagesCount) piecePapercraft.pagesCount = ps.pagesCount;
+                    if (ps.tabHeightMm !== undefined) piecePapercraft.tabHeightMm = ps.tabHeightMm;
+                    if (ps.tabAngleDeg !== undefined) piecePapercraft.tabAngleDeg = ps.tabAngleDeg;
+                    if (ps.cutLineColor) piecePapercraft.cutLineColor = ps.cutLineColor;
+                    if (ps.cutLineWidthMm) piecePapercraft.cutLineWidthMm = ps.cutLineWidthMm;
+                    if (ps.foldLineColor) piecePapercraft.foldLineColor = ps.foldLineColor;
+                    if (ps.foldLineWidthMm) piecePapercraft.foldLineWidthMm = ps.foldLineWidthMm;
+                    if (ps.hideSmoothLines !== undefined) piecePapercraft.hideSmoothLines = ps.hideSmoothLines;
+                    if (ps.showTabNumbers !== undefined) piecePapercraft.showTabNumbers = ps.showTabNumbers;
+                    if (ps.numberPlacement) piecePapercraft.numberPlacement = ps.numberPlacement;
+                }
+
+                piecePapercraft.analyzeMesh(mesh, size);
+
+                if (ps && Array.isArray(ps.partsLayout)) {
+                    ps.partsLayout.forEach(savedPart => {
+                        const part = piecePapercraft.parts.find(pt => pt.id === savedPart.id);
+                        if (part && savedPart.layout) {
+                            Object.assign(part.layout, savedPart.layout);
+                        }
+                    });
+                }
+
+                const piece = {
+                    id: pData.id || ('piece_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5)),
+                    name: pData.name || 'Pieza',
+                    fileType: pData.fileType || 'nsp',
+                    rawOBJText: pData.rawOBJText,
+                    projectData: pData.projectData,
+                    mesh: mesh,
+                    textureCanvas: textureCanvas,
+                    texture: texture,
+                    papercraft: piecePapercraft,
+                    visible: pData.visible !== false,
+                    _skipAutoSheetOffset: true
+                };
+
+                this.pieces.push(piece);
+                if (this.group) this.group.add(mesh);
+            }
+
+            if (this.pieces.length > 0) {
+                const firstId = project.activePieceId || this.pieces[0].id;
+                this.setActivePiece(firstId, true);
+            }
+
+            this.updateActivePieceSelectors();
+            this.updateStatsBadge();
+            this.renderUI();
+
+            if (this.is3DMode && this.group && typeof window.frameModel === 'function') {
+                window.frameModel(this.group);
+            }
+
+            if (typeof window.renderUnfoldWorkbench === 'function') {
+                window.renderUnfoldWorkbench();
+            }
+
+            alert(`✓ Proyecto ensamblado "${this.albumTitle}" cargado con éxito (${this.pieces.length} piezas).`);
+        } catch (err) {
+            console.error('Error al cargar proyecto ensamblado:', err);
+            alert(`Error al cargar el proyecto ensamblado: ${err.message}`);
+        }
+    }
+
     updateStatsBadge() {
         const badge = document.getElementById('assembler-stats-badge');
         if (!badge) return;
 
         const activePieces = this.pieces.filter(p => p.visible !== false);
-        const totalSheets = activePieces.reduce((acc, p) => acc + (p.papercraft?.pagesCount || 1), 0);
+        const totalSheets = this.getTotalSheets();
         const totalPages = (this.includeCover ? 1 : 0) + totalSheets;
 
         badge.textContent = `${activePieces.length} de ${this.pieces.length} Piezas activas • ${totalSheets} Hojas A4 (${totalPages} páginas con portada)`;

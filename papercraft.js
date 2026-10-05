@@ -345,31 +345,8 @@ export class PapercraftEngine {
 
                         islandBoundaryEdges.push({
                             p1, p2, isTarget, seamNumber: seamNum,
-                            len, mid, nx, ny
+                            len, mid, nx, ny, edgeKey
                         });
-
-                        if (tabEdges.has(edgeKey)) {
-                            const tabInfo = tabEdges.get(edgeKey);
-                            if (len > 0.5) {
-                                const tabH = Math.min(len * 0.8, tabHeightMm);
-                                const inset = Math.min(len * 0.35, tabH * Math.tan((this.tabAngleDeg * Math.PI) / 180));
-                                const ux = dx / len;
-                                const uy = dy / len;
-                                const tabP1 = { x: p1.x + ux * inset + nx * tabH, y: p1.y + uy * inset + ny * tabH };
-                                const tabP2 = { x: p2.x - ux * inset + nx * tabH, y: p2.y - uy * inset + ny * tabH };
-                                const tabCenter = { x: mid.x + nx * (tabH * 0.55), y: mid.y + ny * (tabH * 0.55) };
-
-                                islandTabs.push({
-                                    baseP1: p1,
-                                    baseP2: p2,
-                                    tabP1,
-                                    tabP2,
-                                    tabCenter,
-                                    baseLen: len,
-                                    seamNumber: tabInfo.seamNumber
-                                });
-                            }
-                        }
                     } else {
                         const twin = uvHalfEdges.get(twinKey);
                         if (fIdx < twin.faceIdx) {
@@ -381,6 +358,102 @@ export class PapercraftEngine {
                         }
                     }
                 }
+            });
+
+            // 4.1 Construir solapas con prevención de colisiones en esquinas agudas y hendiduras (darts / V-notches)
+            const defaultAlphaRad = ((90 - (this.tabAngleDeg || 45)) * Math.PI) / 180;
+            islandBoundaryEdges.forEach((bEdge) => {
+                if (!tabEdges.has(bEdge.edgeKey)) return;
+                const tabInfo = tabEdges.get(bEdge.edgeKey);
+                const len = bEdge.len;
+                if (len <= 0.5) return;
+
+                const p1 = bEdge.p1;
+                const p2 = bEdge.p2;
+                const ux = (p2.x - p1.x) / len;
+                const uy = (p2.y - p1.y) / len;
+                const nx = bEdge.nx;
+                const ny = bEdge.ny;
+
+                // Buscar arista boundary anterior que termine en p1 (con tolerancia)
+                const prevEdge = islandBoundaryEdges.find(e => e !== bEdge && Math.hypot(e.p2.x - p1.x, e.p2.y - p1.y) < 0.08);
+                // Buscar arista boundary posterior que comience en p2 (con tolerancia)
+                const nextEdge = islandBoundaryEdges.find(e => e !== bEdge && Math.hypot(e.p1.x - p2.x, e.p1.y - p2.y) < 0.08);
+
+                // Ajuste inteligente en esquina p1
+                let alpha1 = defaultAlphaRad;
+                let maxH1 = tabHeightMm;
+                if (prevEdge) {
+                    const v0x = prevEdge.p1.x - p1.x;
+                    const v0y = prevEdge.p1.y - p1.y;
+                    const Lprev = Math.hypot(v0x, v0y);
+                    const vu = v0x * ux + v0y * uy;
+                    const vn = v0x * nx + v0y * ny;
+                    if (vn > 0.001) {
+                        const theta1 = Math.atan2(vn, vu); // ángulo de la hendidura exterior
+                        const prevHasTab = tabEdges.has(prevEdge.edgeKey);
+                        // Si la arista adyacente también tiene solapa, bisectriz; si no, hasta el borde opuesto sin montarse
+                        const maxAllowed = prevHasTab ? (theta1 / 2) : Math.min(theta1 - 0.02, defaultAlphaRad);
+                        alpha1 = Math.min(defaultAlphaRad, Math.max(0.08, maxAllowed));
+                        maxH1 = Math.min(maxH1, Lprev * Math.sin(theta1) * 0.95);
+                    }
+                }
+
+                // Ajuste inteligente en esquina p2
+                let alpha2 = defaultAlphaRad;
+                let maxH2 = tabHeightMm;
+                if (nextEdge) {
+                    const v3x = nextEdge.p2.x - p2.x;
+                    const v3y = nextEdge.p2.y - p2.y;
+                    const Lnext = Math.hypot(v3x, v3y);
+                    const vu = v3x * (-ux) + v3y * (-uy);
+                    const vn = v3x * nx + v3y * ny;
+                    if (vn > 0.001) {
+                        const theta2 = Math.atan2(vn, vu);
+                        const nextHasTab = tabEdges.has(nextEdge.edgeKey);
+                        const maxAllowed = nextHasTab ? (theta2 / 2) : Math.min(theta2 - 0.02, defaultAlphaRad);
+                        alpha2 = Math.min(defaultAlphaRad, Math.max(0.08, maxAllowed));
+                        maxH2 = Math.min(maxH2, Lnext * Math.sin(theta2) * 0.95);
+                    }
+                }
+
+                let tabH1 = Math.min(len * 0.7, maxH1);
+                let tabH2 = Math.min(len * 0.7, maxH2);
+
+                let inset1 = tabH1 / Math.tan(alpha1);
+                let inset2 = tabH2 / Math.tan(alpha2);
+
+                if (inset1 > len * 0.4) {
+                    inset1 = len * 0.4;
+                    tabH1 = inset1 * Math.tan(alpha1);
+                }
+                if (inset2 > len * 0.4) {
+                    inset2 = len * 0.4;
+                    tabH2 = inset2 * Math.tan(alpha2);
+                }
+
+                const tabP1 = {
+                    x: p1.x + ux * inset1 + nx * tabH1,
+                    y: p1.y + uy * inset1 + ny * tabH1
+                };
+                const tabP2 = {
+                    x: p2.x - ux * inset2 + nx * tabH2,
+                    y: p2.y - uy * inset2 + ny * tabH2
+                };
+                const tabCenter = {
+                    x: (p1.x + p2.x + tabP1.x + tabP2.x) / 4,
+                    y: (p1.y + p2.y + tabP1.y + tabP2.y) / 4
+                };
+
+                islandTabs.push({
+                    baseP1: p1,
+                    baseP2: p2,
+                    tabP1,
+                    tabP2,
+                    tabCenter,
+                    baseLen: len,
+                    seamNumber: tabInfo.seamNumber
+                });
             });
 
             // Bounding box en mm incluyendo solapas
@@ -707,9 +780,9 @@ export class PapercraftEngine {
     }
 
     /**
-     * Renderiza una hoja A4 individual sobre un canvas 2D dado en una posición (pageX_px, pageY_px)
+     * Dibuja el marco, fondo blanco puro, margen de seguridad y regla de calibración de una hoja A4
      */
-    renderSheetOnCanvas(ctx, p, canvas2d, pageX_px, pageY_px = 0, mmToPx = 4.0, customHeader = null) {
+    renderSheetBackgroundOnCanvas(ctx, pageX_px, pageY_px = 0, mmToPx = 4.0, customHeader = null) {
         const pageW_px = this.A4_W * mmToPx;
         const pageH_px = this.A4_H * mmToPx;
         const margin_px = this.A4_MARGIN * mmToPx;
@@ -729,7 +802,7 @@ export class PapercraftEngine {
         ctx.font = 'bold 12px sans-serif';
         ctx.fillStyle = '#0288d1';
         ctx.textAlign = 'left';
-        const header = customHeader || `📄 HOJA ${p + 1} DE ${this.pagesCount} (A4 1:1) • ${this.currentScale} (${this.modelLengthMm} mm)`;
+        const header = customHeader || `📄 HOJA (A4 1:1) • ${this.currentScale} (${this.modelLengthMm} mm)`;
         ctx.fillText(header, pageX_px + margin_px + 4, pageY_px + 16);
 
         // 4. Margen de seguridad de impresión de 5 mm
@@ -741,9 +814,17 @@ export class PapercraftEngine {
 
         // 5. Regla de calibración de 50 mm en cada hoja
         this.drawRulerOnCanvas(ctx, pageX_px + margin_px + 4, pageY_px + 32, mmToPx);
+    }
+
+    /**
+     * Renderiza una hoja A4 individual sobre un canvas 2D dado en una posición (pageX_px, pageY_px)
+     */
+    renderSheetOnCanvas(ctx, p, canvas2d, pageX_px, pageY_px = 0, mmToPx = 4.0, customHeader = null) {
+        const header = customHeader || `📄 HOJA ${p + 1} DE ${this.pagesCount} (A4 1:1) • ${this.currentScale} (${this.modelLengthMm} mm)`;
+        this.renderSheetBackgroundOnCanvas(ctx, pageX_px, pageY_px, mmToPx, header);
 
         // Dibujar las piezas que pertenecen a esta hoja
-        const partsOnPage = this.parts.filter(pt => pt.layout.pageIndex === p);
+        const partsOnPage = (this.parts || []).filter(pt => pt.layout.pageIndex === p);
         for (const part of partsOnPage) {
             this.drawPartOnCanvas(ctx, part, canvas2d, pageX_px, pageY_px, mmToPx, false);
         }
@@ -984,13 +1065,13 @@ export class PapercraftEngine {
      * Exporta el PDF Multi-página en A4 1:1 con todas las hojas organizadas
      */
     exportA4PDF(canvas2d, filename = 'Neo_Papercraft_A4_1-1.pdf') {
-        const { jsPDF } = window.jspdf || {};
-        if (!jsPDF) {
+        const jsPDFClass = window.jspdf?.jsPDF || window.jsPDF;
+        if (!jsPDFClass) {
             alert('Error: Librería jsPDF no disponible.');
             return;
         }
 
-        const doc = new jsPDF({
+        const doc = new jsPDFClass({
             orientation: 'portrait',
             unit: 'mm',
             format: 'a4'
@@ -1012,39 +1093,42 @@ export class PapercraftEngine {
     renderPageToPDF(doc, p, canvas2d, pageInfo = {}) {
         const margin = this.A4_MARGIN;
 
-        // Cartela técnica y regla en cada página
-        doc.saveGraphicsState();
-        doc.setDrawColor(0, 120, 215);
-        doc.setLineWidth(0.3);
-        doc.rect(margin, margin, this.A4_W - margin * 2, this.A4_H - margin * 2);
-
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(0, 120, 215);
         const pieceTag = pageInfo.pieceName ? ` • ${pageInfo.pieceName.toUpperCase()}` : '';
         const globalTag = pageInfo.globalPageIndex !== undefined 
             ? ` • (ÁLBUM: PÁGINA ${pageInfo.globalPageIndex} DE ${pageInfo.totalGlobalPages})` 
             : '';
-        doc.text(`NEO SUBSTANCE PAINTER${pieceTag} • HOJA ${p + 1} DE ${this.pagesCount}${globalTag}`, margin + 60, margin + 6);
 
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7);
-        doc.setTextColor(80, 80, 80);
-        doc.text(`Escala: ${this.currentScale} • Longitud: ${this.modelLengthMm} mm • Envergadura: ${this.wingspanMm} mm`, margin + 60, margin + 10);
+        // Cartela técnica y regla en cada página (se omite si la hoja ya fue iniciada por otra pieza)
+        if (!pageInfo.skipHeader) {
+            doc.saveGraphicsState();
+            doc.setDrawColor(0, 120, 215);
+            doc.setLineWidth(0.3);
+            doc.rect(margin, margin, this.A4_W - margin * 2, this.A4_H - margin * 2);
 
-        // Regla de 50 mm
-        doc.setDrawColor(0, 0, 0);
-        doc.setLineWidth(0.2);
-        doc.line(margin + 4, 15, margin + 54, 15);
-        for (let i = 0; i <= 50; i++) {
-            const h = (i % 10 === 0) ? 3.5 : (i % 5 === 0 ? 2.5 : 1.2);
-            doc.line(margin + 4 + i, 15, margin + 4 + i, 15 - h);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(9);
+            doc.setTextColor(0, 120, 215);
+            doc.text(`NEO SUBSTANCE PAINTER${pieceTag} • HOJA ${p + 1} DE ${this.pagesCount}${globalTag}`, margin + 60, margin + 6);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7);
+            doc.setTextColor(80, 80, 80);
+            doc.text(`Escala: ${this.currentScale} • Longitud: ${this.modelLengthMm} mm • Envergadura: ${this.wingspanMm} mm`, margin + 60, margin + 10);
+
+            // Regla de 50 mm
+            doc.setDrawColor(0, 0, 0);
+            doc.setLineWidth(0.2);
+            doc.line(margin + 4, 15, margin + 54, 15);
+            for (let i = 0; i <= 50; i++) {
+                const h = (i % 10 === 0) ? 3.5 : (i % 5 === 0 ? 2.5 : 1.2);
+                doc.line(margin + 4 + i, 15, margin + 4 + i, 15 - h);
+            }
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(5);
+            doc.text('0', margin + 4, 18, { align: 'center' });
+            doc.text('50 mm', margin + 54, 18, { align: 'center' });
+            doc.restoreGraphicsState();
         }
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(5);
-        doc.text('0', margin + 4, 18, { align: 'center' });
-        doc.text('50 mm', margin + 54, 18, { align: 'center' });
-        doc.restoreGraphicsState();
 
         // Renderizar cada pieza de esta página
         for (const part of this.parts) {
@@ -1220,15 +1304,17 @@ export class PapercraftEngine {
             }
         } // Fin de for (const part of this.parts)
 
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7);
-        doc.setTextColor(100, 100, 100);
-        doc.text(
-            `NEO SUBSTANCE PAINTER • PLANTILLA 1:1 (A4) • HOJA ${p + 1} DE ${this.pagesCount}${globalTag} • MARGEN: 5mm • NO REESCALAR (100%)`,
-            this.A4_W / 2,
-            this.A4_H - 4,
-            { align: 'center' }
-        );
+        if (!pageInfo.skipHeader) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7);
+            doc.setTextColor(100, 100, 100);
+            doc.text(
+                `NEO SUBSTANCE PAINTER • PLANTILLA 1:1 (A4) • HOJA ${p + 1} DE ${this.pagesCount}${globalTag} • MARGEN: 5mm • NO REESCALAR (100%)`,
+                this.A4_W / 2,
+                this.A4_H - 4,
+                { align: 'center' }
+            );
+        }
     } // Fin de renderPageToPDF
 
     showPdfPreviewModal(doc, filename, totalPages = null) {

@@ -4,7 +4,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { Painter } from './painter.js?v=6.3';
 import { DecalSystem } from './decals.js?v=6.3';
 import { LayerManager } from './layers.js?v=6.3';
-import { PapercraftEngine } from './papercraft.js?v=6.3';
+import { PapercraftEngine } from './papercraft.js?v=7.0';
 import { SelectionManager } from './selection.js?v=6.3';
 
 // Configuration
@@ -972,31 +972,15 @@ window.addEventListener('mousemove', (e) => {
         const pagePitchMm = papercraft.A4_W + sheetGapMm;
 
         if (isAssemblyWorkbenchActive() && window.modelAssembler) {
-            let targetPiece = currentHitInfo?.piece;
-            let pieceStartSheet = currentHitInfo?.pieceStartSheet ?? 0;
-            if (!targetPiece) {
-                let curSheet = 0;
-                for (const p of window.modelAssembler.pieces) {
-                    if (p.visible !== false && p.papercraft && p.papercraft.parts.includes(papercraft.selectedPart)) {
-                        targetPiece = p;
-                        pieceStartSheet = curSheet;
-                        break;
-                    }
-                    if (p.visible !== false && p.papercraft) curSheet += (p.papercraft.pagesCount || 1);
-                }
-            }
-            const pEngine = targetPiece?.papercraft || papercraft;
-            const maxPages = pEngine.pagesCount || 1;
-
-            let curWorkbenchX = (pieceStartSheet + papercraft.selectedPart.layout.pageIndex) * pagePitchMm + papercraft.selectedPart.layout.x;
-            curWorkbenchX += dx_mm;
+            const totalSheets = window.modelAssembler.getTotalSheets();
+            let curWorkbenchX = (papercraft.selectedPart.layout.pageIndex || 0) * pagePitchMm + (papercraft.selectedPart.layout.x || 0) + dx_mm;
+            const newSheet = Math.max(0, Math.min(totalSheets - 1, Math.floor(curWorkbenchX / pagePitchMm)));
+            papercraft.selectedPart.layout.pageIndex = newSheet;
+            papercraft.selectedPart.layout.x = Math.round((curWorkbenchX - newSheet * pagePitchMm) * 10) / 10;
             papercraft.selectedPart.layout.y = Math.round((papercraft.selectedPart.layout.y + dy_mm) * 10) / 10;
 
-            const absoluteSheet = Math.floor(curWorkbenchX / pagePitchMm);
-            const localSheet = Math.max(0, Math.min(maxPages - 1, absoluteSheet - pieceStartSheet));
-            papercraft.selectedPart.layout.pageIndex = localSheet;
-            papercraft.selectedPart.layout.x = Math.round((curWorkbenchX - (pieceStartSheet + localSheet) * pagePitchMm) * 10) / 10;
-            if (pEngine) pEngine.notifyChange();
+            const owningPiece = currentHitInfo?.piece || window.modelAssembler.pieces.find(p => p.papercraft?.parts?.includes(papercraft.selectedPart));
+            if (owningPiece?.papercraft) owningPiece.papercraft.notifyChange();
         } else {
             let curWorkbenchX = papercraft.selectedPart.layout.pageIndex * pagePitchMm + papercraft.selectedPart.layout.x;
             curWorkbenchX += dx_mm;
@@ -1099,18 +1083,10 @@ document.getElementById('btn-unfold-rotate-side')?.addEventListener('click', han
 
 function handleAddPage() {
     if (isAssemblyWorkbenchActive() && window.modelAssembler) {
-        let targetPiece = currentHitInfo?.piece;
-        if (!targetPiece) {
-            targetPiece = (typeof window.modelAssembler.getActivePiece === 'function')
-                ? window.modelAssembler.getActivePiece()
-                : window.modelAssembler.pieces[0];
-        }
-        if (targetPiece && targetPiece.papercraft) {
-            targetPiece.papercraft.addPage();
-            updatePapercraftUI();
-            renderUnfoldWorkbench();
-            return;
-        }
+        window.modelAssembler.addSheet();
+        updatePapercraftUI();
+        renderUnfoldWorkbench();
+        return;
     }
     papercraft.addPage();
     updatePapercraftUI();
@@ -1124,15 +1100,8 @@ function handleCleanEmptyPages() {
     let removed = 0;
     let totalPages = papercraft.pagesCount;
     if (isAssemblyWorkbenchActive() && window.modelAssembler) {
-        window.modelAssembler.pieces.forEach(p => {
-            if (p.papercraft) {
-                removed += p.papercraft.cleanEmptyPages();
-            }
-        });
-        totalPages = window.modelAssembler.pieces.reduce((acc, p) => acc + (p.papercraft?.pagesCount || 1), 0);
-        if (window.papercraft) {
-            window.papercraft.cleanEmptyPages();
-        }
+        removed = window.modelAssembler.cleanEmptySheets();
+        totalPages = window.modelAssembler.getTotalSheets();
     } else {
         removed = papercraft.cleanEmptyPages();
         totalPages = papercraft.pagesCount;
@@ -1235,6 +1204,7 @@ function triggerPdfExport() {
 }
 document.getElementById('btn-ribbon-export-pdf-a4')?.addEventListener('click', triggerPdfExport);
 document.getElementById('btn-unfold-export-pdf')?.addEventListener('click', triggerPdfExport);
+document.getElementById('btn-unfold-canvas-export-pdf')?.addEventListener('click', triggerPdfExport);
 document.getElementById('unfold-view-scope')?.addEventListener('change', () => {
     if (typeof renderUnfoldWorkbench === 'function') renderUnfoldWorkbench();
 });
@@ -2544,6 +2514,29 @@ document.getElementById('input-project')?.addEventListener('change', (e) => {
     if (file) {
         window.currentProjectFileName = file.name.replace(/\.[^/.]+$/, '');
         loadProjectNSP(file);
+    }
+    e.target.value = '';
+});
+
+// Guardar y Cargar Proyecto Ensamblado (.nspp) desde menú Archivo
+document.getElementById('btn-save-assembly-project')?.addEventListener('click', () => {
+    const dropdown = document.getElementById('paint-file-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    if (window.modelAssembler) {
+        window.modelAssembler.exportAssemblyProject();
+    } else {
+        alert('El ensamblador no está inicializado.');
+    }
+});
+document.getElementById('btn-load-assembly-project')?.addEventListener('click', () => {
+    const dropdown = document.getElementById('paint-file-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    document.getElementById('input-assembler-project')?.click();
+});
+document.getElementById('input-assembler-project')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (file && window.modelAssembler) {
+        await window.modelAssembler.loadAssemblyProject(file);
     }
     e.target.value = '';
 });

@@ -40,75 +40,8 @@
                     <span>Archivo</span>
                     <span style="font-size: 9px; margin-left: 2px;">▼</span>
                 </button>
-                <div id="paint-file-dropdown" class="paint-dropdown-menu" style="display: none;">
-                    <div class="paint-menu-item" id="btn-new-project">
-                        <span class="paint-menu-icon">📄</span>
-                        <div class="paint-menu-text">
-                            <span>Nuevo Archivo (Ctrl+N)</span>
-                            <small>Reiniciar proyecto con las 4 capas estándar</small>
-                        </div>
-                    </div>
-                    <div class="paint-menu-item" id="btn-apply-res">
-                        <span class="paint-menu-icon">📐</span>
-                        <div class="paint-menu-text">
-                            <span>Nueva Hoja / Resolución</span>
-                            <small>Reiniciar lienzo con resolución elegida</small>
-                        </div>
-                    </div>
-                    <div class="paint-menu-item" id="btn-load-project">
-                        <span class="paint-menu-icon">📂</span>
-                        <div class="paint-menu-text">
-                            <span>Abrir Proyecto (.nsp)</span>
-                            <small>Cargar capas, modelo y papercraft</small>
-                        </div>
-                    </div>
-                    <div class="paint-menu-item" id="btn-save-project">
-                        <span class="paint-menu-icon">💾</span>
-                        <div class="paint-menu-text">
-                            <span>Guardar Proyecto (.nsp)</span>
-                            <small>Guardar proyecto completo</small>
-                        </div>
-                    </div>
-                    <div class="paint-menu-divider"></div>
-                    <div class="paint-menu-item" id="btn-load-obj">
-                        <span class="paint-menu-icon">📦</span>
-                        <div class="paint-menu-text">
-                            <span>Cargar Modelo 3D (.obj)</span>
-                            <small>Importar geometría 3D</small>
-                        </div>
-                    </div>
-                    <div class="paint-menu-item" id="btn-export">
-                        <span class="paint-menu-icon">🖼️</span>
-                        <div class="paint-menu-text">
-                            <span>Guardar Textura (PNG)</span>
-                            <small>Exportar imagen plana de textura</small>
-                        </div>
-                    </div>
-                    <div class="paint-menu-item" id="btn-export-pdf">
-                        <span class="paint-menu-icon">📄</span>
-                        <div class="paint-menu-text">
-                            <span>Exportar PDF A4 (1:1)</span>
-                            <small>Documento para imprimir y recortar</small>
-                        </div>
-                    </div>
-                    <div class="paint-menu-item" id="btn-menu-assembler">
-                        <span class="paint-menu-icon">📦</span>
-                        <div class="paint-menu-text">
-                            <span>Ensamblador de Piezas</span>
-                            <small>Ver robot completo 3D y Álbum PDF</small>
-                        </div>
-                    </div>
-                    <div class="paint-menu-divider"></div>
-                    <div class="paint-menu-item-static" style="padding: 6px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #ccc;">
-                        <span>Resolución:</span>
-                        <select id="doc-resolution" class="ribbon-select" style="height: 22px; font-size: 11px; width: 85px;">
-                            <option value="1024">1024 px</option>
-                            <option value="2048" selected>2048 px</option>
-                            <option value="4096">4096 px</option>
-                        </select>
-                    </div>
-                </div>
                 <input type="file" id="input-project" accept=".nsp,.json" style="display: none;">
+                <input type="file" id="input-assembler-project" accept=".nspp,.json" style="display: none;">
                 <input type="file" id="input-obj" accept=".obj" style="display: none;">
             </div>
 
@@ -854,6 +787,91 @@
 
         </header>
 
+        <!-- Menú Desplegable: Archivo Flotante Global (Fuera de Header para evitar problemas de overflow) -->
+        <div id="paint-file-dropdown" class="paint-dropdown-menu" style="display: none;">
+            <div class="paint-menu-item" id="btn-new-project">
+                <span class="paint-menu-icon">📄</span>
+                <div class="paint-menu-text">
+                    <span>Nuevo Archivo (Ctrl+N)</span>
+                    <small>Reiniciar proyecto con las 4 capas estándar</small>
+                </div>
+            </div>
+            <div class="paint-menu-item" id="btn-apply-res">
+                <span class="paint-menu-icon">📐</span>
+                <div class="paint-menu-text">
+                    <span>Nueva Hoja / Resolución</span>
+                    <small>Reiniciar lienzo con resolución elegida</small>
+                </div>
+            </div>
+            <div class="paint-menu-item" id="btn-load-project">
+                <span class="paint-menu-icon">📂</span>
+                <div class="paint-menu-text">
+                    <span>Abrir Pieza / Proyecto (.nsp)</span>
+                    <small>Cargar capas, modelo y papercraft</small>
+                </div>
+            </div>
+            <div class="paint-menu-item" id="btn-save-project">
+                <span class="paint-menu-icon">💾</span>
+                <div class="paint-menu-text">
+                    <span>Guardar Pieza / Proyecto (.nsp)</span>
+                    <small>Guardar pieza actual completa</small>
+                </div>
+            </div>
+            <div class="paint-menu-divider"></div>
+            <div class="paint-menu-item" id="btn-load-assembly-project">
+                <span class="paint-menu-icon">📁</span>
+                <div class="paint-menu-text">
+                    <span>Abrir Proyecto Ensamblado (.nspp)</span>
+                    <small>Cargar todas las piezas y montaje 3D</small>
+                </div>
+            </div>
+            <div class="paint-menu-item" id="btn-save-assembly-project">
+                <span class="paint-menu-icon">💾</span>
+                <div class="paint-menu-text">
+                    <span>Guardar Proyecto Ensamblado (.nspp)</span>
+                    <small>Guardar todas las piezas, 3D y hojas A4</small>
+                </div>
+            </div>
+            <div class="paint-menu-divider"></div>
+            <div class="paint-menu-item" id="btn-load-obj">
+                <span class="paint-menu-icon">📦</span>
+                <div class="paint-menu-text">
+                    <span>Cargar Modelo 3D (.obj)</span>
+                    <small>Importar geometría 3D</small>
+                </div>
+            </div>
+            <div class="paint-menu-item" id="btn-export">
+                <span class="paint-menu-icon">🖼️</span>
+                <div class="paint-menu-text">
+                    <span>Guardar Textura (PNG)</span>
+                    <small>Exportar imagen plana de textura</small>
+                </div>
+            </div>
+            <div class="paint-menu-item" id="btn-export-pdf">
+                <span class="paint-menu-icon">📄</span>
+                <div class="paint-menu-text">
+                    <span>Exportar PDF A4 (1:1)</span>
+                    <small>Documento para imprimir y recortar</small>
+                </div>
+            </div>
+            <div class="paint-menu-item" id="btn-menu-assembler">
+                <span class="paint-menu-icon">📦</span>
+                <div class="paint-menu-text">
+                    <span>Ensamblador de Piezas</span>
+                    <small>Ver robot completo 3D y Álbum PDF</small>
+                </div>
+            </div>
+            <div class="paint-menu-divider"></div>
+            <div class="paint-menu-item-static" style="padding: 6px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #ccc;">
+                <span>Resolución:</span>
+                <select id="doc-resolution" class="ribbon-select" style="height: 22px; font-size: 11px; width: 85px;">
+                    <option value="1024">1024 px</option>
+                    <option value="2048" selected>2048 px</option>
+                    <option value="4096">4096 px</option>
+                </select>
+            </div>
+        </div>
+
         <!-- Main Viewport -->
         <main id="viewport">
             <div id="view-2d" class="view-panel">
@@ -878,6 +896,7 @@
                         <button type="button" id="btn-unfold-add-page" class="size-step-btn" style="width: auto; padding: 0 8px; font-size: 0.85em;" title="Añadir una nueva hoja A4 vacía">📄 + Hoja</button>
                         <button type="button" id="btn-unfold-clean-pages" class="size-step-btn" style="width: auto; padding: 0 8px; font-size: 0.85em; color: #ffab91;" title="Eliminar y compactar hojas vacías que no contienen piezas">🗑️ Limpiar Hojas</button>
                         <button type="button" id="btn-unfold-measure" class="size-step-btn" style="width: auto; padding: 0 8px; font-size: 0.85em; color: #ffecb3;" title="Regla interactiva: haz clic y arrastra en el lienzo para medir distancias exactas en mm">📏 Regla (Medir)</button>
+                        <button type="button" id="btn-unfold-canvas-export-pdf" class="ribbon-btn" style="background: #2e7d32; border-color: #1b5e20; min-width: 105px; font-weight: bold; padding: 0 10px; font-size: 0.85em; display: flex; align-items: center; gap: 4px;" title="Exportar PDF A4 vectorial a escala 1:1 exacta con calibración">📄 Exportar PDF</button>
                     </div>
                 </div>
 
@@ -1155,7 +1174,7 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=6.7"></script>
-    <script type="module" src="assembler.js?v=6.7"></script>
+    <script type="module" src="main.js?v=7.0"></script>
+    <script type="module" src="assembler.js?v=7.0"></script>
 </body>
 </html>
