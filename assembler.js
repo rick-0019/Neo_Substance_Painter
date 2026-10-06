@@ -1003,8 +1003,8 @@ export class ModelAssembler {
         if (this.globalScalePct) {
             piecePapercraft.scalePct = this.globalScalePct;
             piecePapercraft.currentScale = `${Math.round(this.globalScalePct)}%`;
-            const baseLen = piecePapercraft.baseModelLengthMm || piecePapercraft.modelLengthMm || 200.0;
-            piecePapercraft.setModelLength(Math.max(1, baseLen * (this.globalScalePct / 100)));
+            const baseLen = piecePapercraft.baseModelLengthMm || piecePapercraft.modelLengthMm || 0.1;
+            piecePapercraft.setModelLength(Math.max(0.1, baseLen * (this.globalScalePct / 100)));
             piecePapercraft.autoPackA4();
         }
 
@@ -1056,6 +1056,9 @@ export class ModelAssembler {
         const mesh = this.buildMeshFromOBJ(objText, texture);
 
         const piecePapercraft = new PapercraftEngine();
+        if (window.papercraft?.objUnit) {
+            piecePapercraft.objUnit = window.papercraft.objUnit;
+        }
 
         // Si ya hay piezas en el ensamble, calcular proporción física relativa a la pieza base
         const refPiece = this.pieces.find(p => p.papercraft && p.papercraft.raw3dSize);
@@ -1063,12 +1066,12 @@ export class ModelAssembler {
             const mmPerUnit = (refPiece.papercraft.baseModelLengthMm || refPiece.papercraft.modelLengthMm) / refPiece.papercraft.raw3dSize.ref3dLen;
             piecePapercraft.analyzeMesh(mesh, size);
             if (piecePapercraft.raw3dSize && piecePapercraft.raw3dSize.ref3dLen > 0.001) {
-                const proportionalBase = Math.max(1, Math.round(piecePapercraft.raw3dSize.ref3dLen * mmPerUnit * 10) / 10);
+                const proportionalBase = Math.max(0.1, Math.round(piecePapercraft.raw3dSize.ref3dLen * mmPerUnit * 10) / 10);
                 piecePapercraft.baseModelLengthMm = proportionalBase;
                 const activePct = this.globalScalePct || refPiece.papercraft.scalePct || 100;
                 piecePapercraft.scalePct = activePct;
                 piecePapercraft.currentScale = `${Math.round(activePct)}%`;
-                piecePapercraft.setModelLength(Math.max(1, proportionalBase * (activePct / 100)));
+                piecePapercraft.setModelLength(Math.max(0.1, proportionalBase * (activePct / 100)));
                 piecePapercraft.autoPackA4();
             }
         } else {
@@ -1076,7 +1079,7 @@ export class ModelAssembler {
             if (this.globalScalePct) {
                 piecePapercraft.scalePct = this.globalScalePct;
                 piecePapercraft.currentScale = `${Math.round(this.globalScalePct)}%`;
-                piecePapercraft.setModelLength(Math.max(1, (piecePapercraft.baseModelLengthMm || 200) * (this.globalScalePct / 100)));
+                piecePapercraft.setModelLength(Math.max(0.1, (piecePapercraft.baseModelLengthMm || 0.1) * (this.globalScalePct / 100)));
                 piecePapercraft.autoPackA4();
             }
         }

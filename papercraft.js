@@ -21,16 +21,17 @@ export class PapercraftEngine {
         this.foldLineWidthMm = 0.08;
         this.foldLineColor = '#999999';
         
-        // Dimensiones físicas del modelo armado
-        this.modelLengthMm = 200.0;
-        this.baseModelLengthMm = 200.0;
+        // Dimensiones físicas del modelo armado (por defecto 1:1 nativo con el OBJ)
+        this.modelLengthMm = null;
+        this.baseModelLengthMm = null;
         this.scalePct = 100.0;
-        this.wingspanMm = 134.0;
-        this.heightMm = 38.0;
-        this.ratioX = 0.67;
-        this.ratioY = 0.19;
-        this.ratioZ = 1.0;
-        this.currentScale = '1:33';
+        this.wingspanMm = 0;
+        this.heightMm = 0;
+        this.ratioX = 1.0;
+        this.ratioY = 1.0;
+        this.currentScale = '1:1';
+        this.objUnit = 'mm'; // 'mm' (milímetros directos), 'm' (metros x1000), 'cm' (centímetros x10)
+        this.unitMultiplier = 1.0;
 
         // Herramienta de medición interactiva (Regla 2D)
         this.measureMode = false;
@@ -133,10 +134,15 @@ export class PapercraftEngine {
         this.ratioY = sizeY / ref3dLen;
         this.ratioZ = sizeZ / ref3dLen;
 
+        const unitMult = this.objUnit === 'm' ? 1000.0 : (this.objUnit === 'cm' ? 10.0 : 1.0);
+        this.unitMultiplier = unitMult;
+
         if (!this.baseModelLengthMm) {
-            this.baseModelLengthMm = (this.scalePct && this.scalePct !== 100 && this.scalePct > 0)
-                ? (this.modelLengthMm / (this.scalePct / 100))
-                : (this.modelLengthMm || 200.0);
+            // Escala nativa desde el archivo OBJ según la unidad seleccionada (m x1000, cm x10, mm x1)
+            this.baseModelLengthMm = Math.max(0.1, Math.round(ref3dLen * unitMult * 10) / 10);
+            this.scalePct = 100.0;
+            this.modelLengthMm = this.baseModelLengthMm;
+            this.currentScale = '1:1';
         }
 
         this.wingspanMm = Math.round(this.modelLengthMm * this.ratioX * 10) / 10;
@@ -1052,9 +1058,9 @@ export class PapercraftEngine {
     }
 
     setModelLength(lengthMm) {
-        this.modelLengthMm = Math.max(1, Math.min(5000, Number(lengthMm) || 200));
+        this.modelLengthMm = Math.max(0.1, Math.min(5000, Number(lengthMm) || 0.1));
         if (this.baseModelLengthMm && this.baseModelLengthMm > 0) {
-            this.scalePct = Math.round((this.modelLengthMm / this.baseModelLengthMm) * 100);
+            this.scalePct = Math.round((this.modelLengthMm / this.baseModelLengthMm) * 1000) / 10;
         }
         if (this.mesh) {
             this.analyzeMesh(this.mesh, this.texSize);

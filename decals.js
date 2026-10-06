@@ -1987,22 +1987,10 @@ export class DecalSystem {
             return null;
         };
 
+        // Aislamiento estricto de capas: solo seleccionar objetos de la capa activa.
+        // El cambio de capa siempre lo hace el usuario manualmente desde el panel de capas.
         const activeLayer = this.layerManager.getActiveLayer();
-        const found = checkLayerDecals(activeLayer);
-        if (found) return found;
-
-        if (this.layerManager.layers) {
-            for (let l = this.layerManager.layers.length - 1; l >= 0; l--) {
-                const layer = this.layerManager.layers[l];
-                if (layer === activeLayer || !layer.visible) continue;
-                const d = checkLayerDecals(layer);
-                if (d) {
-                    this.layerManager.setActiveLayer(layer.id);
-                    return d;
-                }
-            }
-        }
-        return null;
+        return checkLayerDecals(activeLayer);
     }
 
     duplicateSelectedDecal() {

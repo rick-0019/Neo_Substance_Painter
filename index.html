@@ -946,16 +946,25 @@
                         <div class="unfold-section">
                             <div class="unfold-section-title">
                                 <span>📐 Medidas Reales (1:1)</span>
-                                <span id="unfold-scale-badge" class="unfold-badge">1:33</span>
+                                <span id="unfold-scale-badge" class="unfold-badge">1:1</span>
                             </div>
                             <div class="unfold-row">
                                 <label>Escala Preset:</label>
                                 <select id="unfold-scale-preset" class="ribbon-select" style="width: 110px;">
-                                    <option value="1:33" selected>1:33 (Avión)</option>
+                                    <option value="1:1" selected>1:1 (Real OBJ)</option>
+                                    <option value="1:33">1:33 (Avión)</option>
                                     <option value="1:24">1:24 (Grande)</option>
                                     <option value="1:48">1:48 (Mediano)</option>
                                     <option value="1:72">1:72 (Pequeño)</option>
                                     <option value="custom">Personalizada</option>
+                                </select>
+                            </div>
+                            <div class="unfold-row">
+                                <label title="Unidad de medida del archivo 3D (Blender por defecto usa Metros)">Unidad OBJ:</label>
+                                <select id="unfold-obj-unit" class="ribbon-select" style="width: 110px;">
+                                    <option value="m">Metros (m ×1000)</option>
+                                    <option value="mm" selected>Milímetros (mm ×1)</option>
+                                    <option value="cm">Centímetros (cm ×10)</option>
                                 </select>
                             </div>
                             
@@ -1174,7 +1183,7 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=7.0"></script>
-    <script type="module" src="assembler.js?v=7.0"></script>
+    <script type="module" src="main.js?v=7.3"></script>
+    <script type="module" src="assembler.js?v=7.3"></script>
 </body>
 </html>

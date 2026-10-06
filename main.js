@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=6.3';
-import { DecalSystem } from './decals.js?v=6.3';
-import { LayerManager } from './layers.js?v=6.3';
-import { PapercraftEngine } from './papercraft.js?v=7.0';
-import { SelectionManager } from './selection.js?v=6.3';
+import { Painter } from './painter.js?v=7.3';
+import { DecalSystem } from './decals.js?v=7.3';
+import { LayerManager } from './layers.js?v=7.3';
+import { PapercraftEngine } from './papercraft.js?v=7.3';
+import { SelectionManager } from './selection.js?v=7.3';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -291,21 +291,23 @@ function updatePapercraftUI() {
     const badge = document.getElementById('unfold-scale-badge');
     if (badge) badge.textContent = papercraft.currentScale;
     
+    const fmtMm = (v) => (v == null || isNaN(v)) ? '0' : (Math.round(v * 10) / 10).toString();
+
     const wingspanInput = document.getElementById('unfold-model-width');
     if (wingspanInput && document.activeElement !== wingspanInput) {
-        wingspanInput.value = Math.round(papercraft.wingspanMm);
+        wingspanInput.value = fmtMm(papercraft.wingspanMm);
     }
     const heightInput = document.getElementById('unfold-model-height');
     if (heightInput && document.activeElement !== heightInput) {
-        heightInput.value = Math.round(papercraft.heightMm);
+        heightInput.value = fmtMm(papercraft.heightMm);
     }
     const lengthInput = document.getElementById('unfold-model-length');
     if (lengthInput && document.activeElement !== lengthInput) {
-        lengthInput.value = Math.round(papercraft.modelLengthMm);
+        lengthInput.value = fmtMm(papercraft.modelLengthMm);
     }
     const pctInput = document.getElementById('unfold-scale-pct');
     if (pctInput && document.activeElement !== pctInput) {
-        const activePct = Math.round(papercraft.scalePct !== undefined ? papercraft.scalePct : ((papercraft.modelLengthMm / (papercraft.baseModelLengthMm || 200.0)) * 100));
+        const activePct = Math.round((papercraft.scalePct !== undefined ? papercraft.scalePct : ((papercraft.modelLengthMm / (papercraft.baseModelLengthMm || 200.0)) * 100)) * 10) / 10;
         pctInput.value = activePct;
     }
 
@@ -580,7 +582,29 @@ function loadOBJContents(contents) {
         
         // Analizar topología Papercraft (separación de piezas y auto-acomodo en hojas A4)
         papercraft.baseModelLengthMm = null;
+        papercraft.modelLengthMm = null;
+        papercraft.scalePct = 100.0;
+        papercraft.currentScale = '1:1';
+        const presetSel = document.getElementById('unfold-scale-preset');
+        if (presetSel) presetSel.value = '1:1';
+        
+        // Análisis preliminar para detectar dimensiones físicas
+        papercraft.objUnit = 'mm';
         papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+        
+        // Auto-detección inteligente: Si las dimensiones son < 5.0, el modelo fue exportado en Metros desde Blender
+        const unitSel = document.getElementById('unfold-obj-unit');
+        if (papercraft.raw3dSize && papercraft.raw3dSize.ref3dLen < 5.0) {
+            console.log('[Papercraft] Dimensiones 3D < 5.0 detectadas. Ajustando unidad OBJ a Metros (m x1000)...');
+            papercraft.objUnit = 'm';
+            if (unitSel) unitSel.value = 'm';
+            papercraft.baseModelLengthMm = null;
+            papercraft.modelLengthMm = null;
+            papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+        } else if (unitSel) {
+            unitSel.value = papercraft.objUnit || 'mm';
+        }
+
         updatePapercraftUI();
         
         // Dibujar vista UV / Papercraft
@@ -1329,9 +1353,9 @@ unfoldCutWidth?.addEventListener('change', (e) => {
 // Control de Escala por Porcentaje (%)
 const scalePctInput = document.getElementById('unfold-scale-pct');
 function applyScalePct(pct) {
-    const clampedPct = Math.max(5, Math.min(1000, parseFloat(pct) || 100));
+    const clampedPct = Math.max(0.1, Math.min(100000, parseFloat(pct) || 100));
     papercraft.scalePct = clampedPct;
-    papercraft.currentScale = `${Math.round(clampedPct)}%`;
+    papercraft.currentScale = `${Math.round(clampedPct * 10) / 10}%`;
     const presetSelect = document.getElementById('unfold-scale-preset');
     if (presetSelect) presetSelect.value = 'custom';
 
@@ -1340,7 +1364,7 @@ function applyScalePct(pct) {
         window.modelAssembler.applyGlobalScale(clampedPct);
     } else {
         const base = papercraft.baseModelLengthMm || papercraft.modelLengthMm || 200.0;
-        const newLen = Math.max(1, base * (clampedPct / 100));
+        const newLen = Math.max(0.1, base * (clampedPct / 100));
         papercraft.setModelLength(newLen);
         papercraft.autoPackA4();
         updatePapercraftUI();
@@ -1351,7 +1375,7 @@ function applyScalePct(pct) {
 scalePctInput?.addEventListener('change', (e) => applyScalePct(e.target.value));
 scalePctInput?.addEventListener('input', (e) => {
     const val = parseFloat(e.target.value);
-    if (!isNaN(val) && val >= 5 && val <= 1000) {
+    if (!isNaN(val) && val >= 0.1 && val <= 100000) {
         applyScalePct(val);
     }
 });
@@ -1367,31 +1391,31 @@ document.querySelectorAll('.btn-scale-quick').forEach(btn => {
 // Control de longitud del modelo armado (Largo Z en mm)
 const modelLenInput = document.getElementById('unfold-model-length');
 modelLenInput?.addEventListener('change', (e) => {
-    const val = Math.max(1, Math.min(5000, parseFloat(e.target.value) || 200));
+    const val = Math.max(0.1, Math.min(50000, parseFloat(e.target.value) || 200));
     const base = papercraft.baseModelLengthMm || 200.0;
-    const newPct = Math.round((val / base) * 100);
+    const newPct = (val / base) * 100;
     applyScalePct(newPct);
 });
 
 // Control de envergadura del modelo armado (Ancho X en mm)
 const modelWidthInput = document.getElementById('unfold-model-width');
 modelWidthInput?.addEventListener('change', (e) => {
-    const val = Math.max(1, Math.min(5000, parseFloat(e.target.value) || 100));
+    const val = Math.max(0.1, Math.min(50000, parseFloat(e.target.value) || 100));
     const rx = (papercraft.ratioX && papercraft.ratioX > 0.001) ? papercraft.ratioX : 0.67;
-    const newLen = Math.round(val / rx);
+    const newLen = val / rx;
     const base = papercraft.baseModelLengthMm || 200.0;
-    const newPct = Math.round((newLen / base) * 100);
+    const newPct = (newLen / base) * 100;
     applyScalePct(newPct);
 });
 
 // Control de altura del modelo armado (Alto Y en mm)
 const modelHeightInput = document.getElementById('unfold-model-height');
 modelHeightInput?.addEventListener('change', (e) => {
-    const val = Math.max(1, Math.min(5000, parseFloat(e.target.value) || 30));
+    const val = Math.max(0.1, Math.min(50000, parseFloat(e.target.value) || 30));
     const ry = (papercraft.ratioY && papercraft.ratioY > 0.001) ? papercraft.ratioY : 0.19;
-    const newLen = Math.round(val / ry);
+    const newLen = val / ry;
     const base = papercraft.baseModelLengthMm || 200.0;
-    const newPct = Math.round((newLen / base) * 100);
+    const newPct = (newLen / base) * 100;
     applyScalePct(newPct);
 });
 
@@ -1399,19 +1423,42 @@ modelHeightInput?.addEventListener('change', (e) => {
 document.getElementById('unfold-scale-preset')?.addEventListener('change', (e) => {
     const preset = e.target.value;
     if (preset === 'custom') return;
+    if (preset === '1:1') {
+        applyScalePct(100);
+        papercraft.currentScale = '1:1';
+        updatePapercraftUI();
+        return;
+    }
     papercraft.currentScale = preset;
-    const realV1Length = 7900;
-    let targetLen = 200;
-    if (preset === '1:33') targetLen = Math.round(realV1Length / 33);
-    else if (preset === '1:24') targetLen = Math.round(realV1Length / 24);
-    else if (preset === '1:48') targetLen = Math.round(realV1Length / 48);
-    else if (preset === '1:72') targetLen = Math.round(realV1Length / 72);
+    let factor = 1.0;
+    if (preset === '1:33') factor = 1 / 33;
+    else if (preset === '1:24') factor = 1 / 24;
+    else if (preset === '1:48') factor = 1 / 48;
+    else if (preset === '1:72') factor = 1 / 72;
 
-    const base = papercraft.baseModelLengthMm || 200.0;
-    const newPct = Math.round((targetLen / base) * 100);
+    const newPct = Math.round(factor * 1000) / 10;
     applyScalePct(newPct);
     papercraft.currentScale = preset;
     updatePapercraftUI();
+});
+
+// Selector de Unidad de Origen del OBJ (Metros / Milímetros / Centímetros)
+document.getElementById('unfold-obj-unit')?.addEventListener('change', (e) => {
+    const unit = e.target.value;
+    papercraft.objUnit = unit;
+    papercraft.baseModelLengthMm = null;
+    papercraft.modelLengthMm = null;
+    papercraft.scalePct = 100.0;
+    papercraft.currentScale = '1:1';
+    const presetSel = document.getElementById('unfold-scale-preset');
+    if (presetSel) presetSel.value = '1:1';
+    if (state.mesh) {
+        papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+        papercraft.autoPackA4();
+        updatePapercraftUI();
+        drawUVWireframe();
+        renderUnfoldWorkbench();
+    }
 });
 
 // Orientación de la hoja A4
