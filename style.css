@@ -790,29 +790,38 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 .panel-layers-actions {
-    height: 42px;
     background: #222;
     border-top: 1px solid var(--border);
     display: flex;
-    align-items: center;
-    justify-content: space-around;
-    padding: 0 6px;
+    flex-direction: column;
+    padding: 6px 8px;
     gap: 4px;
+    box-sizing: border-box;
+}
+
+.panel-layers-actions-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
 }
 
 .layer-action-btn {
+    flex: 1;
     background: #3a3a3a;
     color: #fff;
     border: 1px solid #555;
     border-radius: 3px;
-    padding: 4px 5px;
+    padding: 5px 3px;
     font-size: 0.72em;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 2px;
     transition: background 0.15s;
     white-space: nowrap;
+    min-width: 0;
 }
 
 .layer-action-btn:hover {
@@ -1469,4 +1478,73 @@ input[type=range]::-webkit-slider-runnable-track {
     background-color: #111 !important;
     border-color: #00e5ff !important;
     outline: none;
+}
+
+/* --- Vistas Ortogonales e Indicador estilo Blender en Vista 3D --- */
+.view3d-cam-label {
+    position: absolute;
+    top: 36px;
+    left: 14px;
+    font-size: 11px;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(0, 0, 0, 0.45);
+    padding: 2px 8px;
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 10;
+    font-family: monospace, sans-serif;
+    letter-spacing: 0.5px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.view3d-nav-toolbar {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    background: rgba(24, 24, 24, 0.85);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 5px;
+    padding: 3px 5px;
+    z-index: 15;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.btn-v3d {
+    background: rgba(255, 255, 255, 0.08);
+    color: #eee;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.btn-v3d:hover {
+    background: rgba(0, 229, 255, 0.2);
+    border-color: #00e5ff;
+    color: #00e5ff;
+}
+
+.btn-v3d.active {
+    background: #00838f;
+    border-color: #00e5ff;
+    color: #fff;
+    font-weight: bold;
+}
+
+.v3d-sep {
+    width: 1px;
+    height: 14px;
+    background: rgba(255, 255, 255, 0.2);
+    margin: 0 2px;
 }

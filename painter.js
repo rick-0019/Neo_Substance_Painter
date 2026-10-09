@@ -220,6 +220,14 @@ export class Painter {
                     this.cancelText();
                 } else if (this.transformState && this.transformState.active) {
                     this.cancelLayerTransform();
+                } else if (this.editingShape) {
+                    this.editingShape = null;
+                    this.dragMode = null;
+                    this.clearUI();
+                    if (this.layerManager) this.layerManager.recomposite();
+                    this.needsUpdate = true;
+                    this.forceUpdate = true;
+                    if (this.texture) this.texture.needsUpdate = true;
                 }
             } else if (e.key === 'Delete') {
                 if (this.selectionManager && this.selectionManager.active) {
@@ -530,7 +538,7 @@ export class Painter {
                 return;
             }
 
-            if (['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode)) {
+            if (['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode)) {
                 const rect = this.renderer.domElement.getBoundingClientRect();
                 this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
                 this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -555,8 +563,10 @@ export class Painter {
                     this.editingShape = {
                         type: mode,
                         x1: x, y1: y, x2: x, y2: y,
+                        midX: x, midY: y,
+                        cpX: x, cpY: y,
                         color: window.currentShapeStrokeColor || strokeColorInput?.value || settings.color || '#000000',
-                        fillColor: window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : (fillInput?.value || '#ffff00'),
+                        fillColor: mode === 'curve' ? 'transparent' : (window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : (fillInput?.value || '#ffff00')),
                         size: settings.size,
                         strokeWidth: strokeW,
                         strokeDash: strokeDash,
@@ -630,7 +640,14 @@ export class Painter {
                     const dx = curX - this.editingShape.x1;
                     const dy = curY - this.editingShape.y1;
 
-                    if (['circle', 'star', 'polygon', 'badge'].includes(this.editingShape.type) || e.shiftKey) {
+                    if (this.editingShape.type === 'curve') {
+                        this.editingShape.x2 = curX;
+                        this.editingShape.y2 = curY;
+                        this.editingShape.midX = (this.editingShape.x1 + curX) / 2;
+                        this.editingShape.midY = (this.editingShape.y1 + curY) / 2;
+                        this.editingShape.cpX = this.editingShape.midX;
+                        this.editingShape.cpY = this.editingShape.midY;
+                    } else if (['circle', 'star', 'polygon', 'badge'].includes(this.editingShape.type) || e.shiftKey) {
                         const dim = Math.max(Math.abs(dx), Math.abs(dy));
                         this.editingShape.x2 = this.editingShape.x1 + (dx >= 0 ? 1 : -1) * dim;
                         this.editingShape.y2 = this.editingShape.y1 + (dy >= 0 ? 1 : -1) * dim;
@@ -754,6 +771,7 @@ export class Painter {
                     }
                 }
                 else if (this.editingShape && this.dragMode) {
+                    const wasCreating = this.dragMode === 'create';
                     this.dragMode = null;
                     const dx = this.editingShape.x2 - this.editingShape.x1;
                     const dy = this.editingShape.y2 - this.editingShape.y1;
@@ -762,6 +780,9 @@ export class Painter {
                         this.editingShape = null;
                         this.clearUI();
                         if (this.layerManager) this.layerManager.recomposite();
+                    } else if (this.editingShape.type === 'curve') {
+                        // En curvas Bézier, dejar los tiradores activos para arquear o afinar la curva
+                        this.renderEditingShape();
                     } else {
                         this.commitShape('2d');
                     }
@@ -851,6 +872,8 @@ export class Painter {
                     if (hit === 'move') {
                         this.dragOffset.x = x - this.editingShape.x1;
                         this.dragOffset.y = y - this.editingShape.y1;
+                        this.dragOffset.startX = x;
+                        this.dragOffset.startY = y;
                     }
                     return; // Estamos editando
                 } else {
@@ -858,7 +881,7 @@ export class Painter {
                 }
             }
             
-            if (['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode)) {
+            if (['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode)) {
                 if (window.decalSystem && window.decalSystem.selectedDecalId) {
                     const hit = window.decalSystem.hitTest2D(x, y);
                     if (hit) {
@@ -880,8 +903,10 @@ export class Painter {
                 this.editingShape = {
                     type: mode,
                     x1: x, y1: y, x2: x, y2: y,
+                    midX: x, midY: y,
+                    cpX: x, cpY: y,
                     color: window.currentShapeStrokeColor || strokeColorInput?.value || settings.color || '#000000',
-                    fillColor: window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : (fillInput?.value || '#ffff00'),
+                    fillColor: mode === 'curve' ? 'transparent' : (window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : (fillInput?.value || '#ffff00')),
                     size: settings.size,
                     strokeWidth: strokeW,
                     strokeDash: strokeDash,
@@ -994,7 +1019,14 @@ export class Painter {
                 if (this.dragMode === 'create') {
                     const dx = x - s.x1;
                     const dy = y - s.y1;
-                    if (['circle', 'star', 'polygon', 'badge'].includes(s.type) || e.shiftKey) {
+                    if (s.type === 'curve') {
+                        s.x2 = x;
+                        s.y2 = y;
+                        s.midX = (s.x1 + s.x2) / 2;
+                        s.midY = (s.y1 + s.y2) / 2;
+                        s.cpX = s.midX;
+                        s.cpY = s.midY;
+                    } else if (['circle', 'star', 'polygon', 'badge'].includes(s.type) || e.shiftKey) {
                         const dim = Math.max(Math.abs(dx), Math.abs(dy));
                         s.x2 = s.x1 + (dx >= 0 ? 1 : -1) * dim;
                         s.y2 = s.y1 + (dy >= 0 ? 1 : -1) * dim;
@@ -1002,6 +1034,34 @@ export class Painter {
                         s.x2 = x;
                         s.y2 = y;
                     }
+                } else if (s.type === 'curve' && this.dragMode === 'curve') {
+                    s.midX = x;
+                    s.midY = y;
+                    s.cpX = 2 * s.midX - (s.x1 + s.x2) / 2;
+                    s.cpY = 2 * s.midY - (s.y1 + s.y2) / 2;
+                } else if (s.type === 'curve' && this.dragMode === 'p1') {
+                    s.x1 = x;
+                    s.y1 = y;
+                    const curMidX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
+                    const curMidY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
+                    s.cpX = 2 * curMidX - (s.x1 + s.x2) / 2;
+                    s.cpY = 2 * curMidY - (s.y1 + s.y2) / 2;
+                } else if (s.type === 'curve' && this.dragMode === 'p2') {
+                    s.x2 = x;
+                    s.y2 = y;
+                    const curMidX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
+                    const curMidY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
+                    s.cpX = 2 * curMidX - (s.x1 + s.x2) / 2;
+                    s.cpY = 2 * curMidY - (s.y1 + s.y2) / 2;
+                } else if (s.type === 'curve' && this.dragMode === 'move') {
+                    const dx = x - (this.dragOffset.startX !== undefined ? this.dragOffset.startX : x);
+                    const dy = y - (this.dragOffset.startY !== undefined ? this.dragOffset.startY : y);
+                    s.x1 += dx; s.y1 += dy;
+                    s.x2 += dx; s.y2 += dy;
+                    s.midX += dx; s.midY += dy;
+                    s.cpX += dx; s.cpY += dy;
+                    this.dragOffset.startX = x;
+                    this.dragOffset.startY = y;
                 } else if (this.dragMode === 'rotate') {
                     const cx = (s.x1 + s.x2) / 2;
                     const cy = (s.y1 + s.y2) / 2;
@@ -1066,7 +1126,9 @@ export class Painter {
                 const hit = this.hitTestShape(x, y);
                 if (hit === 'rotate') this.canvas.style.cursor = 'grab';
                 else if (hit === 'move') this.canvas.style.cursor = 'move';
-                else if (hit) this.canvas.style.cursor = 'crosshair'; // TODO: flechas
+                else if (hit === 'curve') this.canvas.style.cursor = 'crosshair';
+                else if (hit === 'p1' || hit === 'p2') this.canvas.style.cursor = 'pointer';
+                else if (hit) this.canvas.style.cursor = 'crosshair';
                 else this.canvas.style.cursor = 'default';
             } else {
                 const curMode = document.getElementById('brush-mode')?.value;
@@ -1160,7 +1222,48 @@ export class Painter {
         const cx = canvas.width / 2;
         const cy = canvas.height / 2;
 
-        if (s.type === 'line') {
+        if (s.type === 'curve') {
+            const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
+            const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
+            const cpX = s.cpX !== undefined ? s.cpX : midX;
+            const cpY = s.cpY !== undefined ? s.cpY : midY;
+
+            const minX = Math.min(s.x1, s.x2, midX, cpX);
+            const maxX = Math.max(s.x1, s.x2, midX, cpX);
+            const minY = Math.min(s.y1, s.y2, midY, cpY);
+            const maxY = Math.max(s.y1, s.y2, midY, cpY);
+            const curW = Math.max(10, Math.round(maxX - minX));
+            const curH = Math.max(10, Math.round(maxY - minY));
+
+            const curveCanvas = document.createElement('canvas');
+            curveCanvas.width = curW + pad * 2;
+            curveCanvas.height = curH + pad * 2;
+            const curveCtx = curveCanvas.getContext('2d');
+            curveCtx.imageSmoothingEnabled = true;
+            curveCtx.imageSmoothingQuality = 'high';
+            curveCtx.lineWidth = strokeW;
+            curveCtx.lineJoin = 'round';
+            curveCtx.strokeStyle = s.color || s.strokeColor || '#000000';
+
+            if (strokeDash === 'rivets' || strokeDash === 'dots') {
+                curveCtx.lineCap = 'round';
+                curveCtx.setLineDash([0.001, spacing]);
+            } else if (strokeDash === 'dashed') {
+                curveCtx.lineCap = 'butt';
+                curveCtx.setLineDash([Math.max(4, Math.round(strokeW * 3)), spacing]);
+            } else {
+                curveCtx.lineCap = 'round';
+                curveCtx.setLineDash([]);
+            }
+
+            const offX = minX - pad;
+            const offY = minY - pad;
+            curveCtx.beginPath();
+            curveCtx.moveTo(s.x1 - offX, s.y1 - offY);
+            curveCtx.quadraticCurveTo(cpX - offX, cpY - offY, s.x2 - offX, s.y2 - offY);
+            curveCtx.stroke();
+            return curveCanvas;
+        } else if (s.type === 'line') {
             const rawDx = (s.x2 !== undefined && s.x1 !== undefined) ? (s.x2 - s.x1) : w;
             const rawDy = (s.y2 !== undefined && s.y1 !== undefined) ? (s.y2 - s.y1) : h;
             ctx.beginPath();
@@ -1195,6 +1298,7 @@ export class Painter {
                     rect: isRivets ? 'Remaches Rect' : 'Rectángulo',
                     circle: isRivets ? 'Remaches Círculo' : 'Círculo',
                     line: isRivets ? 'Remaches Línea' : 'Línea',
+                    curve: isRivets ? 'Remaches Curva' : 'Curva Bézier',
                     triangle: isRivets ? 'Remaches Triángulo' : 'Triángulo',
                     star: isRivets ? 'Remaches Estrella' : 'Estrella',
                     polygon: isRivets ? 'Remaches Polígono' : 'Polígono',
@@ -1203,16 +1307,42 @@ export class Painter {
                 };
                 const count = (activeLayer.decals ? activeLayer.decals.filter(d => d.type === s.type).length : 0) + 1;
                 const shapeName = `${shapeNames[s.type] || 'Forma'} ${count}`;
-                const cx = (s.x1 + s.x2) / 2;
-                const cy = (s.y1 + s.y2) / 2;
+                let cx, cy;
+                if (s.type === 'curve') {
+                    const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
+                    const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
+                    const cpX = s.cpX !== undefined ? s.cpX : midX;
+                    const cpY = s.cpY !== undefined ? s.cpY : midY;
+                    const minX = Math.min(s.x1, s.x2, midX, cpX);
+                    const maxX = Math.max(s.x1, s.x2, midX, cpX);
+                    const minY = Math.min(s.y1, s.y2, midY, cpY);
+                    const maxY = Math.max(s.y1, s.y2, midY, cpY);
+                    cx = (minX + maxX) / 2;
+                    cy = (minY + maxY) / 2;
+                } else {
+                    cx = (s.x1 + s.x2) / 2;
+                    cy = (s.y1 + s.y2) / 2;
+                }
                 const w = shapeCanvas.width;
                 const h = shapeCanvas.height;
+
+                const shapeOptionsToStore = { ...s };
+                if (s.type === 'curve') {
+                    shapeOptionsToStore.x1 = s.x1 - cx;
+                    shapeOptionsToStore.y1 = s.y1 - cy;
+                    shapeOptionsToStore.x2 = s.x2 - cx;
+                    shapeOptionsToStore.y2 = s.y2 - cy;
+                    shapeOptionsToStore.midX = (s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2) - cx;
+                    shapeOptionsToStore.midY = (s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2) - cy;
+                    shapeOptionsToStore.cpX = (s.cpX !== undefined ? s.cpX : shapeOptionsToStore.midX + cx) - cx;
+                    shapeOptionsToStore.cpY = (s.cpY !== undefined ? s.cpY : shapeOptionsToStore.midY + cy) - cy;
+                }
 
                 createdShapeObj = {
                     id: 'shape_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
                     name: shapeName,
                     type: s.type,
-                    shapeOptions: { ...s },
+                    shapeOptions: shapeOptionsToStore,
                     img: shapeCanvas,
                     dataUrl: shapeCanvas.toDataURL('image/png'),
                     x: cx,
@@ -1241,6 +1371,7 @@ export class Painter {
         }
         this.needsUpdate = true;
         this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
 
         // Seleccionar la figura en el modo en que fue dibujada (2D o 3D) para no saltar de vista
         if (window.decalSystem && createdShapeObj) {
@@ -1251,6 +1382,31 @@ export class Painter {
     
     hitTestShape(x, y) {
         const s = this.editingShape;
+        if (!s) return null;
+
+        if (s.type === 'curve') {
+            const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
+            const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
+            const cpX = s.cpX !== undefined ? s.cpX : midX;
+            const cpY = s.cpY !== undefined ? s.cpY : midY;
+
+            // 1. Tirador central de curvatura (midX, midY)
+            if (Math.hypot(x - midX, y - midY) <= 18) return 'curve';
+
+            // 2. Tiradores en extremos (x1, y1) y (x2, y2)
+            if (Math.hypot(x - s.x1, y - s.y1) <= 16) return 'p1';
+            if (Math.hypot(x - s.x2, y - s.y2) <= 16) return 'p2';
+
+            // 3. Toque sobre la línea de la curva para mover
+            for (let t = 0.05; t <= 0.95; t += 0.05) {
+                const inv = 1 - t;
+                const bx = inv * inv * s.x1 + 2 * inv * t * cpX + t * t * s.x2;
+                const by = inv * inv * s.y1 + 2 * inv * t * cpY + t * t * s.y2;
+                if (Math.hypot(x - bx, y - by) <= 14) return 'move';
+            }
+            return null;
+        }
+
         const cx = (s.x1 + s.x2) / 2;
         const cy = (s.y1 + s.y2) / 2;
         
@@ -1312,61 +1468,131 @@ export class Painter {
         this.renderEditingShape();
     }
 
-    renderEditingShape() {
-        if (!this.editingShape || !this.ctxUI) return;
-        const s = this.editingShape;
-        this.clearUI();
-        
+    drawShapeDirect(ctx, s) {
+        if (!s || !ctx) return;
         const cx = (s.x1 + s.x2) / 2;
         const cy = (s.y1 + s.y2) / 2;
         const w = Math.max(2, Math.abs(s.x2 - s.x1));
         const h = Math.max(2, Math.abs(s.y2 - s.y1));
-        
-        this.ctxUI.save();
-        this.ctxUI.translate(cx, cy);
-        this.ctxUI.rotate(s.angle || 0);
-        this.ctxUI.translate(-cx, -cy);
-        
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(s.angle || 0);
+        ctx.translate(-cx, -cy);
+
         const strokeW = Math.max(1, (s.strokeWidth !== undefined ? s.strokeWidth : (s.size ? s.size * 2 : 4)));
         const strokeDash = s.strokeDash || s.dashStyle || 'solid';
         const spacing = s.dashSpacing || Math.max(6, Math.round(strokeW * 2.5));
 
-        this.ctxUI.lineWidth = strokeW;
-        this.ctxUI.lineJoin = 'round';
-        this.ctxUI.strokeStyle = s.color || s.strokeColor || '#000000';
-        this.ctxUI.fillStyle = s.fillColor || '#ffff00';
+        ctx.lineWidth = strokeW;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = s.color || s.strokeColor || '#000000';
+        ctx.fillStyle = s.fillColor || '#ffff00';
 
         if (strokeDash === 'rivets' || strokeDash === 'dots') {
-            this.ctxUI.lineCap = 'round';
-            this.ctxUI.setLineDash([0.001, spacing]);
+            ctx.lineCap = 'round';
+            ctx.setLineDash([0.001, spacing]);
         } else if (strokeDash === 'dashed') {
-            this.ctxUI.lineCap = 'butt';
-            this.ctxUI.setLineDash([Math.max(4, Math.round(strokeW * 3)), spacing]);
+            ctx.lineCap = 'butt';
+            ctx.setLineDash([Math.max(4, Math.round(strokeW * 3)), spacing]);
         } else {
-            this.ctxUI.lineCap = 'round';
-            this.ctxUI.setLineDash([]);
+            ctx.lineCap = 'round';
+            ctx.setLineDash([]);
         }
-        
-        if (s.type === 'line') {
-            this.ctxUI.beginPath();
-            this.ctxUI.moveTo(s.x1, s.y1);
-            this.ctxUI.lineTo(s.x2, s.y2);
-            this.ctxUI.stroke();
+
+        if (s.type === 'curve') {
+            const cpX = s.cpX !== undefined ? s.cpX : (s.x1 + s.x2) / 2;
+            const cpY = s.cpY !== undefined ? s.cpY : (s.y1 + s.y2) / 2;
+            ctx.beginPath();
+            ctx.moveTo(s.x1, s.y1);
+            ctx.quadraticCurveTo(cpX, cpY, s.x2, s.y2);
+            ctx.stroke();
+        } else if (s.type === 'line') {
+            ctx.beginPath();
+            ctx.moveTo(s.x1, s.y1);
+            ctx.lineTo(s.x2, s.y2);
+            ctx.stroke();
         } else {
-            drawShapePath(this.ctxUI, s.type, cx, cy, w, h, s.cornerRadius || 0);
+            drawShapePath(ctx, s.type, cx, cy, w, h, s.cornerRadius || 0);
             if (s.fillColor && s.fillColor !== 'transparent') {
-                this.ctxUI.fill();
+                ctx.fill();
             }
             if (s.color && s.color !== 'transparent') {
-                this.ctxUI.stroke();
+                ctx.stroke();
             }
         }
-        
-        this.ctxUI.restore();
+
+        ctx.restore();
+    }
+
+    renderEditingShape() {
+        if (!this.editingShape || !this.ctxUI) return;
+        const s = this.editingShape;
+
+        // 1. Proyectar dibujo en tiempo real sobre la textura 3D mediante compositeCtx
+        if (this.layerManager && this.layerManager.compositeCtx) {
+            this.layerManager.recomposite();
+            this.drawShapeDirect(this.layerManager.compositeCtx, s);
+            this.needsUpdate = true;
+            this.forceUpdate = true;
+            if (this.texture) this.texture.needsUpdate = true;
+        }
+
+        // 2. Limpiar y dibujar trazo en ctxUI (lienzo de superposición 2D)
+        this.clearUI();
+        this.drawShapeDirect(this.ctxUI, s);
         this.uiNeedsUpdate = true;
-        
-        // Dibujar nodos de control en UI
-        if (!this.dragMode && this.ctxUI) {
+
+        // 3. Dibujar nodos interactivos (P1, P2, Curvatura)
+        if (this.dragMode !== 'create' && this.ctxUI) {
+            if (s.type === 'curve') {
+                const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
+                const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
+
+                this.ctxUI.save();
+                // Línea guía tenue discontinua cyan
+                this.ctxUI.strokeStyle = 'rgba(0, 229, 255, 0.45)';
+                this.ctxUI.setLineDash([4, 4]);
+                this.ctxUI.lineWidth = 1.2;
+                this.ctxUI.beginPath();
+                this.ctxUI.moveTo(s.x1, s.y1);
+                this.ctxUI.lineTo(midX, midY);
+                this.ctxUI.lineTo(s.x2, s.y2);
+                this.ctxUI.stroke();
+                this.ctxUI.setLineDash([]);
+
+                // Tirador Extremo 1 (P1)
+                this.ctxUI.fillStyle = '#ffffff';
+                this.ctxUI.strokeStyle = '#0078d7';
+                this.ctxUI.lineWidth = 2;
+                this.ctxUI.fillRect(s.x1 - 5, s.y1 - 5, 10, 10);
+                this.ctxUI.strokeRect(s.x1 - 5, s.y1 - 5, 10, 10);
+
+                // Tirador Extremo 2 (P2)
+                this.ctxUI.fillRect(s.x2 - 5, s.y2 - 5, 10, 10);
+                this.ctxUI.strokeRect(s.x2 - 5, s.y2 - 5, 10, 10);
+
+                // Tirador Curvatura (Mid)
+                this.ctxUI.beginPath();
+                this.ctxUI.arc(midX, midY, 8, 0, Math.PI * 2);
+                this.ctxUI.fillStyle = '#00e5ff';
+                this.ctxUI.fill();
+                this.ctxUI.strokeStyle = '#ffffff';
+                this.ctxUI.lineWidth = 2.5;
+                this.ctxUI.stroke();
+
+                // Anillo exterior cyan brillante
+                this.ctxUI.beginPath();
+                this.ctxUI.arc(midX, midY, 11, 0, Math.PI * 2);
+                this.ctxUI.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+                this.ctxUI.lineWidth = 1;
+                this.ctxUI.stroke();
+
+                this.ctxUI.restore();
+                this.uiNeedsUpdate = true;
+                return;
+            }
+
             this.ctxUI.save();
             this.ctxUI.translate(cx, cy);
             this.ctxUI.rotate(s.angle);
@@ -2416,10 +2642,16 @@ export class Painter {
             const settings = this.getBrushSettings();
 
             // Calcular radio en espacio 3D para abarcar costuras contiguas entre piezas (ej. fuselaje a ala)
-            const distToCam = this.camera.position.distanceTo(hit.point);
-            const vFOV = THREE.MathUtils.degToRad(this.camera.fov);
-            const heightAtDist = 2 * Math.tan(vFOV / 2) * distToCam;
-            const worldPixelSize = heightAtDist / this.renderer.domElement.clientHeight;
+            let worldPixelSize;
+            if (this.camera && this.camera.isOrthographicCamera) {
+                const frustumHeight = (this.camera.top - this.camera.bottom) / (this.camera.zoom || 1);
+                worldPixelSize = frustumHeight / this.renderer.domElement.clientHeight;
+            } else {
+                const distToCam = this.camera.position.distanceTo(hit.point);
+                const vFOV = THREE.MathUtils.degToRad(this.camera.fov || 45);
+                const heightAtDist = 2 * Math.tan(vFOV / 2) * distToCam;
+                worldPixelSize = heightAtDist / this.renderer.domElement.clientHeight;
+            }
             const brushRadius3D = Math.max(0.005, settings.size * worldPixelSize);
             const hitNormal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : null;
 

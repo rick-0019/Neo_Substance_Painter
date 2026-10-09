@@ -494,34 +494,39 @@ export class DecalSystem {
             if (!file) return;
 
             const decalName = file.name.replace(/\.[^/.]+$/, '');
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const img = new Image();
-                img.onload = () => {
-                    // Optimizar imágenes de ultra-alta resolución (>2048px) para evitar saturar VRAM y CPU
-                    const maxDim = Math.max(window.layerManager?.width || 2048, 2048);
-                    if (img.width > maxDim || img.height > maxDim) {
-                        const ratio = Math.min(maxDim / img.width, maxDim / img.height);
-                        const optCanvas = document.createElement('canvas');
-                        optCanvas.width = Math.round(img.width * ratio);
-                        optCanvas.height = Math.round(img.height * ratio);
-                        const optCtx = optCanvas.getContext('2d');
-                        optCtx.imageSmoothingEnabled = true;
-                        optCtx.imageSmoothingQuality = 'high';
-                        optCtx.drawImage(img, 0, 0, optCanvas.width, optCanvas.height);
+            const onImgReady = (img, name) => {
+                const maxDim = Math.max(window.layerManager?.width || 2048, 2048);
+                if (img.width > maxDim || img.height > maxDim) {
+                    const ratio = Math.min(maxDim / img.width, maxDim / img.height);
+                    const optCanvas = document.createElement('canvas');
+                    optCanvas.width = Math.round(img.width * ratio);
+                    optCanvas.height = Math.round(img.height * ratio);
+                    const optCtx = optCanvas.getContext('2d');
+                    optCtx.imageSmoothingEnabled = true;
+                    optCtx.imageSmoothingQuality = 'high';
+                    optCtx.drawImage(img, 0, 0, optCanvas.width, optCanvas.height);
 
-                        const optImg = new Image();
-                        optImg.onload = () => {
-                            this.setDecalImage(optImg, decalName);
-                        };
-                        optImg.src = optCanvas.toDataURL('image/png');
-                    } else {
-                        this.setDecalImage(img, decalName);
-                    }
-                };
-                img.src = event.target.result;
+                    const optImg = new Image();
+                    optImg.onload = () => {
+                        this.setDecalImage(optImg, name || decalName);
+                    };
+                    optImg.src = optCanvas.toDataURL('image/png');
+                } else {
+                    this.setDecalImage(img, name || decalName);
+                }
             };
-            reader.readAsDataURL(file);
+
+            if (typeof window.loadImageOrSVG === 'function') {
+                window.loadImageOrSVG(file, onImgReady);
+            } else {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => onImgReady(img, decalName);
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
             inputDecal.value = '';
         });
 
@@ -686,23 +691,18 @@ export class DecalSystem {
                         decal.shapeOptions.strokeColor = newStroke;
                     }
 
-                    decal.shapeOptions.width = decal.width;
-                    decal.shapeOptions.height = decal.height;
-                    decal.shapeOptions.x1 = 0;
-                    decal.shapeOptions.y1 = 0;
-                    decal.shapeOptions.x2 = decal.width;
-                    decal.shapeOptions.y2 = decal.height;
+                    if (decal.shapeOptions.type !== 'curve' && decal.shapeOptions.type !== 'line') {
+                        decal.shapeOptions.width = decal.width;
+                        decal.shapeOptions.height = decal.height;
+                        decal.shapeOptions.x1 = 0;
+                        decal.shapeOptions.y1 = 0;
+                        decal.shapeOptions.x2 = decal.width;
+                        decal.shapeOptions.y2 = decal.height;
+                    }
 
                     if (window.painter && window.painter.createShapeCanvas) {
                         const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
-                        decal.img = newCanvas;
-                        try {
-                            decal.dataUrl = newCanvas.toDataURL('image/png');
-                        } catch (_) {}
-                        this.currentDecalImage = newCanvas;
-                        this.syncCurrentDecalToObject(true);
-                        this.render2DPreview();
-                        if (this.layerManager) this.layerManager.renderUI();
+                        this.updateDecalShapeCanvas(decal, newCanvas);
                     }
                 }
             } else if (window.painter && window.painter.editingShape) {
@@ -776,20 +776,17 @@ export class DecalSystem {
                         };
                     }
                     decal.shapeOptions.cornerRadius = num;
-                    decal.shapeOptions.width = decal.width;
-                    decal.shapeOptions.height = decal.height;
-                    decal.shapeOptions.x1 = 0;
-                    decal.shapeOptions.y1 = 0;
-                    decal.shapeOptions.x2 = decal.width;
-                    decal.shapeOptions.y2 = decal.height;
+                    if (decal.shapeOptions.type !== 'curve' && decal.shapeOptions.type !== 'line') {
+                        decal.shapeOptions.width = decal.width;
+                        decal.shapeOptions.height = decal.height;
+                        decal.shapeOptions.x1 = 0;
+                        decal.shapeOptions.y1 = 0;
+                        decal.shapeOptions.x2 = decal.width;
+                        decal.shapeOptions.y2 = decal.height;
+                    }
                     if (window.painter && window.painter.createShapeCanvas) {
                         const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
-                        decal.img = newCanvas;
-                        try { decal.dataUrl = newCanvas.toDataURL('image/png'); } catch(_) {}
-                        this.currentDecalImage = newCanvas;
-                        this.syncCurrentDecalToObject(true);
-                        this.render2DPreview();
-                        if (this.layerManager) this.layerManager.renderUI();
+                        this.updateDecalShapeCanvas(decal, newCanvas);
                     }
                 }
             } else if (window.painter && window.painter.editingShape) {
@@ -819,20 +816,17 @@ export class DecalSystem {
                         };
                     }
                     decal.shapeOptions.strokeWidth = num;
-                    decal.shapeOptions.width = decal.width;
-                    decal.shapeOptions.height = decal.height;
-                    decal.shapeOptions.x1 = 0;
-                    decal.shapeOptions.y1 = 0;
-                    decal.shapeOptions.x2 = decal.width;
-                    decal.shapeOptions.y2 = decal.height;
+                    if (decal.shapeOptions.type !== 'curve' && decal.shapeOptions.type !== 'line') {
+                        decal.shapeOptions.width = decal.width;
+                        decal.shapeOptions.height = decal.height;
+                        decal.shapeOptions.x1 = 0;
+                        decal.shapeOptions.y1 = 0;
+                        decal.shapeOptions.x2 = decal.width;
+                        decal.shapeOptions.y2 = decal.height;
+                    }
                     if (window.painter && window.painter.createShapeCanvas) {
                         const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
-                        decal.img = newCanvas;
-                        try { decal.dataUrl = newCanvas.toDataURL('image/png'); } catch(_) {}
-                        this.currentDecalImage = newCanvas;
-                        this.syncCurrentDecalToObject(true);
-                        this.render2DPreview();
-                        if (this.layerManager) this.layerManager.renderUI();
+                        this.updateDecalShapeCanvas(decal, newCanvas);
                     }
                 }
             } else if (window.painter && window.painter.editingShape) {
@@ -883,20 +877,17 @@ export class DecalSystem {
                         };
                     }
                     decal.shapeOptions.strokeDash = dashStyle;
-                    decal.shapeOptions.width = decal.width;
-                    decal.shapeOptions.height = decal.height;
-                    decal.shapeOptions.x1 = 0;
-                    decal.shapeOptions.y1 = 0;
-                    decal.shapeOptions.x2 = decal.width;
-                    decal.shapeOptions.y2 = decal.height;
+                    if (decal.shapeOptions.type !== 'curve' && decal.shapeOptions.type !== 'line') {
+                        decal.shapeOptions.width = decal.width;
+                        decal.shapeOptions.height = decal.height;
+                        decal.shapeOptions.x1 = 0;
+                        decal.shapeOptions.y1 = 0;
+                        decal.shapeOptions.x2 = decal.width;
+                        decal.shapeOptions.y2 = decal.height;
+                    }
                     if (window.painter && window.painter.createShapeCanvas) {
                         const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
-                        decal.img = newCanvas;
-                        try { decal.dataUrl = newCanvas.toDataURL('image/png'); } catch(_) {}
-                        this.currentDecalImage = newCanvas;
-                        this.syncCurrentDecalToObject(true);
-                        this.render2DPreview();
-                        if (this.layerManager) this.layerManager.renderUI();
+                        this.updateDecalShapeCanvas(decal, newCanvas);
                     }
                 }
             } else if (window.painter && window.painter.editingShape) {
@@ -906,7 +897,7 @@ export class DecalSystem {
                 // Si no hay figura seleccionada, asegurar que la herramienta de formas esté activa y lista para dibujar
                 const brushModeInput = document.getElementById('brush-mode');
                 const curMode = brushModeInput?.value;
-                const shapeModes = ['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'];
+                const shapeModes = ['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'];
                 if (!shapeModes.includes(curMode)) {
                     const rectBtn = document.querySelector('.tool-btn[data-mode="rect"]');
                     if (rectBtn) {
@@ -944,20 +935,17 @@ export class DecalSystem {
                         };
                     }
                     decal.shapeOptions.dashSpacing = num;
-                    decal.shapeOptions.width = decal.width;
-                    decal.shapeOptions.height = decal.height;
-                    decal.shapeOptions.x1 = 0;
-                    decal.shapeOptions.y1 = 0;
-                    decal.shapeOptions.x2 = decal.width;
-                    decal.shapeOptions.y2 = decal.height;
+                    if (decal.shapeOptions.type !== 'curve' && decal.shapeOptions.type !== 'line') {
+                        decal.shapeOptions.width = decal.width;
+                        decal.shapeOptions.height = decal.height;
+                        decal.shapeOptions.x1 = 0;
+                        decal.shapeOptions.y1 = 0;
+                        decal.shapeOptions.x2 = decal.width;
+                        decal.shapeOptions.y2 = decal.height;
+                    }
                     if (window.painter && window.painter.createShapeCanvas) {
                         const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
-                        decal.img = newCanvas;
-                        try { decal.dataUrl = newCanvas.toDataURL('image/png'); } catch(_) {}
-                        this.currentDecalImage = newCanvas;
-                        this.syncCurrentDecalToObject(true);
-                        this.render2DPreview();
-                        if (this.layerManager) this.layerManager.renderUI();
+                        this.updateDecalShapeCanvas(decal, newCanvas);
                     }
                 }
             } else if (window.painter && window.painter.editingShape) {
@@ -1621,6 +1609,9 @@ export class DecalSystem {
         }
 
         this.decal2D = {
+            id: decal.id,
+            type: decal.type,
+            shapeOptions: decal.shapeOptions ? { ...decal.shapeOptions } : null,
             x: decal.x,
             y: decal.y,
             width: decal.width,
@@ -1635,6 +1626,25 @@ export class DecalSystem {
             dragOffset: { x: 0, y: 0 },
             initialDecal: null
         };
+
+        if (decal.type === 'curve' && this.decal2D.shapeOptions) {
+            const s = this.decal2D.shapeOptions;
+            if (s.x1 !== undefined && s.x2 !== undefined) {
+                const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
+                const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
+                const cpX = s.cpX !== undefined ? s.cpX : midX;
+                const cpY = s.cpY !== undefined ? s.cpY : midY;
+                const curCx = (Math.min(s.x1, s.x2, midX, cpX) + Math.max(s.x1, s.x2, midX, cpX)) / 2;
+                const curCy = (Math.min(s.y1, s.y2, midY, cpY) + Math.max(s.y1, s.y2, midY, cpY)) / 2;
+                if (Math.abs(curCx) > 1 || Math.abs(curCy) > 1) {
+                    s.x1 -= curCx; s.y1 -= curCy;
+                    s.x2 -= curCx; s.y2 -= curCy;
+                    s.midX = midX - curCx; s.midY = midY - curCy;
+                    s.cpX = cpX - curCx; s.cpY = cpY - curCy;
+                    decal.shapeOptions = { ...s };
+                }
+            }
+        }
         this.updateFlipUI();
         this.isActive = true;
 
@@ -1756,7 +1766,7 @@ export class DecalSystem {
                 thumb.style.backgroundImage = decal.dataUrl ? `url(${decal.dataUrl})` : (decal.img && decal.img.src ? `url(${decal.img.src})` : '');
             }
 
-            const isShape = ['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line'].includes(decal.type);
+            const isShape = ['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line', 'curve'].includes(decal.type);
             const shapeBar = document.getElementById('shape-controls');
             const ribbon = document.getElementById('ribbon');
             if (isShape) {
@@ -1871,7 +1881,7 @@ export class DecalSystem {
         const shapeBar = document.getElementById('shape-controls');
 
         const curBrushMode = document.getElementById('brush-mode')?.value;
-        const isShapeTool = ['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(curBrushMode);
+        const isShapeTool = ['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(curBrushMode);
 
         if (!isShapeTool) {
             if (ribbon) ribbon.classList.remove('shape-mode-active');
@@ -1907,7 +1917,7 @@ export class DecalSystem {
         const activeLayer = this.layerManager.getActiveLayer();
         if (!activeLayer) return;
         const decal = activeLayer.getDecal(this.selectedDecalId);
-        if (!decal || !['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line'].includes(decal.type)) return;
+        if (!decal || !['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line', 'curve'].includes(decal.type)) return;
 
         if (!decal.shapeOptions) {
             decal.shapeOptions = {
@@ -1922,27 +1932,48 @@ export class DecalSystem {
             decal.shapeOptions.fillColor = col;
         }
 
-        decal.shapeOptions.width = decal.width;
-        decal.shapeOptions.height = decal.height;
-        decal.shapeOptions.x1 = 0;
-        decal.shapeOptions.y1 = 0;
-        decal.shapeOptions.x2 = decal.width;
-        decal.shapeOptions.y2 = decal.height;
+        if (decal.shapeOptions.type !== 'curve' && decal.shapeOptions.type !== 'line') {
+            decal.shapeOptions.width = decal.width;
+            decal.shapeOptions.height = decal.height;
+            decal.shapeOptions.x1 = 0;
+            decal.shapeOptions.y1 = 0;
+            decal.shapeOptions.x2 = decal.width;
+            decal.shapeOptions.y2 = decal.height;
+        }
 
         const fillInput = document.getElementById('shape-bar-fill-color');
         if (fillInput) fillInput.value = col;
 
         if (window.painter && window.painter.createShapeCanvas) {
             const newCanvas = window.painter.createShapeCanvas(decal.shapeOptions);
-            decal.img = newCanvas;
-            try {
-                decal.dataUrl = newCanvas.toDataURL('image/png');
-            } catch (_) {}
-            this.currentDecalImage = newCanvas;
-            this.syncCurrentDecalToObject(true);
-            this.render2DPreview();
-            if (this.layerManager) this.layerManager.renderUI();
+            this.updateDecalShapeCanvas(decal, newCanvas);
         }
+    }
+
+    updateDecalShapeCanvas(decal, newCanvas) {
+        if (!decal || !newCanvas) return;
+        decal.img = newCanvas;
+        try {
+            decal.dataUrl = newCanvas.toDataURL('image/png');
+        } catch (_) {}
+        this.currentDecalImage = newCanvas;
+
+        if (decal.shapeOptions && (decal.shapeOptions.type === 'curve' || decal.shapeOptions.type === 'line')) {
+            decal.width = newCanvas.width;
+            decal.height = newCanvas.height;
+            decal.baseWidth = newCanvas.width;
+            decal.baseHeight = newCanvas.height;
+            if (this.decal2D) {
+                this.decal2D.width = newCanvas.width;
+                this.decal2D.height = newCanvas.height;
+                this.decal2D.baseWidth = newCanvas.width;
+                this.decal2D.baseHeight = newCanvas.height;
+            }
+        }
+
+        this.syncCurrentDecalToObject(true);
+        this.render2DPreview();
+        if (this.layerManager) this.layerManager.renderUI();
     }
     _isDecalInLayer(decalId) {
         if (!decalId || !this.layerManager) return false;
@@ -2874,6 +2905,52 @@ export class DecalSystem {
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
+        // Nodos interactivos Bézier en la curva
+        if (d.type === 'curve' && d.shapeOptions) {
+            const s = d.shapeOptions;
+            const p1 = { x: s.x1, y: s.y1 };
+            const p2 = { x: s.x2, y: s.y2 };
+            const mid = { x: s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2, y: s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2 };
+
+            // Línea guía tenue discontinua cyan entre nodos
+            ctx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
+            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(mid.x, mid.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Tirador Extremo 1 (P1)
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#0078d7';
+            ctx.lineWidth = 2;
+            ctx.fillRect(p1.x - 5, p1.y - 5, 10, 10);
+            ctx.strokeRect(p1.x - 5, p1.y - 5, 10, 10);
+
+            // Tirador Extremo 2 (P2)
+            ctx.fillRect(p2.x - 5, p2.y - 5, 10, 10);
+            ctx.strokeRect(p2.x - 5, p2.y - 5, 10, 10);
+
+            // Tirador Curvatura (Mid)
+            ctx.beginPath();
+            ctx.arc(mid.x, mid.y, 8, 0, Math.PI * 2);
+            ctx.fillStyle = '#00e5ff';
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+
+            // Anillo exterior cyan brillante
+            ctx.beginPath();
+            ctx.arc(mid.x, mid.y, 11, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(0, 229, 255, 0.7)';
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+        }
+
         drawHandle(0, -halfH - stemLength, true);
 
         ctx.restore();
@@ -2889,6 +2966,17 @@ export class DecalSystem {
         const sin = Math.sin(-d.rotation);
         const lx = dx * cos - dy * sin;
         const ly = dx * sin + dy * cos;
+
+        // Nodos interactivos Bézier prioritarios sobre bordes/mover
+        if (d.type === 'curve' && d.shapeOptions) {
+            const s = d.shapeOptions;
+            const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
+            const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
+
+            if (Math.hypot(lx - midX, ly - midY) <= 16) return 'curve_mid';
+            if (Math.hypot(lx - s.x1, ly - s.y1) <= 14) return 'curve_p1';
+            if (Math.hypot(lx - s.x2, ly - s.y2) <= 14) return 'curve_p2';
+        }
 
         const halfW = d.width / 2;
         const halfH = d.height / 2;
@@ -2975,7 +3063,9 @@ export class DecalSystem {
         if (!this.decal2D.isDragging) {
             if (this.selectedDecalId) {
                 const hit = this.hitTest2D(x, y);
-                if (hit === 'rotate') { this.canvas.style.cursor = 'grab'; return; }
+                if (hit === 'curve_mid') { this.canvas.style.cursor = 'crosshair'; return; }
+                else if (hit === 'curve_p1' || hit === 'curve_p2') { this.canvas.style.cursor = 'pointer'; return; }
+                else if (hit === 'rotate') { this.canvas.style.cursor = 'grab'; return; }
                 else if (hit === 'move') { this.canvas.style.cursor = 'move'; return; }
                 else if (['nw', 'se'].includes(hit)) { this.canvas.style.cursor = 'nwse-resize'; return; }
                 else if (['ne', 'sw'].includes(hit)) { this.canvas.style.cursor = 'nesw-resize'; return; }
@@ -2992,6 +3082,77 @@ export class DecalSystem {
         const h = this.decal2D.dragHandle;
         const d = this.decal2D;
         const init = this.decal2D.initialDecal;
+
+        if (['curve_mid', 'curve_p1', 'curve_p2'].includes(h)) {
+            const s = d.shapeOptions;
+            if (!s) return;
+            const dx = x - d.x;
+            const dy = y - d.y;
+            const cos = Math.cos(-d.rotation);
+            const sin = Math.sin(-d.rotation);
+            const lx = dx * cos - dy * sin;
+            const ly = dx * sin + dy * cos;
+
+            if (h === 'curve_mid') {
+                s.midX = lx;
+                s.midY = ly;
+            } else if (h === 'curve_p1') {
+                s.x1 = lx;
+                s.y1 = ly;
+            } else if (h === 'curve_p2') {
+                s.x2 = lx;
+                s.y2 = ly;
+            }
+
+            s.cpX = 2 * (s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2) - (s.x1 + s.x2) / 2;
+            s.cpY = 2 * (s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2) - (s.y1 + s.y2) / 2;
+
+            // Recalcular nuevo centro geométrico y re-centrar coordenadas locales
+            const curMinX = Math.min(s.x1, s.x2, s.midX, s.cpX);
+            const curMaxX = Math.max(s.x1, s.x2, s.midX, s.cpX);
+            const curMinY = Math.min(s.y1, s.y2, s.midY, s.cpY);
+            const curMaxY = Math.max(s.y1, s.y2, s.midY, s.cpY);
+            const curCx = (curMinX + curMaxX) / 2;
+            const curCy = (curMinY + curMaxY) / 2;
+
+            s.x1 -= curCx; s.y1 -= curCy;
+            s.x2 -= curCx; s.y2 -= curCy;
+            s.midX -= curCx; s.midY -= curCy;
+            s.cpX -= curCx; s.cpY -= curCy;
+
+            // Desplazar d.x, d.y según la rotación
+            const worldShiftX = curCx * Math.cos(d.rotation) - curCy * Math.sin(d.rotation);
+            const worldShiftY = curCx * Math.sin(d.rotation) + curCy * Math.cos(d.rotation);
+            d.x += worldShiftX;
+            d.y += worldShiftY;
+
+            if (window.painter && window.painter.createShapeCanvas) {
+                const newCanvas = window.painter.createShapeCanvas(s);
+                if (newCanvas) {
+                    d.width = newCanvas.width;
+                    d.height = newCanvas.height;
+                    d.baseWidth = newCanvas.width;
+                    d.baseHeight = newCanvas.height;
+                    this.currentDecalImage = newCanvas;
+
+                    const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+                    const dObj = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+                    if (dObj) {
+                        dObj.x = d.x;
+                        dObj.y = d.y;
+                        dObj.width = d.width;
+                        dObj.height = d.height;
+                        dObj.baseWidth = d.width;
+                        dObj.baseHeight = d.height;
+                        dObj.img = newCanvas;
+                        dObj.shapeOptions = { ...s };
+                    }
+                }
+            }
+
+            this.scheduleSync(false);
+            return;
+        }
 
         if (h === 'move') {
             d.x = x - d.dragOffset.x;

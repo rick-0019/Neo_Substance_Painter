@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { Painter } from './painter.js?v=7.3';
-import { DecalSystem } from './decals.js?v=7.3';
+import { DecalSystem } from './decals.js?v=7.4';
 import { LayerManager } from './layers.js?v=7.3';
 import { PapercraftEngine } from './papercraft.js?v=7.3';
 import { SelectionManager } from './selection.js?v=7.3';
@@ -121,8 +121,20 @@ const view3d = document.getElementById('view-3d');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x222222);
 
-const camera = new THREE.PerspectiveCamera(45, view3d.clientWidth / view3d.clientHeight, 0.1, 1000);
-camera.position.set(0, 0, 5);
+const initialAspect = (view3d.clientWidth || 800) / (view3d.clientHeight || 600);
+const perspCamera = new THREE.PerspectiveCamera(45, initialAspect, 0.01, 2000);
+perspCamera.position.set(0, 0, 5);
+
+const orthoCamera = new THREE.OrthographicCamera(
+    -2.5 * initialAspect, 2.5 * initialAspect,
+    2.5, -2.5,
+    0.01, 2000
+);
+orthoCamera.position.set(0, 0, 5);
+
+let camera = perspCamera;
+let isOrthographic = false;
+let currentOrthoView = null;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(view3d.clientWidth, view3d.clientHeight);
@@ -395,6 +407,13 @@ function triangulateConcaveNGons(raw) {
         const line = lines[i];
         const trimmed = line.trim();
 
+        // Omitir líneas sueltas ('l') y puntos ('p') de wireframe exportados por Blender/CAD.
+        // En Three.js OBJLoader, la presencia de 'l' en un objeto convierte toda la geometría en LineSegments,
+        // descartando completamente las caras poligonales ('f') y provocando el error de "sin mallas válidas".
+        if (/^[lpLP](\s+.*)?$/.test(trimmed)) {
+            continue;
+        }
+
         if (trimmed.startsWith('v ')) {
             const parts = trimmed.split(/\s+/).slice(1).map(Number);
             positions.push(new THREE.Vector3(parts[0], parts[1], parts[2]));
@@ -411,17 +430,38 @@ function triangulateConcaveNGons(raw) {
                 return parseInt(s[0], 10) - 1;
             });
 
-            const p0 = positions[vertIndices[0]];
-            const p1 = positions[vertIndices[1]];
-            const p2 = positions[vertIndices[2]];
-            if (!p0 || !p1 || !p2) {
-                newLines.push(line);
-                continue;
+            // Calcular normal del polígono usando el método de Newell para soportar n-gonos complejos
+            const normal = new THREE.Vector3(0, 0, 0);
+            for (let v = 0; v < vertIndices.length; v++) {
+                const curr = positions[vertIndices[v]];
+                const next = positions[vertIndices[(v + 1) % vertIndices.length]];
+                if (curr && next) {
+                    normal.x += (curr.y - next.y) * (curr.z + next.z);
+                    normal.y += (curr.z - next.z) * (curr.x + next.x);
+                    normal.z += (curr.x - next.x) * (curr.y + next.y);
+                }
             }
 
-            const vA = new THREE.Vector3().subVectors(p1, p0);
-            const vB = new THREE.Vector3().subVectors(p2, p0);
-            const normal = new THREE.Vector3().crossVectors(vA, vB).normalize();
+            if (normal.lengthSq() < 1e-8) {
+                // Fallback con los primeros 3 vértices
+                const p0 = positions[vertIndices[0]];
+                const p1 = positions[vertIndices[1]];
+                const p2 = positions[vertIndices[2]];
+                if (p0 && p1 && p2) {
+                    const vA = new THREE.Vector3().subVectors(p1, p0);
+                    const vB = new THREE.Vector3().subVectors(p2, p0);
+                    normal.crossVectors(vA, vB);
+                }
+            }
+
+            if (normal.lengthSq() < 1e-8) {
+                // Si la normal es nula/degenerada, fallback a abanico (fan)
+                for (let t = 1; t < parts.length - 1; t++) {
+                    newLines.push(`f ${parts[0]} ${parts[t]} ${parts[t + 1]}`);
+                }
+                continue;
+            }
+            normal.normalize();
 
             let uAxis = new THREE.Vector3(1, 0, 0);
             if (Math.abs(normal.dot(uAxis)) > 0.9) {
@@ -432,7 +472,7 @@ function triangulateConcaveNGons(raw) {
 
             const pts2D = vertIndices.map(vIdx => {
                 const p = positions[vIdx];
-                return new THREE.Vector2(p.dot(uAxis), p.dot(vAxis));
+                return p ? new THREE.Vector2(p.dot(uAxis), p.dot(vAxis)) : new THREE.Vector2(0, 0);
             });
 
             try {
@@ -511,17 +551,61 @@ function generateAutomaticUVs(geometry) {
 window.triangulateConcaveNGons = triangulateConcaveNGons;
 window.generateAutomaticUVs = generateAutomaticUVs;
 
+// Parser para archivos de materiales Wavefront MTL (colores difusos Kd y nombres)
+function parseMTLMaterials(mtlText) {
+    if (!mtlText) return {};
+    const materials = {};
+    let currentMtl = null;
+    const lines = mtlText.split('\n');
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('newmtl ')) {
+            const name = trimmed.substring(7).trim();
+            currentMtl = { name, color: null };
+            materials[name] = currentMtl;
+        } else if (currentMtl && trimmed.startsWith('Kd ')) {
+            const parts = trimmed.substring(3).trim().split(/\s+/).map(Number);
+            if (parts.length >= 3) {
+                const r = Math.round(Math.max(0, Math.min(1, parts[0])) * 255);
+                const g = Math.round(Math.max(0, Math.min(1, parts[1])) * 255);
+                const b = Math.round(Math.max(0, Math.min(1, parts[2])) * 255);
+                currentMtl.color = `rgb(${r},${g},${b})`;
+            }
+        }
+    }
+    return materials;
+}
+
+const KNOWN_COLOR_NAMES = {
+    rojo: '#e53935', red: '#e53935',
+    azul: '#1e88e5', blue: '#1e88e5',
+    verde: '#43a047', green: '#43a047',
+    amarillo: '#fdd835', yellow: '#fdd835',
+    naranja: '#fb8c00', orange: '#fb8c00',
+    negro: '#212121', black: '#212121',
+    blanco: '#f5f5f5', white: '#f5f5f5',
+    gris: '#757575', grey: '#757575', gray: '#757575',
+    morado: '#8e24aa', purple: '#8e24aa', violeta: '#8e24aa',
+    rosa: '#e91e63', pink: '#e91e63',
+    marron: '#6d4c41', brown: '#6d4c41', cafe: '#6d4c41',
+    cyan: '#00acc1', celeste: '#42a5f5', turquesa: '#00acc1'
+};
+
 // Carga y procesamiento de modelos OBJ
-function loadOBJContents(contents) {
+function loadOBJContents(contents, mtlContents = null) {
     try {
         const cleanContents = triangulateConcaveNGons(contents);
         const loader = new OBJLoader();
         const object = loader.parse(cleanContents);
 
+        const parsedMTL = mtlContents ? parseMTLMaterials(mtlContents) : {};
         let autoGeneratedCount = 0;
         const meshes = [];
+        const originalMaterialsMap = new Map();
+
         object.traverse((child) => {
             if (child.isMesh) {
+                originalMaterialsMap.set(child, child.material);
                 if (!child.geometry.attributes.uv || child.geometry.attributes.uv.count === 0) {
                     generateAutomaticUVs(child.geometry);
                     autoGeneratedCount++;
@@ -543,6 +627,84 @@ function loadOBJContents(contents) {
         if (meshes.length === 0) {
             alert('El archivo OBJ no contiene mallas geométricas válidas.');
             return;
+        }
+
+        // Si el modelo incluye materiales con colores definidos (archivo .mtl o nombres de material reconocibles en Blender),
+        // generar automáticamente una capa no destructiva 'Materiales (Blender)' con los colores base
+        const matColors = {};
+        let hasCustomColors = false;
+
+        meshes.forEach(mesh => {
+            const origMats = originalMaterialsMap.get(mesh);
+            const matList = Array.isArray(origMats) ? origMats : (origMats ? [origMats] : []);
+            matList.forEach(m => {
+                if (!m || !m.name) return;
+                const mName = m.name;
+                if (parsedMTL[mName]?.color) {
+                    matColors[mName] = parsedMTL[mName].color;
+                    hasCustomColors = true;
+                } else {
+                    const cleanName = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    for (const [colName, colHex] of Object.entries(KNOWN_COLOR_NAMES)) {
+                        if (cleanName.includes(colName)) {
+                            matColors[mName] = colHex;
+                            hasCustomColors = true;
+                            break;
+                        }
+                    }
+                }
+            });
+        });
+
+        if (hasCustomColors && layerManager) {
+            let mtlLayer = layerManager.layers.find(l => l.name === 'Materiales (Blender)');
+            if (!mtlLayer) {
+                mtlLayer = layerManager.addLayer('Materiales (Blender)');
+            } else {
+                mtlLayer.ctx.clearRect(0, 0, mtlLayer.canvas.width, mtlLayer.canvas.height);
+            }
+
+            const mCtx = mtlLayer.ctx;
+            const W = mtlLayer.canvas.width;
+            const H = mtlLayer.canvas.height;
+
+            meshes.forEach(mesh => {
+                const uvAttr = mesh.geometry.attributes.uv;
+                const groups = mesh.geometry.groups;
+                const origMats = originalMaterialsMap.get(mesh);
+                const matList = Array.isArray(origMats) ? origMats : (origMats ? [origMats] : []);
+
+                if (uvAttr && groups && groups.length > 0) {
+                    groups.forEach(g => {
+                        const mName = matList[g.materialIndex]?.name;
+                        const col = matColors[mName];
+                        if (col) {
+                            mCtx.fillStyle = col;
+                            mCtx.strokeStyle = col;
+                            mCtx.lineWidth = 1;
+                            for (let i = g.start; i < g.start + g.count; i += 3) {
+                                const u0 = uvAttr.getX(i) * W;
+                                const v0 = (1 - uvAttr.getY(i)) * H;
+                                const u1 = uvAttr.getX(i + 1) * W;
+                                const v1 = (1 - uvAttr.getY(i + 1)) * H;
+                                const u2 = uvAttr.getX(i + 2) * W;
+                                const v2 = (1 - uvAttr.getY(i + 2)) * H;
+
+                                mCtx.beginPath();
+                                mCtx.moveTo(u0, v0);
+                                mCtx.lineTo(u1, v1);
+                                mCtx.lineTo(u2, v2);
+                                mCtx.closePath();
+                                mCtx.fill();
+                                mCtx.stroke();
+                            }
+                        }
+                    });
+                }
+            });
+
+            layerManager.recomposite();
+            layerManager.renderUI();
         }
 
         if (autoGeneratedCount > 0) {
@@ -805,17 +967,193 @@ document.getElementById('panel-layers')?.addEventListener('click', (e) => {
 });
 
 // Load OBJ manual (botón Archivo)
-document.getElementById('btn-load-obj').addEventListener('click', () => document.getElementById('input-obj').click());
-document.getElementById('input-obj').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+document.getElementById('btn-load-obj')?.addEventListener('click', () => document.getElementById('input-obj').click());
+document.getElementById('input-obj')?.addEventListener('change', (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
 
-    window.currentProjectFileName = file.name.replace(/\.[^/.]+$/, '');
+    const objFile = files.find(f => f.name.toLowerCase().endsWith('.obj')) || files[0];
+    const mtlFile = files.find(f => f.name.toLowerCase().endsWith('.mtl'));
+
+    window.currentProjectFileName = objFile.name.replace(/\.[^/.]+$/, '');
     const reader = new FileReader();
     reader.onload = (event) => {
-        loadOBJContents(event.target.result);
+        const objText = event.target.result;
+        if (mtlFile) {
+            const mtlReader = new FileReader();
+            mtlReader.onload = (mEvent) => {
+                loadOBJContents(objText, mEvent.target.result);
+            };
+            mtlReader.readAsText(mtlFile);
+        } else {
+            loadOBJContents(objText);
+        }
     };
-    reader.readAsText(file);
+    reader.readAsText(objFile);
+    e.target.value = '';
+});
+
+// Carga y renderizado robusto de imágenes y vectores SVG (soporte nativo para Inkscape e Illustrator)
+function loadImageOrSVG(file, callback) {
+    if (!file) return;
+    const isSVG = file.name.toLowerCase().endsWith('.svg') || file.type === 'image/svg+xml';
+    const reader = new FileReader();
+
+    if (isSVG) {
+        reader.onload = (e) => {
+            let svgText = e.target.result;
+            try {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(svgText, 'image/svg+xml');
+                const svgEl = doc.querySelector('svg');
+                if (svgEl) {
+                    const viewBox = svgEl.getAttribute('viewBox');
+                    let vbW = null, vbH = null;
+                    if (viewBox) {
+                        const vbParts = viewBox.trim().split(/[\s,]+/).map(Number);
+                        if (vbParts.length === 4 && vbParts[2] > 0 && vbParts[3] > 0) {
+                            vbW = vbParts[2];
+                            vbH = vbParts[3];
+                        }
+                    }
+                    if (!svgEl.getAttribute('width') || svgEl.getAttribute('width').endsWith('%')) {
+                        svgEl.setAttribute('width', (vbW || TEX_SIZE || 2048) + 'px');
+                    }
+                    if (!svgEl.getAttribute('height') || svgEl.getAttribute('height').endsWith('%')) {
+                        svgEl.setAttribute('height', (vbH || TEX_SIZE || 2048) + 'px');
+                    }
+                    const serializer = new XMLSerializer();
+                    svgText = serializer.serializeToString(doc);
+                }
+            } catch (err) {
+                console.warn('[SVG Loader] Advertencia al procesar XML del SVG:', err);
+            }
+
+            const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                callback(img, file.name.replace(/\.[^/.]+$/, ''));
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                alert('No se pudo renderizar el archivo SVG. Verifica que sea un archivo SVG válido exportado desde Inkscape o Illustrator.');
+            };
+            img.src = url;
+        };
+        reader.readAsText(file);
+    } else {
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                callback(img, file.name.replace(/\.[^/.]+$/, ''));
+            };
+            img.onerror = () => {
+                alert('No se pudo cargar la imagen seleccionada.');
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
+}
+window.loadImageOrSVG = loadImageOrSVG;
+
+function importImageAsLayer(file) {
+    if (!file || !layerManager) return;
+    loadImageOrSVG(file, (img, name) => {
+        const layer = layerManager.addLayer(name || 'Diseño Inkscape');
+        const ctx = layer.ctx;
+        const W = layer.canvas.width;
+        const H = layer.canvas.height;
+        ctx.clearRect(0, 0, W, H);
+        ctx.drawImage(img, 0, 0, W, H);
+        layerManager.recomposite();
+        layerManager.renderUI();
+        if (window.painter) {
+            window.painter.needsUpdate = true;
+            window.painter.forceUpdate = true;
+        }
+    });
+}
+window.importImageAsLayer = importImageAsLayer;
+
+// Conexión de botones para importar imagen o SVG como capa
+document.getElementById('btn-import-texture-layer')?.addEventListener('click', () => {
+    document.getElementById('input-import-layer')?.click();
+});
+document.getElementById('btn-import-layer-img')?.addEventListener('click', () => {
+    document.getElementById('input-import-layer')?.click();
+});
+document.getElementById('input-import-layer')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+        importImageAsLayer(file);
+        e.target.value = '';
+    }
+});
+
+// Soporte Drag & Drop para archivos .obj, .mtl, .nsp, .nspp y texturas .svg/.png directamente en la ventana
+window.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+});
+
+window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) return;
+
+    const nsppFile = files.find(f => f.name.toLowerCase().endsWith('.nspp'));
+    const nspFile = files.find(f => f.name.toLowerCase().endsWith('.nsp') || (f.name.toLowerCase().endsWith('.json') && !f.name.toLowerCase().endsWith('.nspp')));
+    const objFile = files.find(f => f.name.toLowerCase().endsWith('.obj'));
+    const mtlFile = files.find(f => f.name.toLowerCase().endsWith('.mtl'));
+    const imgFile = files.find(f => {
+        const n = f.name.toLowerCase();
+        return n.endsWith('.svg') || n.endsWith('.png') || n.endsWith('.jpg') || n.endsWith('.jpeg') || n.endsWith('.webp');
+    });
+
+    if (nsppFile && window.modelAssembler) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const proj = JSON.parse(ev.target.result);
+                window.modelAssembler.loadAssemblyProject(proj);
+            } catch (err) {
+                alert('Error al abrir proyecto ensamblado: ' + err.message);
+            }
+        };
+        reader.readAsText(nsppFile);
+    } else if (nspFile && typeof window.loadProjectNSP === 'function') {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const proj = JSON.parse(ev.target.result);
+                window.loadProjectNSP(proj);
+            } catch (err) {
+                alert('Error al abrir proyecto NSP: ' + err.message);
+            }
+        };
+        reader.readAsText(nspFile);
+    } else if (objFile) {
+        window.currentProjectFileName = objFile.name.replace(/\.[^/.]+$/, '');
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const objText = ev.target.result;
+            if (mtlFile) {
+                const mtlReader = new FileReader();
+                mtlReader.onload = (mEv) => {
+                    loadOBJContents(objText, mEv.target.result);
+                };
+                mtlReader.readAsText(mtlFile);
+            } else {
+                loadOBJContents(objText);
+            }
+        };
+        reader.readAsText(objFile);
+    } else if (imgFile) {
+        importImageAsLayer(imgFile);
+    }
 });
 
 // Botón Ribbon Modo Papercraft / Unfold
@@ -1431,7 +1769,8 @@ document.getElementById('unfold-scale-preset')?.addEventListener('change', (e) =
     }
     papercraft.currentScale = preset;
     let factor = 1.0;
-    if (preset === '1:33') factor = 1 / 33;
+    if (preset === '1:10') factor = 1 / 10;
+    else if (preset === '1:33') factor = 1 / 33;
     else if (preset === '1:24') factor = 1 / 24;
     else if (preset === '1:48') factor = 1 / 48;
     else if (preset === '1:72') factor = 1 / 72;
@@ -1553,7 +1892,7 @@ toolButtons.forEach(btn => {
             window.painter.commitLayerTransform();
         }
 
-        const isShape = ['line', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode);
+        const isShape = ['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode);
 
         brushModeInput.value = mode;
         toolButtons.forEach(b => b.classList.remove('active'));
@@ -2709,45 +3048,273 @@ function applyZoom2D(factor) {
     updateTransform2D();
 }
 
+// --- SISTEMA DE VISTAS ORTOGONALES Y PERSPECTIVA ESTILO BLENDER ---
+let isProgrammaticCameraChange = false;
+
+function updateCameraReferences() {
+    isProgrammaticCameraChange = true;
+    window.camera = camera;
+    controls.object = camera;
+    if (window.painter) window.painter.camera = camera;
+    if (window.decalSystem) window.decalSystem.camera = camera;
+    controls.update();
+    isProgrammaticCameraChange = false;
+    updateView3DIndicator();
+}
+
+function updateView3DIndicator() {
+    const labelEl = document.getElementById('view3d-cam-label');
+    const toggleBtn = document.getElementById('btn-view3d-toggle-ortho');
+    const viewButtons = document.querySelectorAll('.btn-v3d-view');
+
+    if (toggleBtn) {
+        toggleBtn.classList.toggle('active', isOrthographic);
+        toggleBtn.textContent = isOrthographic ? '📐 Ortogonal' : '🎥 Perspectiva';
+    }
+
+    viewButtons.forEach(btn => {
+        btn.classList.toggle('active', isOrthographic && btn.getAttribute('data-view') === currentOrthoView);
+    });
+
+    if (!labelEl) return;
+    if (!isOrthographic) {
+        labelEl.textContent = 'Perspectiva Usuario';
+        return;
+    }
+
+    switch (currentOrthoView) {
+        case 'front': labelEl.textContent = 'Frontal Ortogonal (1)'; break;
+        case 'back': labelEl.textContent = 'Trasera Ortogonal (Ctrl+1)'; break;
+        case 'right': labelEl.textContent = 'Derecha Ortogonal (3)'; break;
+        case 'left': labelEl.textContent = 'Izquierda Ortogonal (Ctrl+3)'; break;
+        case 'top': labelEl.textContent = 'Superior Ortogonal (7)'; break;
+        case 'bottom': labelEl.textContent = 'Inferior Ortogonal (Ctrl+7)'; break;
+        default: labelEl.textContent = 'Ortogonal Usuario (5)'; break;
+    }
+}
+
+function syncCameras(fromCam, toCam) {
+    const target = controls.target.clone();
+    const dist = fromCam.position.distanceTo(target) || 5;
+    const dir = new THREE.Vector3().subVectors(fromCam.position, target).normalize();
+    const aspect = (view3d.clientWidth || 800) / (view3d.clientHeight || 600);
+
+    if (toCam.isOrthographicCamera) {
+        const vFOV = THREE.MathUtils.degToRad(fromCam.fov || 45);
+        const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
+        const visibleWidth = visibleHeight * aspect;
+
+        toCam.left = -visibleWidth / 2;
+        toCam.right = visibleWidth / 2;
+        toCam.top = visibleHeight / 2;
+        toCam.bottom = -visibleHeight / 2;
+        toCam.zoom = 1;
+        toCam.near = Math.max(0.01, dist / 100);
+        toCam.far = Math.max(1000, dist * 50);
+        toCam.position.copy(target).addScaledVector(dir, dist);
+        toCam.up.copy(fromCam.up);
+        toCam.lookAt(target);
+        toCam.updateProjectionMatrix();
+    } else {
+        toCam.aspect = aspect;
+        toCam.near = Math.max(0.01, dist / 100);
+        toCam.far = Math.max(1000, dist * 50);
+        toCam.position.copy(target).addScaledVector(dir, dist);
+        toCam.up.copy(fromCam.up);
+        toCam.lookAt(target);
+        toCam.updateProjectionMatrix();
+    }
+}
+
+function setCameraMode(ortho = true) {
+    if (ortho === isOrthographic) return;
+    const fromCam = camera;
+    isOrthographic = ortho;
+    camera = isOrthographic ? orthoCamera : perspCamera;
+    currentOrthoView = isOrthographic ? 'user_ortho' : null;
+
+    syncCameras(fromCam, camera);
+    updateCameraReferences();
+}
+
+function toggleCameraMode() {
+    setCameraMode(!isOrthographic);
+}
+
+function setOrthogonalView(viewName) {
+    currentOrthoView = viewName;
+    isOrthographic = true;
+    camera = orthoCamera;
+
+    const target = controls.target.clone();
+    const aspect = (view3d.clientWidth || 800) / (view3d.clientHeight || 600);
+
+    let maxDim = 3;
+    if (state.mesh) {
+        const box = new THREE.Box3().setFromObject(state.mesh);
+        const size = box.getSize(new THREE.Vector3());
+        maxDim = Math.max(size.x, size.y, size.z) || 3;
+        const center = box.getCenter(new THREE.Vector3());
+        controls.target.copy(center);
+        target.copy(center);
+    }
+
+    const dist = Math.max(5, maxDim * 2.5);
+    const visibleHeight = maxDim * 1.35;
+    const visibleWidth = visibleHeight * aspect;
+
+    orthoCamera.left = -visibleWidth / 2;
+    orthoCamera.right = visibleWidth / 2;
+    orthoCamera.top = visibleHeight / 2;
+    orthoCamera.bottom = -visibleHeight / 2;
+    orthoCamera.zoom = 1;
+    orthoCamera.near = 0.01;
+    orthoCamera.far = Math.max(1000, dist * 50);
+
+    switch (viewName) {
+        case 'front': // Frontal (Numpad 1)
+            orthoCamera.position.set(target.x, target.y, target.z + dist);
+            orthoCamera.up.set(0, 1, 0);
+            break;
+        case 'back': // Trasera (Ctrl + Numpad 1)
+            orthoCamera.position.set(target.x, target.y, target.z - dist);
+            orthoCamera.up.set(0, 1, 0);
+            break;
+        case 'right': // Derecha / Lateral (Numpad 3)
+            orthoCamera.position.set(target.x + dist, target.y, target.z);
+            orthoCamera.up.set(0, 1, 0);
+            break;
+        case 'left': // Izquierda (Ctrl + Numpad 3)
+            orthoCamera.position.set(target.x - dist, target.y, target.z);
+            orthoCamera.up.set(0, 1, 0);
+            break;
+        case 'top': // Superior (Numpad 7)
+            orthoCamera.position.set(target.x, target.y + dist, target.z);
+            orthoCamera.up.set(0, 0, -1);
+            break;
+        case 'bottom': // Inferior (Ctrl + Numpad 7)
+            orthoCamera.position.set(target.x, target.y - dist, target.z);
+            orthoCamera.up.set(0, 0, 1);
+            break;
+    }
+
+    orthoCamera.lookAt(target);
+    orthoCamera.updateProjectionMatrix();
+
+    updateCameraReferences();
+}
+window.setCameraMode = setCameraMode;
+window.toggleCameraMode = toggleCameraMode;
+window.setOrthogonalView = setOrthogonalView;
+
+controls.addEventListener('change', () => {
+    if (isProgrammaticCameraChange) return;
+    if (isOrthographic && currentOrthoView && currentOrthoView !== 'user_ortho') {
+        currentOrthoView = 'user_ortho';
+        updateView3DIndicator();
+    }
+});
+
 // Encuadrar / Centrar la cámara sobre el modelo 3D
 function frameModel(mesh = state.mesh) {
     if (!mesh) return;
     const box = new THREE.Box3().setFromObject(mesh);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    const aspect = (view3d.clientWidth || 800) / (view3d.clientHeight || 600);
+
     controls.target.copy(center);
-    if (maxDim > 0) {
-        const fov = camera.fov * (Math.PI / 180);
-        const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
-        camera.position.set(center.x + dist * 0.7, center.y + dist * 0.5, center.z + dist * 0.7);
-        camera.near = Math.max(0.01, maxDim / 100);
-        camera.far = Math.max(1000, maxDim * 100);
-        camera.updateProjectionMatrix();
+
+    // Ajustar Perspectiva
+    const fov = perspCamera.fov * (Math.PI / 180);
+    const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
+    perspCamera.position.set(center.x + dist * 0.7, center.y + dist * 0.5, center.z + dist * 0.7);
+    perspCamera.near = Math.max(0.01, maxDim / 100);
+    perspCamera.far = Math.max(1000, maxDim * 100);
+    perspCamera.updateProjectionMatrix();
+
+    // Ajustar Ortográfica
+    const visibleHeight = maxDim * 1.4;
+    const visibleWidth = visibleHeight * aspect;
+    orthoCamera.left = -visibleWidth / 2;
+    orthoCamera.right = visibleWidth / 2;
+    orthoCamera.top = visibleHeight / 2;
+    orthoCamera.bottom = -visibleHeight / 2;
+    orthoCamera.zoom = 1;
+    orthoCamera.near = Math.max(0.01, maxDim / 100);
+    orthoCamera.far = Math.max(1000, maxDim * 100);
+    if (!isOrthographic) {
+        orthoCamera.position.set(center.x + dist * 0.7, center.y + dist * 0.5, center.z + dist * 0.7);
     }
+    orthoCamera.updateProjectionMatrix();
+
     controls.update();
+    updateView3DIndicator();
 }
 window.frameModel = frameModel;
 
 // Controles de Cámara Vista 3D (+, -, Centrar y atajo tecla F)
 document.getElementById('btn-3d-zoom-in')?.addEventListener('click', () => {
-    const dir = new THREE.Vector3();
-    camera.getWorldDirection(dir);
-    camera.position.addScaledVector(dir, 0.5);
+    if (isOrthographic) {
+        orthoCamera.zoom = Math.min(20, orthoCamera.zoom * 1.25);
+        orthoCamera.updateProjectionMatrix();
+    } else {
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        camera.position.addScaledVector(dir, 0.5);
+    }
     controls.update();
 });
 document.getElementById('btn-3d-zoom-out')?.addEventListener('click', () => {
-    const dir = new THREE.Vector3();
-    camera.getWorldDirection(dir);
-    camera.position.addScaledVector(dir, -0.5);
+    if (isOrthographic) {
+        orthoCamera.zoom = Math.max(0.05, orthoCamera.zoom / 1.25);
+        orthoCamera.updateProjectionMatrix();
+    } else {
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        camera.position.addScaledVector(dir, -0.5);
+    }
     controls.update();
 });
 document.getElementById('btn-3d-reset')?.addEventListener('click', () => {
     frameModel();
 });
+
+document.getElementById('btn-view3d-toggle-ortho')?.addEventListener('click', () => {
+    toggleCameraMode();
+});
+document.querySelectorAll('.btn-v3d-view').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const view = btn.getAttribute('data-view');
+        if (view) setOrthogonalView(view);
+    });
+});
+
 window.addEventListener('keydown', (e) => {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+
+    // Atajos de cámara estilo Blender (5 = Toggle Persp/Ortho, 1 = Front, 3 = Right, 7 = Top, Ctrl para opuestas)
+    if (e.key === '5' || e.code === 'Numpad5') {
+        e.preventDefault();
+        toggleCameraMode();
+        return;
+    }
+    if (e.key === '1' || e.code === 'Numpad1') {
+        e.preventDefault();
+        setOrthogonalView(e.ctrlKey ? 'back' : 'front');
+        return;
+    }
+    if (e.key === '3' || e.code === 'Numpad3') {
+        e.preventDefault();
+        setOrthogonalView(e.ctrlKey ? 'left' : 'right');
+        return;
+    }
+    if (e.key === '7' || e.code === 'Numpad7') {
+        e.preventDefault();
+        setOrthogonalView(e.ctrlKey ? 'bottom' : 'top');
+        return;
+    }
     if (e.key === 'f' || e.key === 'F') {
         frameModel();
     }
@@ -2840,8 +3407,16 @@ window.addEventListener('keydown', (e) => {
 
 // Resize Handling
 window.addEventListener('resize', () => {
-    camera.aspect = view3d.clientWidth / view3d.clientHeight;
-    camera.updateProjectionMatrix();
+    const aspect = (view3d.clientWidth || 800) / (view3d.clientHeight || 600);
+    perspCamera.aspect = aspect;
+    perspCamera.updateProjectionMatrix();
+
+    const currentHeight = orthoCamera.top - orthoCamera.bottom;
+    const newWidth = currentHeight * aspect;
+    orthoCamera.left = -newWidth / 2;
+    orthoCamera.right = newWidth / 2;
+    orthoCamera.updateProjectionMatrix();
+
     renderer.setSize(view3d.clientWidth, view3d.clientHeight);
 });
 
