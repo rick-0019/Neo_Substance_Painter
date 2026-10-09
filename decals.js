@@ -989,10 +989,15 @@ export class DecalSystem {
         });
 
         shapeScaleInput?.addEventListener('input', (e) => {
-            const scale = parseFloat(e.target.value) / 100;
-            this.decal2D.width = this.decal2D.baseWidth * scale;
-            this.decal2D.height = this.decal2D.baseHeight * scale;
-            this.scheduleSync(false);
+            const val = parseInt(e.target.value, 10);
+            const valLabel = document.getElementById('shape-scale-val');
+            if (valLabel) valLabel.textContent = `${val}%`;
+            if (this.selectedDecalId) {
+                const scale = val / 100;
+                this.decal2D.width = this.decal2D.baseWidth * scale;
+                this.decal2D.height = this.decal2D.baseHeight * scale;
+                this.scheduleSync(false);
+            }
         });
         shapeScaleInput?.addEventListener('change', () => this.syncCurrentDecalToObject(true));
         btnShapeScaleDec?.addEventListener('click', () => {
@@ -1012,12 +1017,17 @@ export class DecalSystem {
             deg = Math.max(-180, Math.min(180, deg));
             if (shapeRotInput) shapeRotInput.value = deg;
             if (shapeRotVal) shapeRotVal.textContent = `${deg}°`;
-            this.decal2D.rotation = (deg * Math.PI) / 180;
-            if (isFinal) {
-                this.syncCurrentDecalToObject(true);
-                this.render2DPreview();
-            } else {
-                this.scheduleSync(false);
+            if (this.selectedDecalId) {
+                this.decal2D.rotation = (deg * Math.PI) / 180;
+                if (isFinal) {
+                    this.syncCurrentDecalToObject(true);
+                    this.render2DPreview();
+                } else {
+                    this.scheduleSync(false);
+                }
+            } else if (window.painter && window.painter.editingShape) {
+                window.painter.editingShape.angle = (deg * Math.PI) / 180;
+                window.painter.renderEditingShape();
             }
         };
 
@@ -1838,6 +1848,8 @@ export class DecalSystem {
                 if (shapeScaleInput && decal.baseWidth) {
                     const scalePct = Math.round((decal.width / decal.baseWidth) * 100);
                     shapeScaleInput.value = Math.min(300, Math.max(10, scalePct));
+                    const scaleVal = document.getElementById('shape-scale-val');
+                    if (scaleVal) scaleVal.textContent = `${shapeScaleInput.value}%`;
                 }
                 if (shapeRotInput && shapeRotVal) {
                     const deg = Math.round((decal.rotation * 180 / Math.PI) % 360);

@@ -329,41 +329,63 @@
 
                 <div class="ribbon-divider" style="height: 48px; margin: 0 1px;"></div>
 
-                <!-- Columna 3: Grosor y Paso de Remache (2 filas compactas) -->
-                <div style="display: flex; flex-direction: column; gap: 2px; justify-content: center;">
-                    <div style="display: flex; align-items: center; gap: 2px;" title="Grosor de borde o tamaño de remaches">
-                        <span style="font-size: 0.68em; color: #aaa; width: 30px;">Gros:</span>
-                        <button type="button" id="btn-shape-stroke-dec" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Menos grosor">-</button>
-                        <span id="shape-bar-stroke-val" style="font-size: 0.72em; width: 26px; text-align: center; color: #fff;">4 px</span>
-                        <button type="button" id="btn-shape-stroke-inc" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Más grosor">+</button>
-                        <input type="range" id="shape-bar-stroke-width" min="1" max="50" value="4" style="display: none;">
+                <!-- Columna 3: Grosor y Paso de Remache (con deslizables) -->
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <!-- Grosor -->
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #ccc; white-space: nowrap;">
+                            <span>Grosor</span>
+                            <span id="shape-bar-stroke-val" style="color: #fff; font-weight: bold;">4 px</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 2px;">
+                            <button type="button" id="btn-shape-stroke-dec" class="size-step-btn" style="width: 18px; height: 18px; font-size: 11px;" title="Menos grosor">-</button>
+                            <input type="range" id="shape-bar-stroke-width" min="1" max="50" value="4" style="width: 50px;">
+                            <button type="button" id="btn-shape-stroke-inc" class="size-step-btn" style="width: 18px; height: 18px; font-size: 11px;" title="Más grosor">+</button>
+                        </div>
                     </div>
-                    <div id="shape-bar-spacing-row" style="display: flex; align-items: center; gap: 2px;" title="Separación / Distancia entre remaches o guiones">
-                        <span style="font-size: 0.68em; color: #aaa; width: 30px;">Paso:</span>
-                        <button type="button" id="btn-shape-spacing-dec" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Menos separación">-</button>
-                        <span id="shape-bar-spacing-val" style="font-size: 0.72em; width: 26px; text-align: center; color: #fff;">10 px</span>
-                        <button type="button" id="btn-shape-spacing-inc" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Más separación">+</button>
-                        <input type="range" id="shape-bar-spacing" min="4" max="80" value="10" style="display: none;">
+
+                    <!-- Paso (Distancia entre remaches o guiones) -->
+                    <div id="shape-bar-spacing-row" style="display: flex; flex-direction: column; gap: 2px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #ccc; white-space: nowrap;">
+                            <span>Paso</span>
+                            <span id="shape-bar-spacing-val" style="color: #fff; font-weight: bold;">10 px</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 2px;">
+                            <button type="button" id="btn-shape-spacing-dec" class="size-step-btn" style="width: 18px; height: 18px; font-size: 11px;" title="Menos separación">-</button>
+                            <input type="range" id="shape-bar-spacing" min="4" max="80" value="10" style="width: 50px;">
+                            <button type="button" id="btn-shape-spacing-inc" class="size-step-btn" style="width: 18px; height: 18px; font-size: 11px;" title="Más separación">+</button>
+                        </div>
                     </div>
                 </div>
 
                 <div class="ribbon-divider" style="height: 48px; margin: 0 1px;"></div>
 
-                <!-- Columna 4: Redondeo y Giro (2 filas compactas) -->
-                <div style="display: flex; flex-direction: column; gap: 2px; justify-content: center;">
-                    <div id="shape-bar-radius-group" style="display: flex; align-items: center; gap: 2px;" title="Redondeo de esquinas (Corner Radius)">
-                        <span style="font-size: 0.68em; color: #aaa; width: 26px;">Red:</span>
-                        <button type="button" id="btn-shape-radius-zero" class="size-step-btn" style="width: 16px; height: 16px; font-size: 9px; padding: 0;" title="Sin redondeo (0 px)">0</button>
-                        <span id="shape-bar-radius-val" style="font-size: 0.72em; width: 26px; text-align: center; color: #fff;">0 px</span>
-                        <button type="button" id="btn-shape-radius-inc" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Más redondeo (+5 px)">+</button>
-                        <input type="range" id="shape-bar-radius" min="0" max="60" value="0" style="display: none;">
+                <!-- Columna 4: Giro y Redondeo (con deslizables) -->
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <!-- Giro / Rotación -->
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #ccc; white-space: nowrap;">
+                            <span>Giro</span>
+                            <span id="shape-rot-val" style="color: #fff; font-weight: bold;">0°</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 2px;">
+                            <button type="button" id="btn-shape-rot-dec" class="size-step-btn" style="width: 18px; height: 18px; font-size: 11px;" title="Girar -1°">-</button>
+                            <input type="range" id="shape-rotation" min="-180" max="180" value="0" style="width: 50px;">
+                            <button type="button" id="btn-shape-rot-inc" class="size-step-btn" style="width: 18px; height: 18px; font-size: 11px;" title="Girar +1°">+</button>
+                        </div>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 2px;" title="Rotación de la figura">
-                        <span style="font-size: 0.68em; color: #aaa; width: 26px;">Giro:</span>
-                        <button type="button" id="btn-shape-rot-dec" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Girar -1°">-</button>
-                        <span id="shape-rot-val" style="font-size: 0.72em; width: 26px; text-align: center; color: #fff;">0°</span>
-                        <button type="button" id="btn-shape-rot-inc" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Girar +1°">+</button>
-                        <input type="range" id="shape-rotation" min="-180" max="180" value="0" style="display: none;">
+
+                    <!-- Redondeo de esquinas -->
+                    <div id="shape-bar-radius-group" style="display: flex; flex-direction: column; gap: 2px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #ccc; white-space: nowrap;">
+                            <span>Redondeo</span>
+                            <span id="shape-bar-radius-val" style="color: #fff; font-weight: bold;">0 px</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 2px;">
+                            <button type="button" id="btn-shape-radius-zero" class="size-step-btn" style="width: 18px; height: 18px; font-size: 10px;" title="Sin redondeo (0 px)">0</button>
+                            <input type="range" id="shape-bar-radius" min="0" max="60" value="0" style="width: 45px;">
+                            <button type="button" id="btn-shape-radius-inc" class="size-step-btn" style="width: 18px; height: 18px; font-size: 11px;" title="Más redondeo (+5 px)">+</button>
+                        </div>
                     </div>
                 </div>
 
@@ -373,24 +395,33 @@
                 <div style="display: flex; flex-direction: column; gap: 2px; justify-content: center; align-items: center;">
                     <span style="font-size: 0.68em; color: #aaa;">Espejo</span>
                     <div style="display: flex; gap: 2px;">
-                        <button type="button" id="btn-shape-flip-h" class="size-step-btn" style="width: 18px; height: 18px; font-size: 10px; padding: 0;" title="Espejo horizontal (⇄ Invertir izquierda/derecha)">⇄</button>
-                        <button type="button" id="btn-shape-flip-v" class="size-step-btn" style="width: 18px; height: 18px; font-size: 10px; padding: 0;" title="Espejo vertical (⇅ Invertir arriba/abajo)">⇅</button>
+                        <button type="button" id="btn-shape-flip-h" class="size-step-btn" style="width: 20px; height: 20px; font-size: 11px; padding: 0;" title="Espejo horizontal (⇄ Invertir izquierda/derecha)">⇄</button>
+                        <button type="button" id="btn-shape-flip-v" class="size-step-btn" style="width: 20px; height: 20px; font-size: 11px; padding: 0;" title="Espejo vertical (⇅ Invertir arriba/abajo)">⇅</button>
                     </div>
                 </div>
 
                 <div class="ribbon-divider" style="height: 48px; margin: 0 1px;"></div>
 
-                <!-- Columna 5: Vista (3D/2D) y Escala (2 filas compactas) -->
-                <div style="display: flex; flex-direction: column; gap: 2px; justify-content: center;">
-                    <div class="decal-mode-selector" style="display: flex; gap: 1px; background: #222; border: 1px solid #444; border-radius: 3px; padding: 1px;">
-                        <button type="button" id="btn-shape-mode-2d" class="decal-mode-btn active" style="padding: 1px 3px; font-size: 9.5px;" title="Editar forma en 2D">📄 2D</button>
-                        <button type="button" id="btn-shape-mode-3d" class="decal-mode-btn" style="padding: 1px 3px; font-size: 9.5px;" title="Proyectar forma sobre el modelo 3D">🌐 3D</button>
+                <!-- Columna 5: Vista (3D/2D) y Escala -->
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <div style="display: flex; flex-direction: column; gap: 2px; justify-content: center;">
+                        <span style="font-size: 0.68em; color: #aaa;">Vista</span>
+                        <div class="decal-mode-selector" style="display: flex; gap: 1px; background: #222; border: 1px solid #444; border-radius: 3px; padding: 1px;">
+                            <button type="button" id="btn-shape-mode-2d" class="decal-mode-btn active" style="padding: 2px 4px; font-size: 9.5px;" title="Editar forma en 2D">📄 2D</button>
+                            <button type="button" id="btn-shape-mode-3d" class="decal-mode-btn" style="padding: 2px 4px; font-size: 9.5px;" title="Proyectar forma sobre el modelo 3D">🌐 3D</button>
+                        </div>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 2px;" title="Escala de tamaño">
-                        <span style="font-size: 0.68em; color: #aaa; width: 26px;">Esc:</span>
-                        <button type="button" id="btn-shape-scale-dec" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Reducir">-</button>
-                        <button type="button" id="btn-shape-scale-inc" class="size-step-btn" style="width: 16px; height: 16px; font-size: 10px; padding: 0;" title="Aumentar">+</button>
-                        <input type="range" id="shape-scale" min="10" max="300" value="100" style="display: none;">
+                    <!-- Escala -->
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #ccc; white-space: nowrap;">
+                            <span>Escala</span>
+                            <span id="shape-scale-val" style="color: #fff; font-weight: bold;">100%</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 2px;">
+                            <button type="button" id="btn-shape-scale-dec" class="size-step-btn" style="width: 18px; height: 18px; font-size: 11px;" title="Reducir tamaño">-</button>
+                            <input type="range" id="shape-scale" min="10" max="300" value="100" style="width: 50px;">
+                            <button type="button" id="btn-shape-scale-inc" class="size-step-btn" style="width: 18px; height: 18px; font-size: 11px;" title="Aumentar tamaño">+</button>
+                        </div>
                     </div>
                 </div>
 
@@ -1221,7 +1252,7 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=8.0"></script>
-    <script type="module" src="assembler.js?v=8.0"></script>
+    <script type="module" src="main.js?v=8.1"></script>
+    <script type="module" src="assembler.js?v=8.1"></script>
 </body>
 </html>
