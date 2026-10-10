@@ -168,6 +168,9 @@ export class Painter {
         this.lastV = null;
         this.lastDrawX = null;
         this.lastDrawY = null;
+        this.lastPoint3D = null;
+        this.lastScreenX = null;
+        this.lastScreenY = null;
         
         // Sistema de Undo / Redo (Ctrl+Z / Ctrl+Y)
         this.undoStack = [];
@@ -584,6 +587,11 @@ export class Painter {
             this.isPainting = true;
             this.lastU = null;
             this.lastV = null;
+            this.lastDrawX = null;
+            this.lastDrawY = null;
+            this.lastPoint3D = null;
+            this.lastScreenX = null;
+            this.lastScreenY = null;
             this.paint3D(e);
             this.needsUpdate = true;
             this.forceUpdate = true;
@@ -751,6 +759,9 @@ export class Painter {
                     this.lastV = null;
                     this.lastDrawX = null;
                     this.lastDrawY = null;
+                    this.lastPoint3D = null;
+                    this.lastScreenX = null;
+                    this.lastScreenY = null;
                     this.needsUpdate = true;
                     this.forceUpdate = true;
                     if (this.layerManager) {
@@ -2621,7 +2632,10 @@ export class Painter {
             if (uv) {
                 const dUV = Math.hypot(uv.u - primaryUV.x, uv.v - primaryUV.y);
                 if (dUV > 0.03) {
-                    extraUVs.push(uv);
+                    const alreadyPresent = extraUVs.some(e => Math.hypot(e.u - uv.u, e.v - uv.v) < 0.015);
+                    if (!alreadyPresent) {
+                        extraUVs.push(uv);
+                    }
                 }
             }
         }
@@ -2630,72 +2644,189 @@ export class Painter {
 
     paint3D(event) {
         if (!this.mesh) return;
+        const curScreenX = event.clientX;
+        const curScreenY = event.clientY;
+
+        if (this.lastScreenX === null || this.lastScreenY === null) {
+            this.lastScreenX = curScreenX;
+            this.lastScreenY = curScreenY;
+            this.paint3DAtScreen(curScreenX, curScreenY, true);
+            if (this.layerManager) this.layerManager.recomposite();
+            this.needsUpdate = true;
+            return;
+        }
+
+        const dx = curScreenX - this.lastScreenX;
+        const dy = curScreenY - this.lastScreenY;
+        const distScreen = Math.hypot(dx, dy);
+
+        // Sub-stepping en espacio de pantalla para trazos continuos y suaves
+        const stepSize = 4;
+        const numSteps = Math.min(10, Math.max(1, Math.ceil(distScreen / stepSize)));
+
+        for (let s = 1; s <= numSteps; s++) {
+            const t = s / numSteps;
+            const sx = this.lastScreenX + dx * t;
+            const sy = this.lastScreenY + dy * t;
+            this.paint3DAtScreen(sx, sy, false);
+        }
+
+        this.lastScreenX = curScreenX;
+        this.lastScreenY = curScreenY;
+
+        if (this.layerManager) {
+            this.layerManager.recomposite();
+        }
+        this.needsUpdate = true;
+    }
+
+    paint3DAtScreen(screenX, screenY, isNewStroke = false) {
+        if (!this.mesh) return;
         const rect = this.renderer.domElement.getBoundingClientRect();
-        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        this.mouse.x = ((screenX - rect.left) / rect.width) * 2 - 1;
+        this.mouse.y = -((screenY - rect.top) / rect.height) * 2 + 1;
         this.raycaster.setFromCamera(this.mouse, this.camera);
         const intersects = this.raycaster.intersectObject(this.mesh, true);
         const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
 
-        if (hit) {
-            const uv = hit.uv;
-            const settings = this.getBrushSettings();
-
-            // Calcular radio en espacio 3D para abarcar costuras contiguas entre piezas (ej. fuselaje a ala)
-            let worldPixelSize;
-            if (this.camera && this.camera.isOrthographicCamera) {
-                const frustumHeight = (this.camera.top - this.camera.bottom) / (this.camera.zoom || 1);
-                worldPixelSize = frustumHeight / this.renderer.domElement.clientHeight;
-            } else {
-                const distToCam = this.camera.position.distanceTo(hit.point);
-                const vFOV = THREE.MathUtils.degToRad(this.camera.fov || 45);
-                const heightAtDist = 2 * Math.tan(vFOV / 2) * distToCam;
-                worldPixelSize = heightAtDist / this.renderer.domElement.clientHeight;
-            }
-            const brushRadius3D = Math.max(0.005, settings.size * worldPixelSize);
-            const hitNormal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : null;
-
-            // 1. Pintar en la superficie primaria
-            this.drawAtUV(uv.x, uv.y, this.lastU === null);
-
-            // 2. Pintar en piezas contiguas que tocan esta costura
-            const seamUVs = this.getSeamUVs(hit.point, brushRadius3D, hitNormal, uv);
-            for (let k = 0; k < seamUVs.length; k++) {
-                this.drawAtUV(seamUVs[k].u, seamUVs[k].v, false);
-            }
-
-            this.lastU = uv.x;
-            this.lastV = uv.y;
-            this.lastPoint3D = hit.point.clone();
-        } else {
+        if (!hit) {
+            // Fuera de la geometría 3D
+            this.lastPoint3D = null;
+            this.lastDrawX = null;
+            this.lastDrawY = null;
             this.lastU = null;
             this.lastV = null;
-            this.lastPoint3D = null;
+            return;
+        }
+
+        // Culling de normales (filtrar caras traseras y ángulos rasantes)
+        const hitNormal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : null;
+        if (hitNormal) {
+            let viewDir;
+            if (this.camera.isOrthographicCamera) {
+                viewDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.camera.quaternion).negate();
+            } else {
+                viewDir = new THREE.Vector3().subVectors(this.camera.position, hit.point).normalize();
+            }
+            if (hitNormal.dot(viewDir) < 0.05) {
+                return;
+            }
+        }
+
+        const uv = hit.uv;
+        const settings = this.getBrushSettings();
+
+        // Radio en espacio 3D
+        let worldPixelSize;
+        if (this.camera && this.camera.isOrthographicCamera) {
+            const frustumHeight = (this.camera.top - this.camera.bottom) / (this.camera.zoom || 1);
+            worldPixelSize = frustumHeight / this.renderer.domElement.clientHeight;
+        } else {
+            const distToCam = this.camera.position.distanceTo(hit.point);
+            const vFOV = THREE.MathUtils.degToRad(this.camera.fov || 45);
+            const heightAtDist = 2 * Math.tan(vFOV / 2) * distToCam;
+            worldPixelSize = heightAtDist / this.renderer.domElement.clientHeight;
+        }
+        const brushRadius3D = Math.max(0.005, settings.size * worldPixelSize);
+
+        // 1. Pintar en la superficie primaria con protección contra saltos de costura UV
+        this.drawAtUV3D(uv.x, uv.y, hit.point, brushRadius3D, isNewStroke);
+
+        this.lastU = uv.x;
+        this.lastV = uv.y;
+        this.lastPoint3D = hit.point.clone();
+    }
+
+    drawAtUV3D(u, v, point3D, brushRadius3D, isNewStroke = false) {
+        const x = u * this.canvas.width;
+        const y = (1 - v) * this.canvas.height;
+
+        if (isNewStroke || this.lastDrawX === null || this.lastDrawY === null || this.lastPoint3D === null) {
+            this.stampAtUV(u, v);
+            this.lastDrawX = x;
+            this.lastDrawY = y;
+            return;
+        }
+
+        // Calcular distancias UV y 3D
+        const lastU = this.lastDrawX / this.canvas.width;
+        const lastV = 1 - (this.lastDrawY / this.canvas.height);
+        const distUV = Math.hypot(u - lastU, v - lastV);
+        const dist3D = this.lastPoint3D ? this.lastPoint3D.distanceTo(point3D) : 0;
+
+        // PROTECCIÓN DE COSTURA (Seam Guard):
+        // Si la distancia UV es grande (> 0.08) o hubo un salto grande en 3D:
+        // NO unir con línea 2D para evitar la raya horizontal que cruza la textura.
+        if (distUV > 0.08 || dist3D > Math.max(0.15, brushRadius3D * 4)) {
+            this.stampAtUV(u, v);
+            this.lastDrawX = x;
+            this.lastDrawY = y;
+            return;
+        }
+
+        // Trazo continuo dentro de la misma isla UV
+        this.drawLineAtCanvas(this.lastDrawX, this.lastDrawY, x, y);
+        this.lastDrawX = x;
+        this.lastDrawY = y;
+    }
+
+    hexToRgba(hex, alpha) {
+        if (!hex) return `rgba(0,0,0,${alpha})`;
+        if (hex.startsWith('rgba') || hex.startsWith('rgb')) return hex;
+        let clean = hex.replace('#', '');
+        if (clean.length === 3) clean = clean.split('').map(c => c + c).join('');
+        const n = parseInt(clean, 16) || 0;
+        return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+    }
+
+    renderTipStampDirect(activeCtx, px, py, size, tip, strokeColor, isErase, isEditingLayerMask, layer) {
+        if (tip === 'round') {
+            activeCtx.beginPath();
+            activeCtx.arc(px, py, size, 0, Math.PI * 2);
+            activeCtx.fill();
+        } else if (tip === 'soft') {
+            const grad = activeCtx.createRadialGradient(px, py, 0, px, py, size);
+            if (isErase && (isEditingLayerMask || (layer && !layer.isBackground))) {
+                grad.addColorStop(0, 'rgba(0,0,0,0.5)');
+                grad.addColorStop(0.5, 'rgba(0,0,0,0.25)');
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+            } else {
+                grad.addColorStop(0, this.hexToRgba(strokeColor, 0.45));
+                grad.addColorStop(0.5, this.hexToRgba(strokeColor, 0.2));
+                grad.addColorStop(1, this.hexToRgba(strokeColor, 0));
+            }
+            activeCtx.fillStyle = grad;
+            activeCtx.beginPath();
+            activeCtx.arc(px, py, size, 0, Math.PI * 2);
+            activeCtx.fill();
+            activeCtx.fillStyle = strokeColor;
+        } else if (tip === 'square') {
+            activeCtx.fillRect(px - size, py - size, size * 2, size * 2);
+        } else if (tip === 'chisel') {
+            activeCtx.save();
+            activeCtx.translate(px, py);
+            activeCtx.rotate(Math.PI / 4);
+            activeCtx.fillRect(-size, -size * 0.28, size * 2, size * 0.56);
+            activeCtx.restore();
+        } else if (tip === 'spray') {
+            const count = Math.max(10, Math.floor(size * 1.5));
+            for (let k = 0; k < count; k++) {
+                const r = size * Math.sqrt(Math.random());
+                const theta = Math.random() * Math.PI * 2;
+                const dotR = 0.8 + Math.random() * 0.8;
+                activeCtx.fillRect(px + r * Math.cos(theta), py + r * Math.sin(theta), dotR, dotR);
+            }
         }
     }
 
-    paint2D(event) {
-        const rect = this.canvas.getBoundingClientRect();
-        const scaleX = this.canvas.width / rect.width;
-        const scaleY = this.canvas.height / rect.height;
-        const x = (event.clientX - rect.left) * scaleX;
-        const y = (event.clientY - rect.top) * scaleY;
-        
-        const u = x / this.canvas.width;
-        const v = 1 - (y / this.canvas.height); 
-        this.drawAtUV(u, v, this.lastU === null);
-        this.lastU = u;
-        this.lastV = v;
-    }
-
-    drawAtUV(u, v, isNewStroke = false) {
+    stampAtUV(u, v) {
         const x = u * this.canvas.width;
         const y = (1 - v) * this.canvas.height;
         const settings = this.getBrushSettings();
         const activeCtx = this.getActiveCtx();
         const size = settings.size;
         const tip = settings.tip || 'round';
-        
+
         let strokeColor = settings.color;
         const isErase = (settings.mode === 'erase');
         const layer = this.layerManager ? this.layerManager.getActiveLayer() : null;
@@ -2725,86 +2856,95 @@ export class Painter {
         activeCtx.fillStyle = strokeColor;
         const clipApplied = this.applyMaskClip(activeCtx);
 
-        const hexToRgba = (hex, alpha) => {
-            if (hex.startsWith('rgba') || hex.startsWith('rgb')) return hex;
-            let clean = hex.replace('#', '');
-            if (clean.length === 3) clean = clean.split('').map(c => c + c).join('');
-            const n = parseInt(clean, 16) || 0;
-            return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
-        };
+        this.renderTipStampDirect(activeCtx, x, y, size, tip, strokeColor, isErase, isEditingLayerMask, layer);
 
-        const renderTipStamp = (px, py) => {
-            if (tip === 'round') {
-                activeCtx.beginPath();
-                activeCtx.arc(px, py, size, 0, Math.PI * 2);
-                activeCtx.fill();
-            } else if (tip === 'soft') {
-                const grad = activeCtx.createRadialGradient(px, py, 0, px, py, size);
-                if (isErase && (isEditingLayerMask || (layer && !layer.isBackground))) {
-                    grad.addColorStop(0, 'rgba(0,0,0,0.5)');
-                    grad.addColorStop(0.5, 'rgba(0,0,0,0.25)');
-                    grad.addColorStop(1, 'rgba(0,0,0,0)');
-                } else {
-                    grad.addColorStop(0, hexToRgba(strokeColor, 0.45));
-                    grad.addColorStop(0.5, hexToRgba(strokeColor, 0.2));
-                    grad.addColorStop(1, hexToRgba(strokeColor, 0));
-                }
-                activeCtx.fillStyle = grad;
-                activeCtx.beginPath();
-                activeCtx.arc(px, py, size, 0, Math.PI * 2);
-                activeCtx.fill();
-                activeCtx.fillStyle = strokeColor;
-            } else if (tip === 'square') {
-                activeCtx.fillRect(px - size, py - size, size * 2, size * 2);
-            } else if (tip === 'chisel') {
-                activeCtx.save();
-                activeCtx.translate(px, py);
-                activeCtx.rotate(Math.PI / 4);
-                activeCtx.fillRect(-size, -size * 0.28, size * 2, size * 0.56);
-                activeCtx.restore();
-            } else if (tip === 'spray') {
-                const count = Math.max(10, Math.floor(size * 1.5));
-                for (let k = 0; k < count; k++) {
-                    const r = size * Math.sqrt(Math.random());
-                    const theta = Math.random() * Math.PI * 2;
-                    const dotR = 0.8 + Math.random() * 0.8;
-                    activeCtx.fillRect(px + r * Math.cos(theta), py + r * Math.sin(theta), dotR, dotR);
-                }
-            }
-        };
+        if (clipApplied) activeCtx.restore();
+        activeCtx.globalCompositeOperation = 'source-over';
+    }
 
-        if (isNewStroke) {
-            renderTipStamp(x, y);
-        } else {
-            const distU = Math.abs(u - this.lastU);
-            const distV = Math.abs(v - this.lastV);
-            if (distU > 0.1 || distV > 0.1) {
-                renderTipStamp(x, y);
+    drawLineAtCanvas(x1, y1, x2, y2) {
+        const settings = this.getBrushSettings();
+        const activeCtx = this.getActiveCtx();
+        const size = settings.size;
+        const tip = settings.tip || 'round';
+
+        let strokeColor = settings.color;
+        const isErase = (settings.mode === 'erase');
+        const layer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        const isEditingLayerMask = (layer && layer.hasMask && layer.isEditingMask);
+
+        if (isEditingLayerMask) {
+            if (isErase) {
+                activeCtx.globalCompositeOperation = 'destination-out';
+                strokeColor = 'rgba(0,0,0,1)';
             } else {
-                if (tip === 'round') {
-                    activeCtx.lineWidth = size * 2;
-                    activeCtx.lineCap = 'round';
-                    activeCtx.lineJoin = 'round';
-                    activeCtx.beginPath();
-                    activeCtx.moveTo(this.lastDrawX, this.lastDrawY);
-                    activeCtx.lineTo(x, y);
-                    activeCtx.stroke();
-                } else {
-                    const dx = x - this.lastDrawX;
-                    const dy = y - this.lastDrawY;
-                    const dist = Math.hypot(dx, dy);
-                    const step = Math.max(2, tip === 'soft' ? size * 0.2 : (tip === 'spray' ? size * 0.35 : size * 0.25));
-                    const stepsCount = Math.max(1, Math.ceil(dist / step));
-                    for (let s = 1; s <= stepsCount; s++) {
-                        const t = s / stepsCount;
-                        renderTipStamp(this.lastDrawX + dx * t, this.lastDrawY + dy * t);
-                    }
-                }
+                activeCtx.globalCompositeOperation = 'source-over';
+                strokeColor = '#FFFFFF';
+            }
+        } else if (isErase) {
+            if (layer && !layer.isBackground) {
+                activeCtx.globalCompositeOperation = 'destination-out';
+                strokeColor = 'rgba(0,0,0,1)';
+            } else {
+                activeCtx.globalCompositeOperation = 'source-over';
+                strokeColor = '#FFFFFF';
+            }
+        } else {
+            activeCtx.globalCompositeOperation = 'source-over';
+        }
+
+        activeCtx.strokeStyle = strokeColor;
+        activeCtx.fillStyle = strokeColor;
+        const clipApplied = this.applyMaskClip(activeCtx);
+
+        if (tip === 'round') {
+            activeCtx.lineWidth = size * 2;
+            activeCtx.lineCap = 'round';
+            activeCtx.lineJoin = 'round';
+            activeCtx.beginPath();
+            activeCtx.moveTo(x1, y1);
+            activeCtx.lineTo(x2, y2);
+            activeCtx.stroke();
+        } else {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const dist = Math.hypot(dx, dy);
+            const step = Math.max(2, tip === 'soft' ? size * 0.2 : (tip === 'spray' ? size * 0.35 : size * 0.25));
+            const stepsCount = Math.max(1, Math.ceil(dist / step));
+            for (let s = 1; s <= stepsCount; s++) {
+                const t = s / stepsCount;
+                this.renderTipStampDirect(activeCtx, x1 + dx * t, y1 + dy * t, size, tip, strokeColor, isErase, isEditingLayerMask, layer);
             }
         }
 
         if (clipApplied) activeCtx.restore();
         activeCtx.globalCompositeOperation = 'source-over';
+    }
+
+    paint2D(event) {
+        const rect = this.canvas.getBoundingClientRect();
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        const x = (event.clientX - rect.left) * scaleX;
+        const y = (event.clientY - rect.top) * scaleY;
+        
+        const u = x / this.canvas.width;
+        const v = 1 - (y / this.canvas.height); 
+        this.drawAtUV(u, v, this.lastU === null);
+        this.lastU = u;
+        this.lastV = v;
+    }
+
+    drawAtUV(u, v, isNewStroke = false) {
+        const x = u * this.canvas.width;
+        const y = (1 - v) * this.canvas.height;
+
+        if (isNewStroke || this.lastDrawX === null || this.lastDrawY === null) {
+            this.stampAtUV(u, v);
+        } else {
+            this.drawLineAtCanvas(this.lastDrawX, this.lastDrawY, x, y);
+        }
+
         this.lastDrawX = x;
         this.lastDrawY = y;
 
