@@ -1139,6 +1139,7 @@ export class ModelAssembler {
             piecePapercraft.foldLineColor = src.foldLineColor;
             piecePapercraft.foldLineWidthMm = src.foldLineWidthMm;
             piecePapercraft.hideSmoothLines = src.hideSmoothLines;
+            piecePapercraft.lineMode = src.lineMode || window.state?.uvWireframeMode || 'clean';
             piecePapercraft.showTabNumbers = src.showTabNumbers;
             piecePapercraft.numberPlacement = src.numberPlacement;
         }
@@ -1318,6 +1319,7 @@ export class ModelAssembler {
                     childEdges,
                     new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.25, transparent: true })
                 );
+                childLine.userData = { isWireframeOverlay: true };
                 child.add(childLine);
             }
         });
@@ -1673,6 +1675,7 @@ export class ModelAssembler {
                         foldLineColor: piece.papercraft.foldLineColor,
                         foldLineWidthMm: piece.papercraft.foldLineWidthMm,
                         hideSmoothLines: piece.papercraft.hideSmoothLines,
+                        lineMode: piece.papercraft.lineMode || window.state?.uvWireframeMode || 'clean',
                         showTabNumbers: piece.papercraft.showTabNumbers,
                         numberPlacement: piece.papercraft.numberPlacement,
                         partsLayout: (piece.papercraft.parts || []).map(p => ({
@@ -1784,6 +1787,7 @@ export class ModelAssembler {
                     if (ps.foldLineColor) piecePapercraft.foldLineColor = ps.foldLineColor;
                     if (ps.foldLineWidthMm) piecePapercraft.foldLineWidthMm = ps.foldLineWidthMm;
                     if (ps.hideSmoothLines !== undefined) piecePapercraft.hideSmoothLines = ps.hideSmoothLines;
+                    if (ps.lineMode) piecePapercraft.lineMode = ps.lineMode;
                     if (ps.showTabNumbers !== undefined) piecePapercraft.showTabNumbers = ps.showTabNumbers;
                     if (ps.numberPlacement) piecePapercraft.numberPlacement = ps.numberPlacement;
                 }

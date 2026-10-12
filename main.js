@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=7.3';
+import { Painter } from './painter.js?v=8.2';
 import { DecalSystem } from './decals.js?v=7.4';
-import { LayerManager } from './layers.js?v=7.3';
+import { LayerManager } from './layers.js?v=8.2';
 import { PapercraftEngine } from './papercraft.js?v=7.3';
-import { SelectionManager } from './selection.js?v=7.3';
+import { SelectionManager } from './selection.js?v=8.2';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -239,6 +239,7 @@ state.mesh = new THREE.Mesh(defaultGeo, defaultMat);
 
 const edges = new THREE.EdgesGeometry(defaultGeo);
 const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.2, transparent: true }));
+line.userData = { isWireframeOverlay: true };
 state.mesh.add(line);
 scene.add(state.mesh);
 painter.setMesh(state.mesh);
@@ -618,6 +619,7 @@ function loadOBJContents(contents, mtlContents = null) {
                 // Wireframe sutil sobre aristas vivas reales (> 25°) evitando líneas de triangulación plana
                 const childEdges = new THREE.EdgesGeometry(child.geometry, 25);
                 const childLine = new THREE.LineSegments(childEdges, new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.25, transparent: true }));
+                childLine.userData = { isWireframeOverlay: true };
                 child.add(childLine);
                 
                 meshes.push(child);
@@ -771,6 +773,7 @@ function loadOBJContents(contents, mtlContents = null) {
         
         // Dibujar vista UV / Papercraft
         drawUVWireframe();
+        update3DWireframe();
         renderUnfoldWorkbench();
     } catch (err) {
         console.error('Error cargando OBJ:', err);
@@ -869,6 +872,12 @@ tabBtnUnfold?.addEventListener('click', () => {
 // Eventos del Panel de Capas (Layers)
 document.getElementById('btn-add-layer')?.addEventListener('click', () => {
     layerManager.addLayer();
+});
+document.getElementById('btn-add-layer-mask')?.addEventListener('click', (e) => {
+    const activeLayer = layerManager ? layerManager.getActiveLayer() : null;
+    if (activeLayer) {
+        layerManager.showMaskContextMenu(e.currentTarget, activeLayer);
+    }
 });
 document.getElementById('btn-add-camo-layer')?.addEventListener('click', () => {
     const currentColor = document.getElementById('brush-color')?.value || '#4a5d3f';
@@ -1678,13 +1687,27 @@ tabAngleSlider?.addEventListener('input', (e) => {
 // Control de estilo de líneas de corte (Color y Grosor)
 const unfoldCutColor = document.getElementById('unfold-cut-color');
 unfoldCutColor?.addEventListener('change', (e) => {
-    papercraft.cutLineColor = e.target.value;
+    const val = e.target.value;
+    papercraft.cutLineColor = val;
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) p.papercraft.cutLineColor = val;
+        });
+    }
+    drawUVWireframe();
     renderUnfoldWorkbench();
 });
 
 const unfoldCutWidth = document.getElementById('unfold-cut-width');
 unfoldCutWidth?.addEventListener('change', (e) => {
-    papercraft.cutLineWidthMm = parseFloat(e.target.value);
+    const val = parseFloat(e.target.value) || 0.10;
+    papercraft.cutLineWidthMm = val;
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) p.papercraft.cutLineWidthMm = val;
+        });
+    }
+    drawUVWireframe();
     renderUnfoldWorkbench();
 });
 
@@ -1807,32 +1830,68 @@ document.getElementById('unfold-a4-orient')?.addEventListener('change', (e) => {
     renderUnfoldWorkbench();
 });
 
-// UI Event Listeners para Malla UV clásica
+// Control unificado de visualización de aristas 3D, UV y Papercraft
+function update3DWireframe() {
+    const mode = state.uvWireframeMode || 'clean';
+    const isVisible = state.uvWireframeVisible && (mode !== 'none') && (mode !== 'outlines');
+
+    const updateTarget = (root) => {
+        if (!root) return;
+        root.traverse(child => {
+            if (child.isLineSegments && child.userData?.isWireframeOverlay) {
+                child.visible = isVisible;
+            }
+        });
+    };
+
+    updateTarget(state.mesh);
+    if (window.modelAssembler && window.modelAssembler.group) {
+        updateTarget(window.modelAssembler.group);
+    }
+}
+window.update3DWireframe = update3DWireframe;
+
+// UI Event Listeners para Malla UV clásica y Papercraft
 const uvWireframeSelect = document.getElementById('uv-wireframe-mode');
+const unfoldWireframeSelect = document.getElementById('unfold-wireframe-mode');
 const toggleWireframeCheck = document.getElementById('toggle-wireframe');
+
+function setWireframeMode(newMode) {
+    state.uvWireframeMode = newMode;
+    state.uvWireframeVisible = (newMode !== 'none');
+    if (uvWireframeSelect) uvWireframeSelect.value = newMode;
+    if (unfoldWireframeSelect) unfoldWireframeSelect.value = newMode;
+    if (toggleWireframeCheck) toggleWireframeCheck.checked = state.uvWireframeVisible;
+    if (window.papercraft) {
+        window.papercraft.lineMode = newMode;
+    }
+    drawUVWireframe();
+    update3DWireframe();
+    if (window.papercraft && window.papercraft.active && typeof renderUnfoldWorkbench === 'function') {
+        renderUnfoldWorkbench();
+    }
+}
+window.setWireframeMode = setWireframeMode;
 
 if (uvWireframeSelect) {
     uvWireframeSelect.addEventListener('change', (e) => {
-        state.uvWireframeMode = e.target.value;
-        state.uvWireframeVisible = (e.target.value !== 'none');
-        if (toggleWireframeCheck) toggleWireframeCheck.checked = state.uvWireframeVisible;
-        drawUVWireframe();
+        setWireframeMode(e.target.value);
+    });
+}
+
+if (unfoldWireframeSelect) {
+    unfoldWireframeSelect.addEventListener('change', (e) => {
+        setWireframeMode(e.target.value);
     });
 }
 
 if (toggleWireframeCheck) {
     toggleWireframeCheck.addEventListener('change', (e) => {
-        state.uvWireframeVisible = e.target.checked;
         if (!e.target.checked) {
-            state.uvWireframeMode = 'none';
-            if (uvWireframeSelect) uvWireframeSelect.value = 'none';
+            setWireframeMode('none');
         } else {
-            if (state.uvWireframeMode === 'none') {
-                state.uvWireframeMode = 'clean';
-                if (uvWireframeSelect) uvWireframeSelect.value = 'clean';
-            }
+            setWireframeMode(state.uvWireframeMode === 'none' ? 'clean' : state.uvWireframeMode);
         }
-        drawUVWireframe();
     });
 }
 
@@ -1892,7 +1951,7 @@ toolButtons.forEach(btn => {
             window.painter.commitLayerTransform();
         }
 
-        const isShape = ['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode);
+        const isShape = ['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'vector_container'].includes(mode);
 
         brushModeInput.value = mode;
         toolButtons.forEach(b => b.classList.remove('active'));
@@ -1938,12 +1997,26 @@ toolButtons.forEach(btn => {
 // --- Herramientas de Marco / Área de Selección (Raster / Enmascarado) ---
 const btnSelectRect = document.getElementById('btn-select-rect');
 const btnSelectLasso = document.getElementById('btn-select-lasso');
+const btnSelectPolyLasso = document.getElementById('btn-select-polylasso');
+const btnPaintMask = document.getElementById('btn-paint-mask-mode');
+const btnToggleSelMode = document.getElementById('btn-toggle-sel-mode');
+const btnQuickApplyMask = document.getElementById('btn-quick-apply-mask');
 const btnQuickFill = document.getElementById('btn-quick-fill-sel');
 const btnQuickInvert = document.getElementById('btn-quick-invert-sel');
 const btnQuickDel = document.getElementById('btn-quick-del-sel');
 const btnQuickDesel = document.getElementById('btn-quick-desel');
 const btnQuickCamo = document.getElementById('btn-quick-camo-sel');
 const maskIndicator = document.getElementById('selection-mask-indicator');
+
+function updateSelectionModeUI() {
+    if (!selectionManager || !btnToggleSelMode) return;
+    const isAdd = selectionManager.selectionMode === 'add';
+    btnToggleSelMode.textContent = isAdd ? '➕' : '⏹';
+    btnToggleSelMode.title = isAdd 
+        ? 'Modo Selección: Añadir (+) activado. Las nuevas formas se suman a la selección existente. Clic para cambiar a Reemplazar.'
+        : 'Modo Selección: Reemplazar (⏹). Cada nueva selección reemplaza la anterior (o mantén Shift para sumar). Clic para cambiar a Añadir (+).';
+    btnToggleSelMode.classList.toggle('active', isAdd);
+}
 
 function activateSelectionMode(mode) {
     if (window.painter && window.painter.editingShape) {
@@ -1960,12 +2033,33 @@ function activateSelectionMode(mode) {
     toolButtons.forEach(b => b.classList.remove('active'));
     btnSelectRect?.classList.toggle('active', mode === 'select_rect');
     btnSelectLasso?.classList.toggle('active', mode === 'select_lasso');
+    btnSelectPolyLasso?.classList.toggle('active', mode === 'select_polylasso');
     if (brushModeInput) brushModeInput.value = mode;
     if (painter) painter.previousMode = 'paint';
 
     document.querySelectorAll('.mask-tool-btn').forEach(b => {
         b.classList.toggle('active', b.getAttribute('data-masktool') === mode);
     });
+}
+
+function togglePaintMaskMode() {
+    const activeLayer = layerManager ? layerManager.getActiveLayer() : null;
+    if (!activeLayer) return;
+
+    if (!activeLayer.hasMask) {
+        layerManager.addMaskToActiveLayer('black');
+    } else if (activeLayer.isEditingMask) {
+        layerManager.setEditingTarget(activeLayer.id, 'color');
+        return;
+    } else {
+        layerManager.setEditingTarget(activeLayer.id, 'mask');
+    }
+
+    if (brushModeInput) brushModeInput.value = 'paint';
+    toolButtons.forEach(b => b.classList.toggle('active', b.getAttribute('data-mode') === 'paint'));
+    btnSelectRect?.classList.remove('active');
+    btnSelectLasso?.classList.remove('active');
+    btnSelectPolyLasso?.classList.remove('active');
 }
 
 function applySelectionFill() {
@@ -1991,8 +2085,25 @@ function applySelectionToCamo() {
     }
 }
 
+function applySelectionToActiveLayerMask() {
+    if (!selectionManager || !selectionManager.active || !layerManager) return;
+    layerManager.applySelectionAsMaskToActive(selectionManager);
+    if (painter) {
+        painter.needsUpdate = true;
+        painter.forceUpdate = true;
+    }
+}
+
 btnSelectRect?.addEventListener('click', () => activateSelectionMode('select_rect'));
 btnSelectLasso?.addEventListener('click', () => activateSelectionMode('select_lasso'));
+btnSelectPolyLasso?.addEventListener('click', () => activateSelectionMode('select_polylasso'));
+btnPaintMask?.addEventListener('click', togglePaintMaskMode);
+btnToggleSelMode?.addEventListener('click', () => {
+    if (!selectionManager) return;
+    selectionManager.selectionMode = selectionManager.selectionMode === 'add' ? 'replace' : 'add';
+    updateSelectionModeUI();
+});
+btnQuickApplyMask?.addEventListener('click', applySelectionToActiveLayerMask);
 btnQuickFill?.addEventListener('click', applySelectionFill);
 btnQuickInvert?.addEventListener('click', () => selectionManager.invert());
 btnQuickDel?.addEventListener('click', () => {
@@ -2012,11 +2123,20 @@ function updateMaskFloatingIndicator() {
     const isEditingLayerMask = activeLayer && activeLayer.hasMask && activeLayer.isEditingMask;
     const hasSelection = selectionManager && selectionManager.active;
 
+    if (btnPaintMask) {
+        btnPaintMask.classList.toggle('mask-pencil-active', !!isEditingLayerMask);
+    }
+
     const btnFill = document.getElementById('btn-mask-fill');
+    const btnApplyLayer = document.getElementById('btn-mask-apply-to-layer');
     const btnToCamo = document.getElementById('btn-mask-to-camo');
     const btnInvert = document.getElementById('btn-mask-invert');
     const btnClear = document.getElementById('btn-mask-clear');
     const btnExit = document.getElementById('btn-mask-exit');
+
+    if (btnApplyLayer) {
+        btnApplyLayer.style.display = hasSelection ? 'inline-block' : 'none';
+    }
 
     if (isEditingLayerMask) {
         maskIndicator.classList.add('visible');
@@ -2073,6 +2193,10 @@ document.getElementById('btn-mask-fill')?.addEventListener('click', () => {
         painter.needsUpdate = true;
         painter.forceUpdate = true;
     }
+});
+
+document.getElementById('btn-mask-apply-to-layer')?.addEventListener('click', () => {
+    applySelectionToActiveLayerMask();
 });
 
 document.getElementById('btn-mask-to-camo')?.addEventListener('click', () => {
@@ -2654,6 +2778,7 @@ function getProjectNSPData() {
                 cutLineWidthMm: papercraft.cutLineWidthMm,
                 foldLineColor: papercraft.foldLineColor,
                 foldLineWidthMm: papercraft.foldLineWidthMm,
+                lineMode: state.uvWireframeMode || papercraft.lineMode || 'clean',
                 a4Orientation: papercraft.a4Orientation,
                 pagesCount: papercraft.pagesCount,
                 partsLayout: papercraft.parts.map(p => ({
@@ -2860,6 +2985,7 @@ async function loadProjectNSP(fileOrData, silent = false) {
             if (pp.showFlaps !== undefined) syncFlaps(pp.showFlaps);
             if (pp.hideSmoothLines !== undefined) syncHideSmooth(pp.hideSmoothLines);
             if (pp.showTabNumbers !== undefined) syncNumbers(pp.showTabNumbers, pp.numberPlacement || 'flaps');
+            if (pp.lineMode) setWireframeMode(pp.lineMode);
             if (pp.pagesCount) papercraft.pagesCount = pp.pagesCount;
 
             if (pp.partsLayout && Array.isArray(pp.partsLayout)) {
@@ -3334,6 +3460,12 @@ window.addEventListener('keydown', (e) => {
     if ((e.key === 'l' || e.key === 'L') && !e.ctrlKey && !e.metaKey) {
         activateSelectionMode('select_lasso');
     }
+    if ((e.key === 'p' || e.key === 'P') && !e.ctrlKey && !e.metaKey) {
+        activateSelectionMode('select_polylasso');
+    }
+    if ((e.key === 'n' || e.key === 'N') && !e.ctrlKey && !e.metaKey) {
+        document.getElementById('btn-tool-vector-container')?.click();
+    }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
         selectionManager.selectAll();
@@ -3579,8 +3711,10 @@ function drawUVWireframe() {
         ctxUV.stroke();
     } else if (mode === 'outlines') {
         // Solo contornos exteriores
-        ctxUV.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-        ctxUV.lineWidth = 1.2;
+        const cutColor = (window.papercraft && window.papercraft.cutLineColor) ? window.papercraft.cutLineColor : 'rgba(0, 0, 0, 0.85)';
+        const cutWidthMm = (window.papercraft && window.papercraft.cutLineWidthMm) ? parseFloat(window.papercraft.cutLineWidthMm) : 0.10;
+        ctxUV.strokeStyle = cutColor;
+        ctxUV.lineWidth = Math.max(0.6, (cutWidthMm / 0.10) * 1.4);
         ctxUV.beginPath();
 
         meshes.forEach(mesh => {
@@ -3612,8 +3746,10 @@ function drawUVWireframe() {
         ctxUV.stroke();
 
         // 2. Contornos exteriores
-        ctxUV.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-        ctxUV.lineWidth = 1.2;
+        const cutColor = (window.papercraft && window.papercraft.cutLineColor) ? window.papercraft.cutLineColor : 'rgba(0, 0, 0, 0.9)';
+        const cutWidthMm = (window.papercraft && window.papercraft.cutLineWidthMm) ? parseFloat(window.papercraft.cutLineWidthMm) : 0.10;
+        ctxUV.strokeStyle = cutColor;
+        ctxUV.lineWidth = Math.max(0.6, (cutWidthMm / 0.10) * 1.4);
         ctxUV.beginPath();
 
         meshes.forEach(mesh => {
@@ -3642,9 +3778,10 @@ function animate(time) {
         window.decalSystem.update3DSelectionGizmo();
     }
 
-    const isSelectionActive = selectionManager && (selectionManager.active || selectionManager.creating);
+    const isSelectionActive = (selectionManager && (selectionManager.active || selectionManager.creating || selectionManager.isPolyLasso)) ||
+        (painter && painter.creatingContainer);
 
-    // Sincronizar visibilidad del overlay 3D con la selección activa
+    // Sincronizar visibilidad del overlay 3D con la selección activa o contenedor vectorial en creación
     setSelection3DOverlayVisible(isSelectionActive);
 
     // Animar retícula y hormigas marchantes de la selección (~15 FPS para suavidad y mínimo consumo)

@@ -1,5 +1,6 @@
 // ==============================================================================
 // SELECTION & MASKING MANAGER (CINTAS DE ENMASCARAR PARA MODELISMO)
+// Soporte Multi-Región, Lazo Poligonal 3D y Acumulación de Máscaras
 // ==============================================================================
 
 export class SelectionManager {
@@ -9,11 +10,18 @@ export class SelectionManager {
 
         this.active = false;          // ¿Existe una máscara de selección activa?
         this.creating = false;        // ¿El usuario está arrastrando para definirla?
-        this.toolMode = null;         // 'select_rect' | 'select_lasso'
+        this.toolMode = null;         // 'select_rect' | 'select_lasso' | 'select_polylasso'
         
         this.rect = null;             // { x, y, w, h }
         this.points = [];             // [{x, y}, ...] para lazo/forma libre
+        this.regions = [];            // Múltiples regiones activas [{ type: 'rect'|'polygon', ... }]
         this.inverted = false;        // ¿Máscara invertida?
+        this.combineMode = 'replace'; // 'replace' | 'add'
+
+        // Modo Lazo Poligonal 3D (Punto a Punto con Rotación Libre)
+        this.isPolyLasso = false;
+        this.polyPoints = [];
+        this.polyHover = null;
         
         this.path2D = null;
         this.invertPath2D = null;
@@ -37,16 +45,28 @@ export class SelectionManager {
         if (this.points && this.points.length > 0) {
             this.points = this.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY }));
         }
+        if (this.regions && this.regions.length > 0) {
+            this.regions = this.regions.map(r => {
+                if (r.type === 'rect') {
+                    return { ...r, x: r.x * scaleX, y: r.y * scaleY, w: r.w * scaleX, h: r.h * scaleY };
+                } else if (r.type === 'polygon' && r.points) {
+                    return { ...r, points: r.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY })) };
+                }
+                return r;
+            });
+        }
+        if (this.polyPoints && this.polyPoints.length > 0) {
+            this.polyPoints = this.polyPoints.map(p => ({ x: p.x * scaleX, y: p.y * scaleY }));
+        }
         if (this.active) {
             this.buildPaths();
         }
     }
 
-    // Iniciar creación de selección al presionar el ratón en vista 2D
+    // Iniciar creación de selección al presionar el ratón
     startCreation(mode, startX, startY) {
         this.toolMode = mode;
         this.creating = true;
-        this.inverted = false;
 
         const x = Math.max(0, Math.min(this.width, Math.round(startX)));
         const y = Math.max(0, Math.min(this.height, Math.round(startY)));
@@ -75,38 +95,114 @@ export class SelectionManager {
             this.rect.h = Math.abs(y - this.rect.startY);
         } else if (this.toolMode === 'select_lasso') {
             const last = this.points[this.points.length - 1];
-            // Optimización: evitar puntos duplicados a menos de 3px
+            // Evitar puntos duplicados a menos de 3px
             if (!last || Math.hypot(x - last.x, y - last.y) >= 3) {
                 this.points.push({ x, y });
             }
         }
     }
 
-    // Confirmar la selección al soltar el ratón
-    commitCreation() {
+    // Confirmar la selección al soltar el ratón (soporta modo acumular con Shift o combineMode 'add')
+    commitCreation(isAdd = false) {
         if (!this.creating) return;
         this.creating = false;
 
         let valid = false;
+        let newReg = null;
+
         if (this.toolMode === 'select_rect' && this.rect) {
             if (this.rect.w >= 4 && this.rect.h >= 4) {
                 valid = true;
+                newReg = { type: 'rect', x: this.rect.x, y: this.rect.y, w: this.rect.w, h: this.rect.h };
             }
         } else if (this.toolMode === 'select_lasso' && this.points.length >= 3) {
             valid = true;
+            newReg = { type: 'polygon', points: [...this.points] };
         }
 
-        if (valid) {
+        if (valid && newReg) {
+            if (isAdd || this.combineMode === 'add') {
+                this.regions.push(newReg);
+            } else {
+                this.regions = [newReg];
+            }
             this.active = true;
             this.buildPaths();
             this.notifyChange();
-        } else {
+        } else if (!this.active || (!isAdd && this.combineMode !== 'add')) {
             this.deselect();
         }
     }
 
+    // --- MODO LAZO POLIGONAL 3D (PUNTO A PUNTO CON ROTACIÓN LIBRE) ---
+    startPolyLasso(startX, startY) {
+        this.isPolyLasso = true;
+        this.toolMode = 'select_polylasso';
+        const x = Math.max(0, Math.min(this.width, Math.round(startX)));
+        const y = Math.max(0, Math.min(this.height, Math.round(startY)));
+        this.polyPoints = [{ x, y }];
+        this.polyHover = { x, y };
+        this.notifyChange();
+    }
+
+    addPolyPoint(nextX, nextY) {
+        if (!this.isPolyLasso) return;
+        const x = Math.max(0, Math.min(this.width, Math.round(nextX)));
+        const y = Math.max(0, Math.min(this.height, Math.round(nextY)));
+        const last = this.polyPoints[this.polyPoints.length - 1];
+        if (!last || Math.hypot(x - last.x, y - last.y) >= 3) {
+            this.polyPoints.push({ x, y });
+            this.polyHover = { x, y };
+            this.notifyChange();
+        }
+    }
+
+    updatePolyHover(curX, curY) {
+        if (!this.isPolyLasso) return;
+        const x = Math.max(0, Math.min(this.width, Math.round(curX)));
+        const y = Math.max(0, Math.min(this.height, Math.round(curY)));
+        this.polyHover = { x, y };
+    }
+
+    removeLastPolyPoint() {
+        if (!this.isPolyLasso) return;
+        if (this.polyPoints.length > 1) {
+            this.polyPoints.pop();
+            this.polyHover = { ...this.polyPoints[this.polyPoints.length - 1] };
+            this.notifyChange();
+        } else {
+            this.cancelPolyLasso();
+        }
+    }
+
+    commitPolyLasso(isAdd = false) {
+        if (!this.isPolyLasso) return;
+        if (this.polyPoints.length >= 3) {
+            const newReg = { type: 'polygon', points: [...this.polyPoints] };
+            if (isAdd || this.combineMode === 'add') {
+                this.regions.push(newReg);
+            } else {
+                this.regions = [newReg];
+            }
+            this.active = true;
+            this.buildPaths();
+        }
+        this.isPolyLasso = false;
+        this.polyPoints = [];
+        this.polyHover = null;
+        this.notifyChange();
+    }
+
+    cancelPolyLasso() {
+        this.isPolyLasso = false;
+        this.polyPoints = [];
+        this.polyHover = null;
+        this.notifyChange();
+    }
+
     // Seleccionar todo el lienzo (Ctrl + A)
     selectAll() {
+        this.regions = [{ type: 'rect', x: 0, y: 0, w: this.width, h: this.height }];
         this.rect = { startX: 0, startY: 0, x: 0, y: 0, w: this.width, h: this.height };
         this.points = [];
         this.toolMode = 'select_rect';
@@ -128,8 +224,12 @@ export class SelectionManager {
     deselect() {
         this.active = false;
         this.creating = false;
+        this.isPolyLasso = false;
+        this.polyPoints = [];
+        this.polyHover = null;
         this.rect = null;
         this.points = [];
+        this.regions = [];
         this.inverted = false;
         this.path2D = null;
         this.invertPath2D = null;
@@ -178,31 +278,51 @@ export class SelectionManager {
         layerManager.renderUI();
     }
 
-    // Construir objetos Path2D reutilizables para recorte súper rápido en GPU/Canvas
+    // Construir objetos Path2D reutilizables para recorte multi-región
     buildPaths() {
         const p = new Path2D();
 
-        if (this.rect) {
-            p.rect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
-        } else if (this.points && this.points.length > 1) {
-            p.moveTo(this.points[0].x, this.points[0].y);
-            for (let i = 1; i < this.points.length; i++) {
-                const prev = this.points[i - 1];
-                const cur = this.points[i];
-                // Si la distancia en UV es > 120px, saltó de una pieza a otra: cerrar sub-bucle y abrir nuevo
-                if (Math.hypot(cur.x - prev.x, cur.y - prev.y) > 120) {
+        if (this.regions.length === 0) {
+            if (this.rect) {
+                p.rect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+            } else if (this.points && this.points.length > 1) {
+                p.moveTo(this.points[0].x, this.points[0].y);
+                for (let i = 1; i < this.points.length; i++) {
+                    const prev = this.points[i - 1];
+                    const cur = this.points[i];
+                    if (Math.hypot(cur.x - prev.x, cur.y - prev.y) > 120) {
+                        p.closePath();
+                        p.moveTo(cur.x, cur.y);
+                    } else {
+                        p.lineTo(cur.x, cur.y);
+                    }
+                }
+                p.closePath();
+            }
+        } else {
+            for (const reg of this.regions) {
+                if (reg.type === 'rect') {
+                    p.rect(reg.x, reg.y, reg.w, reg.h);
+                } else if (reg.type === 'polygon' && reg.points && reg.points.length > 1) {
+                    p.moveTo(reg.points[0].x, reg.points[0].y);
+                    for (let i = 1; i < reg.points.length; i++) {
+                        const prev = reg.points[i - 1];
+                        const cur = reg.points[i];
+                        if (Math.hypot(cur.x - prev.x, cur.y - prev.y) > 120) {
+                            p.closePath();
+                            p.moveTo(cur.x, cur.y);
+                        } else {
+                            p.lineTo(cur.x, cur.y);
+                        }
+                    }
                     p.closePath();
-                    p.moveTo(cur.x, cur.y);
-                } else {
-                    p.lineTo(cur.x, cur.y);
                 }
             }
-            p.closePath();
         }
 
         this.path2D = p;
 
-        // Máscara invertida usando la regla evenodd: Marco exterior total + camino interior
+        // Máscara invertida usando la regla evenodd: Marco exterior total + caminos interiores
         const inv = new Path2D();
         inv.rect(0, 0, this.width, this.height);
         inv.addPath(p);
@@ -227,20 +347,33 @@ export class SelectionManager {
         if (!this.active || !this.path2D) return true;
         
         let inside = false;
-        if (this.rect) {
+        if (testCtx) {
+            inside = testCtx.isPointInPath(this.path2D, x, y);
+        } else if (this.regions.length > 0) {
+            for (const r of this.regions) {
+                if (r.type === 'rect') {
+                    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+                        inside = true;
+                        break;
+                    }
+                } else if (r.type === 'polygon' && r.points && r.points.length >= 3) {
+                    let polyInside = false;
+                    for (let i = 0, j = r.points.length - 1; i < r.points.length; j = i++) {
+                        const xi = r.points[i].x, yi = r.points[i].y;
+                        const xj = r.points[j].x, yj = r.points[j].y;
+                        if (Math.hypot(xi - xj, yi - yj) > 120) continue;
+                        const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                        if (intersect) polyInside = !polyInside;
+                    }
+                    if (polyInside) {
+                        inside = true;
+                        break;
+                    }
+                }
+            }
+        } else if (this.rect) {
             inside = (x >= this.rect.x && x <= this.rect.x + this.rect.w &&
                       y >= this.rect.y && y <= this.rect.y + this.rect.h);
-        } else if (testCtx) {
-            inside = testCtx.isPointInPath(this.path2D, x, y);
-        } else if (this.points && this.points.length >= 3) {
-            inside = false;
-            for (let i = 0, j = this.points.length - 1; i < this.points.length; j = i++) {
-                const xi = this.points[i].x, yi = this.points[i].y;
-                const xj = this.points[j].x, yj = this.points[j].y;
-                if (Math.hypot(xi - xj, yi - yj) > 120) continue; // No cruzar entre piezas distintas
-                const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-                if (intersect) inside = !inside;
-            }
         }
 
         return this.inverted ? !inside : inside;
@@ -251,77 +384,132 @@ export class SelectionManager {
             this.onSelectionChange({
                 active: this.active,
                 creating: this.creating,
+                isPolyLasso: this.isPolyLasso,
                 inverted: this.inverted,
                 mode: this.toolMode,
-                rect: this.rect ? { ...this.rect } : null
+                regionsCount: this.regions.length,
+                combineMode: this.combineMode
             });
         }
     }
 
-    // Renderizado en canvas-ui: Retícula punteada bicolor (Marching Ants) y sombreado
+    // Renderizado en canvas-ui: Retícula punteada bicolor (Marching Ants), sombreado y guías de poli-lazo
     renderOverlay(ctxUI) {
-        if (!this.active && !this.creating) return;
-
-        let currentPath = this.path2D;
-        if (this.creating) {
-            currentPath = new Path2D();
-            if (this.toolMode === 'select_rect' && this.rect) {
-                currentPath.rect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
-            } else if (this.toolMode === 'select_lasso' && this.points.length > 0) {
-                currentPath.moveTo(this.points[0].x, this.points[0].y);
-                for (let i = 1; i < this.points.length; i++) {
-                    const prev = this.points[i - 1];
-                    const cur = this.points[i];
-                    if (Math.hypot(cur.x - prev.x, cur.y - prev.y) > 120) {
-                        currentPath.closePath();
-                        currentPath.moveTo(cur.x, cur.y);
-                    } else {
-                        currentPath.lineTo(cur.x, cur.y);
-                    }
-                }
-                currentPath.closePath();
-            }
-        }
-
-        if (!currentPath) return;
+        if (!this.active && !this.creating && !this.isPolyLasso) return;
 
         ctxUI.save();
 
-        // 1. Tinte sutil translúcido de la máscara
-        if (this.active) {
+        // 1. Tinte translúcido y Marching Ants de regiones activas confirmadas
+        if (this.active && this.path2D) {
             ctxUI.save();
             if (this.inverted && this.invertPath2D) {
                 ctxUI.fillStyle = 'rgba(0, 162, 255, 0.22)';
                 ctxUI.fill(this.invertPath2D, 'evenodd');
             } else {
                 ctxUI.fillStyle = 'rgba(0, 162, 255, 0.20)';
-                ctxUI.fill(currentPath);
+                ctxUI.fill(this.path2D);
             }
             ctxUI.restore();
-        } else if (this.creating && this.toolMode === 'select_lasso' && this.points.length >= 3) {
+
+            const lineW = Math.max(3, Math.round(this.width / 500));
+            ctxUI.lineWidth = lineW;
+            ctxUI.lineCap = 'round';
+            ctxUI.lineJoin = 'round';
+
+            // Pase 1: Guiones negros base
+            ctxUI.strokeStyle = '#000000';
+            ctxUI.setLineDash([10, 8]);
+            ctxUI.lineDashOffset = -this.dashOffset;
+            ctxUI.stroke(this.path2D);
+
+            // Pase 2: Guiones cian brillante
+            ctxUI.strokeStyle = '#00f3ff';
+            ctxUI.setLineDash([10, 8]);
+            ctxUI.lineDashOffset = -this.dashOffset + 9;
+            ctxUI.stroke(this.path2D);
+        }
+
+        // 2. Previsualización de arrastre en vivo (Rectángulo o Lazo libre mientras se mantiene presionado)
+        if (this.creating) {
+            const dragPath = new Path2D();
+            if (this.toolMode === 'select_rect' && this.rect) {
+                dragPath.rect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+            } else if (this.toolMode === 'select_lasso' && this.points.length > 0) {
+                dragPath.moveTo(this.points[0].x, this.points[0].y);
+                for (let i = 1; i < this.points.length; i++) {
+                    const prev = this.points[i - 1];
+                    const cur = this.points[i];
+                    if (Math.hypot(cur.x - prev.x, cur.y - prev.y) > 120) {
+                        dragPath.closePath();
+                        dragPath.moveTo(cur.x, cur.y);
+                    } else {
+                        dragPath.lineTo(cur.x, cur.y);
+                    }
+                }
+                dragPath.closePath();
+            }
+
             ctxUI.save();
             ctxUI.fillStyle = 'rgba(0, 243, 255, 0.15)';
-            ctxUI.fill(currentPath);
+            ctxUI.fill(dragPath);
+            ctxUI.lineWidth = Math.max(2, Math.round(this.width / 600));
+            ctxUI.strokeStyle = '#00f3ff';
+            ctxUI.setLineDash([6, 6]);
+            ctxUI.stroke(dragPath);
             ctxUI.restore();
         }
 
-        // 2. Marching Ants: Doble pase de líneas punteadas visibles en 3D y 2D
-        const lineW = Math.max(3, Math.round(this.width / 500));
-        ctxUI.lineWidth = lineW;
-        ctxUI.lineCap = 'round';
-        ctxUI.lineJoin = 'round';
-        
-        // Pase 1: Guiones negros base
-        ctxUI.strokeStyle = '#000000';
-        ctxUI.setLineDash([10, 8]);
-        ctxUI.lineDashOffset = -this.dashOffset;
-        ctxUI.stroke(currentPath);
+        // 3. Previsualización interactiva de Lazo Poligonal 3D (Punto a Punto con Nodos y Guía)
+        if (this.isPolyLasso && this.polyPoints.length > 0) {
+            ctxUI.save();
 
-        // Pase 2: Guiones cian brillante
-        ctxUI.strokeStyle = '#00f3ff';
-        ctxUI.setLineDash([10, 8]);
-        ctxUI.lineDashOffset = -this.dashOffset + 9;
-        ctxUI.stroke(currentPath);
+            // Dibujar segmentos poligonales ya marcados
+            ctxUI.beginPath();
+            ctxUI.moveTo(this.polyPoints[0].x, this.polyPoints[0].y);
+            for (let i = 1; i < this.polyPoints.length; i++) {
+                ctxUI.lineTo(this.polyPoints[i].x, this.polyPoints[i].y);
+            }
+
+            // Si hay hover dinámico, trazar línea guía punteada hasta el puntero
+            if (this.polyHover) {
+                ctxUI.lineTo(this.polyHover.x, this.polyHover.y);
+            }
+
+            ctxUI.lineWidth = Math.max(2, Math.round(this.width / 600));
+            ctxUI.strokeStyle = '#ffaa00';
+            ctxUI.setLineDash([8, 6]);
+            ctxUI.stroke();
+
+            // Dibujar nodos/vértices circulares interactivos
+            for (let i = 0; i < this.polyPoints.length; i++) {
+                const pt = this.polyPoints[i];
+                const isStart = (i === 0);
+                const r = isStart ? 6 : 4;
+
+                ctxUI.beginPath();
+                ctxUI.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+                ctxUI.fillStyle = isStart ? '#00f3ff' : '#ffffff';
+                ctxUI.fill();
+                ctxUI.lineWidth = 1.5;
+                ctxUI.strokeStyle = '#000000';
+                ctxUI.setLineDash([]);
+                ctxUI.stroke();
+
+                // Si es el nodo inicial y el cursor está cerca, mostrar indicador de cerrar anillo
+                if (isStart && this.polyHover && this.polyPoints.length >= 3) {
+                    const distToStart = Math.hypot(this.polyHover.x - pt.x, this.polyHover.y - pt.y);
+                    if (distToStart < 25) {
+                        ctxUI.beginPath();
+                        ctxUI.arc(pt.x, pt.y, 11, 0, Math.PI * 2);
+                        ctxUI.strokeStyle = '#00ff88';
+                        ctxUI.lineWidth = 2.5;
+                        ctxUI.stroke();
+                    }
+                }
+            }
+
+            ctxUI.restore();
+        }
 
         ctxUI.restore();
     }

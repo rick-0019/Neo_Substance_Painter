@@ -23,6 +23,7 @@ export class Layer {
         this.maskCanvas = null;
         this.maskCtx = null;
         this.isEditingMask = false; // true si las herramientas de pintura dibujan en la máscara
+        this.hasContent = isBackground;
 
         // --- SISTEMA DE OBJETOS DE PEGATINAS VIVAS (NO DESTRUCTIVO) ---
         this.decals = []; // Colección de objetos Decal vivos editables
@@ -156,12 +157,21 @@ export class Layer {
         } catch (_) {}
     }
 
-    addMask(type = 'black') {
+    addMask(type = 'black', fillColor = null) {
         if (!this.maskCanvas) {
             this.maskCanvas = document.createElement('canvas');
             this.maskCanvas.width = this.width;
             this.maskCanvas.height = this.height;
             this.maskCtx = this.maskCanvas.getContext('2d');
+        }
+
+        // Si la capa está completamente vacía (100% transparente), auto-rellenar con color activo
+        // para que la máscara tenga pintura sobre la cual actuar (estilo Capa de Relleno Substance Painter)
+        if (!this.hasContent && !this.isBackground) {
+            const color = fillColor || document.getElementById('brush-color')?.value || '#4a5d3f';
+            this.ctx.fillStyle = color;
+            this.ctx.fillRect(0, 0, this.width, this.height);
+            this.hasContent = true;
         }
 
         this.hasMask = true;
@@ -199,9 +209,31 @@ export class Layer {
         this.maskCtx.putImageData(imgData, 0, 0);
     }
 
+    applySelectionAsMask(selectionManager) {
+        if (!selectionManager || !selectionManager.active) return;
+        
+        // Si la capa no tiene pintura previa, rellenarla con el color actual para que el área enmascarada sea visible
+        if (!this.hasContent && !this.isBackground) {
+            const brushColor = document.getElementById('brush-color')?.value || '#4a5d3f';
+            this.ctx.fillStyle = brushColor;
+            this.ctx.fillRect(0, 0, this.width, this.height);
+            this.hasContent = true;
+        }
+
+        if (!this.hasMask) {
+            this.addMask('black');
+        }
+        this.isEditingMask = true;
+        const clipApplied = selectionManager.applyClip(this.maskCtx);
+        this.maskCtx.fillStyle = '#FFFFFF';
+        this.maskCtx.fillRect(0, 0, this.width, this.height);
+        if (clipApplied) this.maskCtx.restore();
+    }
+
     clear() {
         this.ctx.clearRect(0, 0, this.width, this.height);
         this.decals = [];
+        this.hasContent = this.isBackground;
         if (this.isBackground) {
             this.ctx.fillStyle = '#FFFFFF';
             this.ctx.fillRect(0, 0, this.width, this.height);
@@ -344,6 +376,31 @@ export class LayerManager {
             this.onMaskModeChange(layer.isEditingMask, layer);
         }
         this.renderUI();
+    }
+
+    addMaskToActiveLayer(type = 'black') {
+        const layer = this.getActiveLayer();
+        if (!layer) return;
+        if (!layer.hasMask) {
+            layer.addMask(type);
+        }
+        this.setEditingTarget(layer.id, 'mask');
+        this.recomposite();
+        this.renderUI();
+        if (this.onUpdate) this.onUpdate();
+        if (this.onMaskModeChange) this.onMaskModeChange(true, layer);
+    }
+
+    applySelectionAsMaskToActive(selectionManager) {
+        const layer = this.getActiveLayer();
+        if (!layer || !selectionManager || !selectionManager.active) return;
+        layer.applySelectionAsMask(selectionManager);
+        selectionManager.deselect();
+        this.setEditingTarget(layer.id, 'mask');
+        this.recomposite();
+        this.renderUI();
+        if (this.onUpdate) this.onUpdate();
+        if (this.onMaskModeChange) this.onMaskModeChange(true, layer);
     }
 
     addLayer(name = null) {
@@ -646,6 +703,187 @@ export class LayerManager {
         };
     }
 
+    showMaskContextMenu(anchorEl, layer) {
+        const existing = document.querySelector('.layer-mask-popover');
+        if (existing) {
+            existing.remove();
+            if (existing._anchor === anchorEl) return;
+        }
+
+        const menu = document.createElement('div');
+        menu.className = 'layer-mask-popover';
+        menu._anchor = anchorEl;
+
+        const selActive = window.selectionManager && window.selectionManager.active;
+        const items = [];
+
+        if (!layer.hasMask) {
+            items.push({
+                icon: '⬛',
+                label: 'Añadir Máscara Negra',
+                desc: 'Oculta todo; pinta con lápiz 3D para revelar',
+                action: () => {
+                    layer.addMask('black');
+                    this.setEditingTarget(layer.id, 'mask');
+                    this.recomposite();
+                    this.renderUI();
+                    if (this.onUpdate) this.onUpdate();
+                    if (this.onMaskModeChange) this.onMaskModeChange(true, layer);
+                }
+            });
+            items.push({
+                icon: '⬜',
+                label: 'Añadir Máscara Blanca',
+                desc: 'Todo visible; borra con goma para recortar',
+                action: () => {
+                    layer.addMask('white');
+                    this.setEditingTarget(layer.id, 'mask');
+                    this.recomposite();
+                    this.renderUI();
+                    if (this.onUpdate) this.onUpdate();
+                    if (this.onMaskModeChange) this.onMaskModeChange(true, layer);
+                }
+            });
+            if (selActive) {
+                items.push({
+                    icon: '✂️',
+                    label: 'Crear Máscara desde Selección',
+                    desc: 'Aplica el contorno/lazo actual como máscara fija',
+                    action: () => {
+                        this.applySelectionAsMaskToActive(window.selectionManager);
+                    }
+                });
+            }
+        } else {
+            if (layer.isEditingMask) {
+                items.push({
+                    icon: '🎨',
+                    label: 'Volver a Pintar Color',
+                    desc: 'Pintar color y textura normalmente',
+                    action: () => {
+                        this.setEditingTarget(layer.id, 'color');
+                    }
+                });
+            } else {
+                items.push({
+                    icon: '🎭✏️',
+                    label: 'Pintar en Máscara (3D / 2D)',
+                    desc: 'Dibuja con lápiz directamente sobre la máscara',
+                    action: () => {
+                        this.setEditingTarget(layer.id, 'mask');
+                    }
+                });
+            }
+
+            items.push({
+                icon: '🔄',
+                label: 'Invertir Máscara',
+                desc: 'Invierte zonas reveladas y ocultas',
+                action: () => {
+                    layer.invertMask();
+                    this.recomposite();
+                    this.renderUI();
+                    if (this.onUpdate) this.onUpdate();
+                }
+            });
+
+            items.push({
+                icon: '⬜',
+                label: 'Revelar Todo (Rellenar Blanco)',
+                desc: 'Hace visible todo el contenido de la capa',
+                action: () => {
+                    layer.clearMask('white');
+                    this.recomposite();
+                    this.renderUI();
+                    if (this.onUpdate) this.onUpdate();
+                }
+            });
+
+            items.push({
+                icon: '⬛',
+                label: 'Ocultar Todo (Rellenar Negro)',
+                desc: 'Oculta todo el contenido de la capa',
+                action: () => {
+                    layer.clearMask('black');
+                    this.recomposite();
+                    this.renderUI();
+                    if (this.onUpdate) this.onUpdate();
+                }
+            });
+
+            if (selActive) {
+                items.push({
+                    icon: '✂️',
+                    label: 'Aplicar Selección Actual a Máscara',
+                    desc: 'Añade el área seleccionada a esta máscara',
+                    action: () => {
+                        this.applySelectionAsMaskToActive(window.selectionManager);
+                    }
+                });
+            }
+
+            items.push({
+                icon: '🗑️',
+                label: 'Eliminar Máscara',
+                desc: 'Quitar la máscara y restaurar capa completa',
+                danger: true,
+                action: () => {
+                    layer.removeMask();
+                    this.recomposite();
+                    this.renderUI();
+                    if (this.onUpdate) this.onUpdate();
+                    if (this.onMaskModeChange) this.onMaskModeChange(false, layer);
+                }
+            });
+        }
+
+        const headerTitle = document.createElement('div');
+        headerTitle.className = 'layer-mask-popover-title';
+        headerTitle.innerHTML = `<span>🎭 Máscara de Capa</span><span style="font-size:10px; opacity:0.75; margin-left:6px;">"${layer.name}"</span>`;
+        menu.appendChild(headerTitle);
+
+        items.forEach(it => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = `layer-mask-popover-item ${it.danger ? 'item-danger' : ''}`;
+            btn.innerHTML = `<span class="popover-item-icon">${it.icon}</span><div class="popover-item-text"><div class="popover-item-label">${it.label}</div><div class="popover-item-desc">${it.desc}</div></div>`;
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                menu.remove();
+                it.action();
+            });
+            menu.appendChild(btn);
+        });
+
+        document.body.appendChild(menu);
+
+        const rect = anchorEl.getBoundingClientRect();
+        const mRect = menu.getBoundingClientRect();
+        let top = rect.bottom + 4;
+        let left = rect.left - 100;
+
+        if (left < 10) left = 10;
+        if (left + mRect.width > window.innerWidth - 10) {
+            left = window.innerWidth - mRect.width - 10;
+        }
+        if (top + mRect.height > window.innerHeight - 10) {
+            top = rect.top - mRect.height - 4;
+        }
+
+        menu.style.top = `${top}px`;
+        menu.style.left = `${left}px`;
+
+        const closeHandler = (e) => {
+            if (!menu.contains(e.target) && e.target !== anchorEl) {
+                menu.remove();
+                document.removeEventListener('pointerdown', closeHandler);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('pointerdown', closeHandler);
+        }, 10);
+    }
+
     renderUI() {
         const container = document.getElementById('layers-list');
         if (!container) return;
@@ -711,7 +949,7 @@ export class LayerManager {
                 maskThumb.className = `layer-thumb-slot mask-slot ${isSelected && layer.isEditingMask ? 'target-active' : ''}`;
                 maskThumb.width = 24;
                 maskThumb.height = 18;
-                maskThumb.title = 'Editar Máscara de Capa (Pintar camuflaje en 3D)';
+                maskThumb.title = 'Editar Máscara de Capa (Clic: Pintar en 3D / Doble clic: Menú de opciones)';
 
                 const mCtx = maskThumb.getContext('2d');
                 mCtx.fillStyle = '#0a0a0a';
@@ -727,13 +965,21 @@ export class LayerManager {
                     e.stopPropagation();
                     this.setEditingTarget(layer.id, 'mask');
                 });
+                maskThumb.addEventListener('dblclick', (e) => {
+                    e.stopPropagation();
+                    this.showMaskContextMenu(maskThumb, layer);
+                });
                 headerRow.appendChild(maskThumb);
             }
 
             // 4. Nombre de la Capa
             const nameSpan = document.createElement('span');
             nameSpan.className = 'layer-name';
-            nameSpan.textContent = layer.hasMask && layer.isEditingMask ? `${layer.name} [Máscara]` : layer.name;
+            if (layer.hasMask && layer.isEditingMask) {
+                nameSpan.innerHTML = `${layer.name} <span class="layer-mask-badge" title="Pintando sobre la Máscara de Capa en 3D">🎭 MÁSCARA</span>`;
+            } else {
+                nameSpan.textContent = layer.name;
+            }
             nameSpan.title = 'Doble clic para renombrar';
 
             const startRenaming = () => {
@@ -771,43 +1017,15 @@ export class LayerManager {
             });
             headerRow.appendChild(nameSpan);
 
-            // 5. Botón de Máscara (Añadir / Menú de Máscara)
+            // 5. Botón de Máscara (Añadir / Menú de Máscara profesional)
             const maskBtn = document.createElement('button');
             maskBtn.className = `layer-btn-mask-icon ${layer.hasMask ? 'has-mask' : ''}`;
-            maskBtn.title = layer.hasMask ? 'Opciones de Máscara (Invertir, Limpiar, Quitar)' : 'Añadir Máscara Negra (Substance Painter)';
+            maskBtn.title = layer.hasMask ? 'Opciones de Máscara de Capa' : 'Añadir Máscara (Substance Painter)';
             maskBtn.innerHTML = layer.hasMask ? '🎭' : '➕🎭';
 
             maskBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (!layer.hasMask) {
-                    layer.addMask('black');
-                    this.recomposite();
-                    this.renderUI();
-                    if (this.onUpdate) this.onUpdate();
-                    if (this.onMaskModeChange) this.onMaskModeChange(true, layer);
-                } else {
-                    // Menú contextual simple / ciclado
-                    const choice = confirm(
-                        `Opciones de Máscara para "${layer.name}":\n\n` +
-                        `• Aceptar = Invertir Máscara (cambia blanco/negro)\n` +
-                        `• Cancelar = Ver más opciones (Eliminar o Limpiar)`
-                    );
-                    if (choice) {
-                        layer.invertMask();
-                        this.recomposite();
-                        this.renderUI();
-                        if (this.onUpdate) this.onUpdate();
-                    } else {
-                        const del = confirm(`¿Deseas ELIMINAR la máscara de "${layer.name}"?`);
-                        if (del) {
-                            layer.removeMask();
-                            this.recomposite();
-                            this.renderUI();
-                            if (this.onUpdate) this.onUpdate();
-                            if (this.onMaskModeChange) this.onMaskModeChange(false, layer);
-                        }
-                    }
-                }
+                this.showMaskContextMenu(maskBtn, layer);
             });
             headerRow.appendChild(maskBtn);
 
@@ -909,6 +1127,7 @@ export class LayerManager {
                     arrow: '➡️',
                     badge: '🛡️',
                     line: '📏',
+                    vector_container: '🔷',
                     decal: '🏷️'
                 };
 

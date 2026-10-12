@@ -14,6 +14,7 @@ export class PapercraftEngine {
         this.numberPlacement = 'none'; // 'none' (limpio), 'flaps' (solo en solapas ocultas), 'outside' (fuera en descarte)
         this.hideSmoothLines = true;
         this.creaseThresholdDeg = 25.0;
+        this.lineMode = 'clean'; // 'clean' (pliegues vivos), 'outlines' (solo contornos), 'full' (malla), 'none' (ocultar)
 
         // Configuración de líneas de corte y pliegue profesionales (Hairline fino / tono tenue)
         this.cutLineWidthMm = 0.10; // Hairline 0.10 mm para corte limpio sin bordes negros gruesos
@@ -672,8 +673,9 @@ export class PapercraftEngine {
         if (!this.parts || this.parts.length === 0) return;
 
         ctx.save();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = this.cutLineColor || 'rgba(0, 0, 0, 0.6)';
+        const cutWidthMm = parseFloat(this.cutLineWidthMm || 0.10) || 0.10;
+        ctx.lineWidth = Math.max(0.6, (cutWidthMm / 0.10) * 1.4);
         ctx.beginPath();
         const mmToUV = 1.0 / (this.uvSheetSizeMm || 210.0);
         for (const part of this.parts) {
@@ -876,7 +878,21 @@ export class PapercraftEngine {
         }
 
         // B) Líneas de pliegue interiores
-        if (part.internalEdges && part.internalEdges.length > 0) {
+        const lineMode = this.lineMode || (window.state && window.state.uvWireframeMode) || 'clean';
+        const showInternalFolds = (lineMode !== 'outlines' && lineMode !== 'none');
+        if (lineMode === 'full' && part.localTriangles && part.localTriangles.length > 0) {
+            ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
+            ctx.lineWidth = 0.5;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            for (const tri of part.localTriangles) {
+                ctx.moveTo(tri.p1.x * mmToPx, tri.p1.y * mmToPx);
+                ctx.lineTo(tri.p2.x * mmToPx, tri.p2.y * mmToPx);
+                ctx.lineTo(tri.p3.x * mmToPx, tri.p3.y * mmToPx);
+                ctx.lineTo(tri.p1.x * mmToPx, tri.p1.y * mmToPx);
+            }
+            ctx.stroke();
+        } else if (showInternalFolds && part.internalEdges && part.internalEdges.length > 0) {
             ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
             ctx.lineWidth = 0.6;
             ctx.setLineDash([]);
@@ -901,7 +917,8 @@ export class PapercraftEngine {
                 ctx.fill();
 
                 ctx.strokeStyle = this.cutLineColor || '#666666';
-                ctx.lineWidth = 0.7;
+                const flapCutMm = parseFloat(this.cutLineWidthMm || 0.10) || 0.10;
+                ctx.lineWidth = Math.max(0.4, (flapCutMm / 0.10) * 0.85);
                 ctx.setLineDash([]);
                 ctx.beginPath();
                 ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
@@ -930,7 +947,8 @@ export class PapercraftEngine {
 
         // D) Líneas de corte perimetrales
         ctx.strokeStyle = this.cutLineColor || '#666666';
-        ctx.lineWidth = 0.8;
+        const cutMm = parseFloat(this.cutLineWidthMm || 0.10) || 0.10;
+        ctx.lineWidth = Math.max(0.5, (cutMm / 0.10) * 1.0);
         ctx.beginPath();
         for (const cut of part.boundaryEdges) {
             ctx.moveTo(cut.p1.x * mmToPx, cut.p1.y * mmToPx);
@@ -1236,8 +1254,22 @@ export class PapercraftEngine {
                 }
             }
 
-            // B) Pliegues vivos (línea continua)
-            if (part.internalEdges && part.internalEdges.length > 0) {
+            // B) Pliegues vivos interiores
+            const lineMode = this.lineMode || (window.state && window.state.uvWireframeMode) || 'clean';
+            const showInternalFolds = (lineMode !== 'outlines' && lineMode !== 'none');
+            if (lineMode === 'full' && part.localTriangles && part.localTriangles.length > 0) {
+                doc.setDrawColor(120, 120, 120);
+                doc.setLineWidth(0.08);
+                doc.setLineDash([], 0);
+                for (const tri of part.localTriangles) {
+                    const p1 = toPageMm(tri.p1);
+                    const p2 = toPageMm(tri.p2);
+                    const p3 = toPageMm(tri.p3);
+                    doc.line(p1.x, p1.y, p2.x, p2.y);
+                    doc.line(p2.x, p2.y, p3.x, p3.y);
+                    doc.line(p3.x, p3.y, p1.x, p1.y);
+                }
+            } else if (showInternalFolds && part.internalEdges && part.internalEdges.length > 0) {
                 doc.setDrawColor(80, 80, 80);
                 doc.setLineWidth(0.12);
                 doc.setLineDash([], 0);
@@ -1263,7 +1295,7 @@ export class PapercraftEngine {
                     const tc = toPageMm(tab.tabCenter);
 
                     doc.setDrawColor(r, g, b);
-                    doc.setLineWidth(this.cutLineWidthMm || 0.10);
+                    doc.setLineWidth(parseFloat(this.cutLineWidthMm || 0.10) || 0.10);
                     doc.setLineDash([], 0);
                     doc.line(b1.x, b1.y, t1.x, t1.y);
                     doc.line(t1.x, t1.y, t2.x, t2.y);
@@ -1285,7 +1317,7 @@ export class PapercraftEngine {
 
             // D) Cortes exteriores (Hairline ultra-fino y tono tenue profesional)
             doc.setDrawColor(r, g, b);
-            doc.setLineWidth(this.cutLineWidthMm || 0.10);
+            doc.setLineWidth(parseFloat(this.cutLineWidthMm || 0.10) || 0.10);
             doc.setLineDash([], 0);
             for (const cut of part.boundaryEdges) {
                 const pA = toPageMm(cut.p1);

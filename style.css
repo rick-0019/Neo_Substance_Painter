@@ -1548,3 +1548,112 @@ input[type=range]::-webkit-slider-runnable-track {
     background: rgba(255, 255, 255, 0.2);
     margin: 0 2px;
 }
+
+/* --- Menú Contextual y Badges de Máscara de Capa --- */
+.layer-mask-badge {
+    background: rgba(255, 170, 0, 0.25);
+    color: #ffbb33;
+    border: 1px solid rgba(255, 170, 0, 0.5);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 8.5px;
+    font-weight: 700;
+    margin-left: 4px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.layer-mask-popover {
+    position: fixed;
+    background: #1c1c1f;
+    border: 1px solid #3a3a42;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65), 0 2px 6px rgba(0, 0, 0, 0.4);
+    z-index: 10000;
+    min-width: 210px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: inherit;
+    animation: popoverFadeIn 0.12s ease-out;
+}
+
+@keyframes popoverFadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.layer-mask-popover-title {
+    padding: 4px 8px 5px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #e0e0e0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 3px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.layer-mask-popover-item {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 7px;
+    color: #ddd;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.12s, color 0.12s;
+}
+
+.layer-mask-popover-item:hover {
+    background: #2a2a35;
+    color: #fff;
+}
+
+.layer-mask-popover-item.item-danger:hover {
+    background: rgba(220, 53, 69, 0.25);
+    color: #ff6b6b;
+}
+
+.popover-item-icon {
+    font-size: 13px;
+    flex-shrink: 0;
+    width: 18px;
+    text-align: center;
+}
+
+.popover-item-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.popover-item-label {
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.2;
+}
+
+.popover-item-desc {
+    font-size: 9.5px;
+    color: #888;
+    line-height: 1.15;
+}
+
+.layer-mask-popover-item:hover .popover-item-desc {
+    color: #aaa;
+}
+
+.tool-btn.mask-pencil-active {
+    background: #d35400 !important;
+    border-color: #e67e22 !important;
+    color: #fff !important;
+    box-shadow: 0 0 8px rgba(230, 126, 34, 0.6) !important;
+}

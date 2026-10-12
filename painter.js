@@ -162,6 +162,10 @@ export class Painter {
         // Sistema de Selección
         this.selectionManager = null;
         this.isSelecting = false;
+
+        // Contenedor Vectorial con Nodos (Live Vector Mask / Shape Container)
+        this.creatingContainer = false;
+        this.containerState = null; // { points: [{x, y}], hover: {x, y} }
         
         // Interpolación
         this.lastU = null;
@@ -208,7 +212,13 @@ export class Painter {
                 this.redo();
                 return;
             } else if (e.key === 'Enter') {
-                if (this.textState && this.textState.active) {
+                if (this.creatingContainer) {
+                    this.commitVectorContainer(this.previousMode === '3d' ? '3d' : '2d');
+                    this.uiNeedsUpdate = true;
+                } else if (this.selectionManager && this.selectionManager.isPolyLasso) {
+                    this.selectionManager.commitPolyLasso(e.shiftKey);
+                    this.uiNeedsUpdate = true;
+                } else if (this.textState && this.textState.active) {
                     this.commitText();
                 } else if (this.transformState && this.transformState.active) {
                     this.commitLayerTransform();
@@ -216,7 +226,15 @@ export class Painter {
                     this.commitShape();
                 }
             } else if (e.key === 'Escape') {
-                if (this.selectionManager && (this.selectionManager.active || this.selectionManager.creating)) {
+                if (this.creatingContainer) {
+                    this.cancelVectorContainer();
+                    this.clearUI();
+                    this.uiNeedsUpdate = true;
+                } else if (this.selectionManager && this.selectionManager.isPolyLasso) {
+                    this.selectionManager.cancelPolyLasso();
+                    this.clearUI();
+                    this.uiNeedsUpdate = true;
+                } else if (this.selectionManager && (this.selectionManager.active || this.selectionManager.creating)) {
                     this.selectionManager.deselect();
                     this.clearUI();
                 } else if (this.textState && this.textState.active) {
@@ -231,6 +249,14 @@ export class Painter {
                     this.needsUpdate = true;
                     this.forceUpdate = true;
                     if (this.texture) this.texture.needsUpdate = true;
+                }
+            } else if (e.key === 'Backspace') {
+                if (this.creatingContainer && this.containerState && this.containerState.points.length > 1) {
+                    this.containerState.points.pop();
+                    this.uiNeedsUpdate = true;
+                } else if (this.selectionManager && this.selectionManager.isPolyLasso) {
+                    this.selectionManager.removeLastPolyPoint();
+                    this.uiNeedsUpdate = true;
                 }
             } else if (e.key === 'Delete') {
                 if (this.selectionManager && this.selectionManager.active) {
@@ -483,6 +509,57 @@ export class Painter {
                 return;
             }
 
+            // Lazo Poligonal 3D (Clic punto a punto con rotación de cámara)
+            if (mode === 'select_polylasso' && this.mesh && this.selectionManager) {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
+                if (hit) {
+                    const x = hit.uv.x * this.canvas.width;
+                    const y = (1 - hit.uv.y) * this.canvas.height;
+                    if (!this.selectionManager.isPolyLasso) {
+                        this.selectionManager.startPolyLasso(x, y);
+                    } else {
+                        const start = this.selectionManager.polyPoints[0];
+                        if (start && Math.hypot(x - start.x, y - start.y) < 25 && this.selectionManager.polyPoints.length >= 3) {
+                            this.selectionManager.commitPolyLasso(e.shiftKey);
+                        } else {
+                            this.selectionManager.addPolyPoint(x, y);
+                        }
+                    }
+                    this.uiNeedsUpdate = true;
+                }
+                return;
+            }
+
+            // Contenedor Vectorial con Nodos 3D (Clic punto a punto para silueta cerrada con nodos)
+            if (mode === 'vector_container' && this.mesh) {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
+                if (hit) {
+                    const x = hit.uv.x * this.canvas.width;
+                    const y = (1 - hit.uv.y) * this.canvas.height;
+                    if (!this.creatingContainer) {
+                        this.startVectorContainer(x, y);
+                    } else {
+                        const start = this.containerState.points[0];
+                        if (start && Math.hypot(x - start.x, y - start.y) < 25 && this.containerState.points.length >= 3) {
+                            this.commitVectorContainer('3d');
+                        } else {
+                            this.addVectorContainerPoint(x, y);
+                        }
+                    }
+                    this.uiNeedsUpdate = true;
+                }
+                return;
+            }
 
             if (mode === 'text') {
                 const rect = this.renderer.domElement.getBoundingClientRect();
@@ -553,6 +630,27 @@ export class Painter {
                     const x = uv.x * this.canvas.width;
                     const y = (1 - uv.y) * this.canvas.height;
                     
+                    let normal = hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 0, 1);
+                    if (hit.face && hit.object.geometry && hit.object.geometry.attributes.normal) {
+                        const normAttr = hit.object.geometry.attributes.normal;
+                        const a = hit.face.a, b = hit.face.b, c = hit.face.c;
+                        if (a !== undefined && b !== undefined && c !== undefined) {
+                            const nA = new THREE.Vector3().fromBufferAttribute(normAttr, a);
+                            const nB = new THREE.Vector3().fromBufferAttribute(normAttr, b);
+                            const nC = new THREE.Vector3().fromBufferAttribute(normAttr, c);
+                            normal = new THREE.Vector3().add(nA).add(nB).add(nC).normalize();
+                        }
+                    }
+                    const worldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
+                    if (this.camera) {
+                        const camDir = new THREE.Vector3().subVectors(this.camera.position, hit.point).normalize();
+                        if (worldNormal.dot(camDir) < 0) worldNormal.negate();
+                    }
+                    this.shape3DHit = {
+                        point: hit.point.clone(),
+                        normal: worldNormal.clone()
+                    };
+
                     this.saveUndoState();
                     const settings = this.getBrushSettings();
                     const radiusInput = document.getElementById('shape-bar-radius');
@@ -569,7 +667,8 @@ export class Painter {
                         midX: x, midY: y,
                         cpX: x, cpY: y,
                         color: window.currentShapeStrokeColor || strokeColorInput?.value || settings.color || '#000000',
-                        fillColor: mode === 'curve' ? 'transparent' : (window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : (fillInput?.value || '#ffff00')),
+                        strokeColor: window.currentShapeStrokeColor || strokeColorInput?.value || settings.color || '#000000',
+                        fillColor: mode === 'curve' ? 'transparent' : (window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : 'transparent'),
                         size: settings.size,
                         strokeWidth: strokeW,
                         strokeDash: strokeDash,
@@ -582,7 +681,7 @@ export class Painter {
                 }
                 return;
             }
-            
+
             this.saveUndoState();
             this.isPainting = true;
             this.lastU = null;
@@ -599,6 +698,38 @@ export class Painter {
         
         view3d.addEventListener('pointermove', (e) => {
             const mode = document.getElementById('brush-mode')?.value;
+            if (this.selectionManager && this.selectionManager.isPolyLasso && this.mesh) {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
+                if (hit) {
+                    const x = hit.uv.x * this.canvas.width;
+                    const y = (1 - hit.uv.y) * this.canvas.height;
+                    this.selectionManager.updatePolyHover(x, y);
+                    this.uiNeedsUpdate = true;
+                }
+                return;
+            }
+
+            if (mode === 'vector_container' && this.creatingContainer && this.mesh) {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObject(this.mesh, true);
+                const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
+                if (hit) {
+                    const x = hit.uv.x * this.canvas.width;
+                    const y = (1 - hit.uv.y) * this.canvas.height;
+                    this.updateVectorContainerHover(x, y);
+                    this.uiNeedsUpdate = true;
+                }
+                return;
+            }
+
             if ((mode === 'select_rect' || mode === 'select_lasso') && e.buttons === 1 && !this.isSelecting && this.mesh && this.selectionManager) {
                 const rect = this.renderer.domElement.getBoundingClientRect();
                 this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -807,10 +938,22 @@ export class Painter {
                     this.textState.dragHandle = null;
                 }
                 if (this.isSelecting && this.selectionManager) {
-                    this.selectionManager.commitCreation();
+                    this.selectionManager.commitCreation(e.shiftKey);
                     this.isSelecting = false;
                     this.uiNeedsUpdate = true;
                 }
+            }
+        });
+
+        view3d.addEventListener('dblclick', (e) => {
+            if (this.creatingContainer) {
+                this.commitVectorContainer('3d');
+                this.uiNeedsUpdate = true;
+                return;
+            }
+            if (this.selectionManager && this.selectionManager.isPolyLasso) {
+                this.selectionManager.commitPolyLasso(e.shiftKey);
+                this.uiNeedsUpdate = true;
             }
         });
         
@@ -841,6 +984,39 @@ export class Painter {
                     this.transformState.dragOffset = { x: x - this.transformState.x, y: y - this.transformState.y };
                     this.transformState.initialState = { ...this.transformState };
                     this.transformState.dragStart = { x, y };
+                }
+                return;
+            }
+
+            // Contenedor Vectorial con Nodos 2D
+            if (mode === 'vector_container') {
+                if (!this.creatingContainer) {
+                    this.startVectorContainer(x, y);
+                } else {
+                    const start = this.containerState.points[0];
+                    if (start && Math.hypot(x - start.x, y - start.y) < 25 && this.containerState.points.length >= 3) {
+                        this.commitVectorContainer('2d');
+                    } else {
+                        this.addVectorContainerPoint(x, y);
+                    }
+                }
+                this.uiNeedsUpdate = true;
+                return;
+            }
+
+            if (mode === 'select_polylasso') {
+                if (this.selectionManager) {
+                    if (!this.selectionManager.isPolyLasso) {
+                        this.selectionManager.startPolyLasso(x, y);
+                    } else {
+                        const start = this.selectionManager.polyPoints[0];
+                        if (start && Math.hypot(x - start.x, y - start.y) < 25 && this.selectionManager.polyPoints.length >= 3) {
+                            this.selectionManager.commitPolyLasso(e.shiftKey);
+                        } else {
+                            this.selectionManager.addPolyPoint(x, y);
+                        }
+                    }
+                    this.uiNeedsUpdate = true;
                 }
                 return;
             }
@@ -917,7 +1093,8 @@ export class Painter {
                     midX: x, midY: y,
                     cpX: x, cpY: y,
                     color: window.currentShapeStrokeColor || strokeColorInput?.value || settings.color || '#000000',
-                    fillColor: mode === 'curve' ? 'transparent' : (window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : (fillInput?.value || '#ffff00')),
+                    strokeColor: window.currentShapeStrokeColor || strokeColorInput?.value || settings.color || '#000000',
+                    fillColor: mode === 'curve' ? 'transparent' : (window.currentShapeFillColor !== undefined ? window.currentShapeFillColor : 'transparent'),
                     size: settings.size,
                     strokeWidth: strokeW,
                     strokeDash: strokeDash,
@@ -948,7 +1125,19 @@ export class Painter {
             const scaleY = this.canvas.height / rect.height;
             const x = (e.clientX - rect.left) * scaleX;
             const y = (e.clientY - rect.top) * scaleY;
+
+            if (this.creatingContainer && this.containerState) {
+                this.updateVectorContainerHover(x, y);
+                this.uiNeedsUpdate = true;
+                return;
+            }
             
+            if (this.selectionManager && this.selectionManager.isPolyLasso) {
+                this.selectionManager.updatePolyHover(x, y);
+                this.uiNeedsUpdate = true;
+                return;
+            }
+
             if (this.isSelecting && this.selectionManager) {
                 this.selectionManager.updateCreation(x, y);
                 this.uiNeedsUpdate = true;
@@ -1154,6 +1343,18 @@ export class Painter {
                 this.paint2D(e);
             }
         });
+
+        this.canvas.addEventListener('dblclick', (e) => {
+            if (this.creatingContainer) {
+                this.commitVectorContainer('2d');
+                this.uiNeedsUpdate = true;
+                return;
+            }
+            if (this.selectionManager && this.selectionManager.isPolyLasso) {
+                this.selectionManager.commitPolyLasso(e.shiftKey);
+                this.uiNeedsUpdate = true;
+            }
+        });
     }
 
     // --- Lógica de UI Overlay (Bounding Box, Transformación y Selección) ---
@@ -1172,13 +1373,16 @@ export class Painter {
         this.ctxUI.clearRect(0, 0, this.canvasUI.width, this.canvasUI.height);
         let hasActiveOverlay = false;
 
-        if (this.selectionManager && (this.selectionManager.active || this.selectionManager.creating)) {
+        if (this.selectionManager && (this.selectionManager.active || this.selectionManager.creating || this.selectionManager.isPolyLasso)) {
             this.selectionManager.dashOffset = (time / 80) % 12;
             this.selectionManager.renderOverlay(this.ctxUI);
             hasActiveOverlay = true;
         }
         if (this.transformState && this.transformState.active) {
             this.renderTransformUI();
+            hasActiveOverlay = true;
+        } else if (this.creatingContainer && this.containerState) {
+            this.renderContainerCreationUI();
             hasActiveOverlay = true;
         } else if (this.editingShape) {
             this.renderShapeUI();
@@ -1189,6 +1393,67 @@ export class Painter {
     
     createShapeCanvas(s) {
         if (!s) return null;
+
+        if (s.type === 'vector_container') {
+            const pts = s.points || [];
+            if (pts.length < 3) return null;
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const p of pts) {
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.y > maxY) maxY = p.y;
+            }
+            const bw = Math.max(10, Math.ceil(maxX - minX));
+            const bh = Math.max(10, Math.ceil(maxY - minY));
+            const strokeW = Math.max(1, (s.strokeWidth !== undefined ? s.strokeWidth : (s.size ? s.size * 2 : 4)));
+            const strokeDash = s.strokeDash || s.dashStyle || 'solid';
+            const spacing = s.dashSpacing || Math.max(6, Math.round(strokeW * 2.5));
+            const pad = Math.ceil(strokeW) + 14;
+
+            const cCanvas = document.createElement('canvas');
+            cCanvas.width = bw + pad * 2;
+            cCanvas.height = bh + pad * 2;
+            const cCtx = cCanvas.getContext('2d');
+            cCtx.imageSmoothingEnabled = true;
+            cCtx.imageSmoothingQuality = 'high';
+
+            cCtx.lineWidth = strokeW;
+            cCtx.lineJoin = 'round';
+            const strokeColorVal = s.strokeColor || s.color || '#000000';
+            cCtx.strokeStyle = strokeColorVal;
+            cCtx.fillStyle = (s.fillColor && s.fillColor !== 'transparent') ? s.fillColor : 'transparent';
+
+            if (strokeDash === 'rivets' || strokeDash === 'dots') {
+                cCtx.lineCap = 'round';
+                cCtx.setLineDash([0.001, spacing]);
+            } else if (strokeDash === 'dashed') {
+                cCtx.lineCap = 'butt';
+                cCtx.setLineDash([Math.max(4, Math.round(strokeW * 3)), spacing]);
+            } else {
+                cCtx.lineCap = 'round';
+                cCtx.setLineDash([]);
+            }
+
+            const offX = cCanvas.width / 2 - (minX + maxX) / 2;
+            const offY = cCanvas.height / 2 - (minY + maxY) / 2;
+
+            cCtx.beginPath();
+            cCtx.moveTo(pts[0].x + offX, pts[0].y + offY);
+            for (let i = 1; i < pts.length; i++) {
+                cCtx.lineTo(pts[i].x + offX, pts[i].y + offY);
+            }
+            cCtx.closePath();
+
+            if (s.fillColor && s.fillColor !== 'transparent') {
+                cCtx.fill();
+            }
+            if (strokeColorVal && strokeColorVal !== 'transparent' && strokeW > 0) {
+                cCtx.stroke();
+            }
+
+            return cCanvas;
+        }
         let w = 100;
         let h = 100;
         if (s.x1 !== undefined && s.x2 !== undefined && Math.abs(s.x2 - s.x1) > 0) {
@@ -1216,8 +1481,9 @@ export class Painter {
 
         ctx.lineWidth = strokeW;
         ctx.lineJoin = 'round';
-        ctx.strokeStyle = s.color || s.strokeColor || '#000000';
-        ctx.fillStyle = s.fillColor || '#ffff00';
+        const strokeColorVal = s.strokeColor || s.color || '#000000';
+        ctx.strokeStyle = strokeColorVal;
+        ctx.fillStyle = (s.fillColor && s.fillColor !== 'transparent') ? s.fillColor : 'transparent';
 
         if (strokeDash === 'rivets' || strokeDash === 'dots') {
             ctx.lineCap = 'round';
@@ -1254,7 +1520,7 @@ export class Painter {
             curveCtx.imageSmoothingQuality = 'high';
             curveCtx.lineWidth = strokeW;
             curveCtx.lineJoin = 'round';
-            curveCtx.strokeStyle = s.color || s.strokeColor || '#000000';
+            curveCtx.strokeStyle = strokeColorVal;
 
             if (strokeDash === 'rivets' || strokeDash === 'dots') {
                 curveCtx.lineCap = 'round';
@@ -1286,7 +1552,7 @@ export class Painter {
             if (s.fillColor && s.fillColor !== 'transparent') {
                 ctx.fill();
             }
-            if (s.color && s.color !== 'transparent') {
+            if (strokeColorVal && strokeColorVal !== 'transparent' && strokeW > 0) {
                 ctx.stroke();
             }
         }
@@ -1349,6 +1615,10 @@ export class Painter {
                     shapeOptionsToStore.cpY = (s.cpY !== undefined ? s.cpY : shapeOptionsToStore.midY + cy) - cy;
                 }
 
+                const passthroughActive = window.decalSystem
+                    ? !!window.decalSystem.allowPassthrough
+                    : (document.getElementById('decal-passthrough')?.checked || false);
+
                 createdShapeObj = {
                     id: 'shape_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
                     name: shapeName,
@@ -1365,8 +1635,27 @@ export class Painter {
                     rotation: s.angle || 0,
                     mode: targetMode,
                     opacity: 1.0,
-                    visible: true
+                    visible: true,
+                    allowPassthrough: passthroughActive
                 };
+
+                if (targetMode === '3d') {
+                    if (window.decalSystem && this.canvas) {
+                        const u = cx / this.canvas.width;
+                        const v = 1 - (cy / this.canvas.height);
+                        const pt3D = window.decalSystem.find3DPointFromUV(u, v);
+                        if (pt3D) {
+                            createdShapeObj.projectorPosition = pt3D.point.clone();
+                            createdShapeObj.projectorNormal = pt3D.normal.clone();
+                            if (pt3D.tangent) createdShapeObj.surfaceTangent = pt3D.tangent.clone();
+                        }
+                    }
+                    if (!createdShapeObj.projectorPosition && this.shape3DHit) {
+                        createdShapeObj.projectorPosition = this.shape3DHit.point.clone();
+                        createdShapeObj.projectorNormal = this.shape3DHit.normal.clone();
+                    }
+                }
+                this.shape3DHit = null;
 
                 activeLayer.addDecal(createdShapeObj);
             }
@@ -1389,6 +1678,217 @@ export class Painter {
             window.decalSystem.setMode(targetMode);
             window.decalSystem.selectDecal(createdShapeObj, targetMode);
         }
+    }
+
+    startVectorContainer(x, y) {
+        this.creatingContainer = true;
+        this.containerState = {
+            points: [{ x: Math.round(x), y: Math.round(y) }],
+            hover: { x: Math.round(x), y: Math.round(y) }
+        };
+        this.uiNeedsUpdate = true;
+    }
+
+    addVectorContainerPoint(x, y) {
+        if (!this.creatingContainer || !this.containerState) return;
+        const last = this.containerState.points[this.containerState.points.length - 1];
+        if (!last || Math.hypot(x - last.x, y - last.y) >= 3) {
+            this.containerState.points.push({ x: Math.round(x), y: Math.round(y) });
+            this.containerState.hover = { x: Math.round(x), y: Math.round(y) };
+            this.uiNeedsUpdate = true;
+        }
+    }
+
+    updateVectorContainerHover(x, y) {
+        if (!this.creatingContainer || !this.containerState) return;
+        this.containerState.hover = { x: Math.round(x), y: Math.round(y) };
+        this.uiNeedsUpdate = true;
+    }
+
+    cancelVectorContainer() {
+        this.creatingContainer = false;
+        this.containerState = null;
+        this.clearUI();
+        this.uiNeedsUpdate = true;
+    }
+
+    commitVectorContainer(targetMode = '2d') {
+        if (!this.creatingContainer || !this.containerState) return;
+        const pts = this.containerState.points;
+        if (!pts || pts.length < 3) {
+            this.cancelVectorContainer();
+            return;
+        }
+
+        const strokeColor = document.getElementById('shape-bar-stroke-color')?.value || '#000000';
+        const fillInput = document.getElementById('shape-bar-fill-color');
+        let fillColor = (window.currentShapeFillColor !== undefined) ? window.currentShapeFillColor : (fillInput?.value || 'transparent');
+        const strokeW = parseInt(document.getElementById('shape-bar-stroke-width')?.value || 3, 10);
+        const strokeDash = document.getElementById('shape-bar-dash-style')?.value || 'solid';
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of pts) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+        }
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+
+        const localPoints = pts.map(p => ({
+            x: Math.round(p.x - cx),
+            y: Math.round(p.y - cy)
+        }));
+
+        const s = {
+            type: 'vector_container',
+            points: localPoints,
+            strokeColor: strokeColor,
+            fillColor: fillColor,
+            strokeWidth: strokeW,
+            strokeDash: strokeDash,
+            dashStyle: strokeDash,
+            angle: 0
+        };
+
+        const shapeCanvas = this.createShapeCanvas(s);
+        let createdShapeObj = null;
+
+        if (shapeCanvas) {
+            const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+            if (activeLayer) {
+                if (!activeLayer.hasContent) {
+                    activeLayer.hasContent = true;
+                }
+                const count = (activeLayer.decals ? activeLayer.decals.filter(d => d.type === 'vector_container').length : 0) + 1;
+                const shapeName = `Contenedor ${count}`;
+                const w = shapeCanvas.width;
+                const h = shapeCanvas.height;
+
+                createdShapeObj = {
+                    id: 'vector_container_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                    name: shapeName,
+                    type: 'vector_container',
+                    shapeOptions: { ...s },
+                    img: shapeCanvas,
+                    dataUrl: shapeCanvas.toDataURL('image/png'),
+                    x: cx,
+                    y: cy,
+                    width: w,
+                    height: h,
+                    baseWidth: w,
+                    baseHeight: h,
+                    rotation: 0,
+                    mode: targetMode,
+                    opacity: 1.0,
+                    visible: true,
+                    allowPassthrough: (window.decalSystem ? !!window.decalSystem.allowPassthrough : (document.getElementById('decal-passthrough')?.checked || false))
+                };
+
+                if (targetMode === '3d') {
+                    if (window.decalSystem && this.canvas) {
+                        const u = cx / this.canvas.width;
+                        const v = 1 - (cy / this.canvas.height);
+                        const pt3D = window.decalSystem.find3DPointFromUV(u, v);
+                        if (pt3D) {
+                            createdShapeObj.projectorPosition = pt3D.point.clone();
+                            createdShapeObj.projectorNormal = pt3D.normal.clone();
+                            if (pt3D.tangent) createdShapeObj.surfaceTangent = pt3D.tangent.clone();
+                        }
+                    }
+                }
+
+                activeLayer.addDecal(createdShapeObj);
+            }
+        }
+
+        this.cancelVectorContainer();
+        if (this.layerManager) {
+            this.layerManager.recomposite();
+            this.layerManager.renderUI();
+        }
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
+
+        if (window.decalSystem && createdShapeObj) {
+            window.decalSystem.setMode(targetMode);
+            window.decalSystem.selectDecal(createdShapeObj, targetMode);
+        }
+    }
+
+    renderContainerCreationUI() {
+        if (!this.creatingContainer || !this.containerState || !this.ctxUI) return;
+        const pts = this.containerState.points;
+        if (!pts || pts.length === 0) return;
+
+        const ctx = this.ctxUI;
+        ctx.save();
+
+        // 1. Tinte translúcido del relleno si ya tenemos >= 3 puntos
+        if (pts.length >= 3) {
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) {
+                ctx.lineTo(pts[i].x, pts[i].y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(67, 97, 238, 0.22)';
+            ctx.fill();
+        }
+
+        // 2. Líneas sólidas entre puntos confirmados
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) {
+            ctx.lineTo(pts[i].x, pts[i].y);
+        }
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = '#4361ee';
+        ctx.setLineDash([]);
+        ctx.stroke();
+
+        // 3. Línea guía punteada hasta el cursor hover
+        if (this.containerState.hover) {
+            ctx.beginPath();
+            ctx.moveTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+            ctx.lineTo(this.containerState.hover.x, this.containerState.hover.y);
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#00f3ff';
+            ctx.setLineDash([6, 4]);
+            ctx.stroke();
+        }
+
+        // 4. Nodos circulares
+        for (let i = 0; i < pts.length; i++) {
+            const pt = pts[i];
+            const isStart = (i === 0);
+            const r = isStart ? 6 : 4;
+
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+            ctx.fillStyle = isStart ? '#00f3ff' : '#ffffff';
+            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = '#1e1e2f';
+            ctx.setLineDash([]);
+            ctx.stroke();
+
+            // Indicador para cerrar polígono si el hover está cerca del inicio
+            if (isStart && this.containerState.hover && pts.length >= 3) {
+                const distToStart = Math.hypot(this.containerState.hover.x - pt.x, this.containerState.hover.y - pt.y);
+                if (distToStart < 25) {
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, 11, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#00ff88';
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+                }
+            }
+        }
+
+        ctx.restore();
     }
     
     hitTestShape(x, y) {
@@ -1481,6 +1981,48 @@ export class Painter {
 
     drawShapeDirect(ctx, s) {
         if (!s || !ctx) return;
+
+        if (s.type === 'vector_container') {
+            const pts = s.points || [];
+            if (pts.length < 2) return;
+            const strokeW = Math.max(1, (s.strokeWidth !== undefined ? s.strokeWidth : 4));
+            const strokeDash = s.strokeDash || s.dashStyle || 'solid';
+            const spacing = s.dashSpacing || Math.max(6, Math.round(strokeW * 2.5));
+
+            ctx.save();
+            ctx.lineWidth = strokeW;
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = s.strokeColor || s.color || '#000000';
+            ctx.fillStyle = s.fillColor || '#4361ee';
+
+            if (strokeDash === 'rivets' || strokeDash === 'dots') {
+                ctx.lineCap = 'round';
+                ctx.setLineDash([0.001, spacing]);
+            } else if (strokeDash === 'dashed') {
+                ctx.lineCap = 'butt';
+                ctx.setLineDash([Math.max(4, Math.round(strokeW * 3)), spacing]);
+            } else {
+                ctx.lineCap = 'round';
+                ctx.setLineDash([]);
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) {
+                ctx.lineTo(pts[i].x, pts[i].y);
+            }
+            if (pts.length >= 3) {
+                ctx.closePath();
+                if (s.fillColor && s.fillColor !== 'transparent') {
+                    ctx.fill();
+                }
+            }
+            if (s.strokeColor && s.strokeColor !== 'transparent' && strokeW > 0) {
+                ctx.stroke();
+            }
+            ctx.restore();
+            return;
+        }
         const cx = (s.x1 + s.x2) / 2;
         const cy = (s.y1 + s.y2) / 2;
         const w = Math.max(2, Math.abs(s.x2 - s.x1));
@@ -1497,8 +2039,9 @@ export class Painter {
 
         ctx.lineWidth = strokeW;
         ctx.lineJoin = 'round';
-        ctx.strokeStyle = s.color || s.strokeColor || '#000000';
-        ctx.fillStyle = s.fillColor || '#ffff00';
+        const strokeColorVal = s.strokeColor || s.color || '#000000';
+        ctx.strokeStyle = strokeColorVal;
+        ctx.fillStyle = (s.fillColor && s.fillColor !== 'transparent') ? s.fillColor : 'transparent';
 
         if (strokeDash === 'rivets' || strokeDash === 'dots') {
             ctx.lineCap = 'round';
@@ -1528,7 +2071,7 @@ export class Painter {
             if (s.fillColor && s.fillColor !== 'transparent') {
                 ctx.fill();
             }
-            if (s.color && s.color !== 'transparent') {
+            if (strokeColorVal && strokeColorVal !== 'transparent' && strokeW > 0) {
                 ctx.stroke();
             }
         }
@@ -2833,6 +3376,12 @@ export class Painter {
         const isEditingLayerMask = (layer && layer.hasMask && layer.isEditingMask);
 
         if (isEditingLayerMask) {
+            if (layer && !layer.hasContent && !layer.isBackground) {
+                const brushColor = document.getElementById('brush-color')?.value || '#4a5d3f';
+                layer.ctx.fillStyle = brushColor;
+                layer.ctx.fillRect(0, 0, layer.width, layer.height);
+                layer.hasContent = true;
+            }
             if (isErase) {
                 activeCtx.globalCompositeOperation = 'destination-out';
                 strokeColor = 'rgba(0,0,0,1)';
@@ -2849,6 +3398,7 @@ export class Painter {
                 strokeColor = '#FFFFFF';
             }
         } else {
+            if (layer) layer.hasContent = true;
             activeCtx.globalCompositeOperation = 'source-over';
         }
 
@@ -2874,6 +3424,12 @@ export class Painter {
         const isEditingLayerMask = (layer && layer.hasMask && layer.isEditingMask);
 
         if (isEditingLayerMask) {
+            if (layer && !layer.hasContent && !layer.isBackground) {
+                const brushColor = document.getElementById('brush-color')?.value || '#4a5d3f';
+                layer.ctx.fillStyle = brushColor;
+                layer.ctx.fillRect(0, 0, layer.width, layer.height);
+                layer.hasContent = true;
+            }
             if (isErase) {
                 activeCtx.globalCompositeOperation = 'destination-out';
                 strokeColor = 'rgba(0,0,0,1)';
@@ -2890,6 +3446,7 @@ export class Painter {
                 strokeColor = '#FFFFFF';
             }
         } else {
+            if (layer) layer.hasContent = true;
             activeCtx.globalCompositeOperation = 'source-over';
         }
 
@@ -3451,13 +4008,6 @@ export class Painter {
         }, 1400);
     }
 
-    updateUI(time = 0) {
-        if (this.selectionManager && (this.selectionManager.active || this.selectionManager.creating)) {
-            this.selectionManager.dashOffset = (time / 80) % 12;
-            this.clearUI();
-            this.selectionManager.renderOverlay(this.ctxUI);
-        }
-    }
 
     restorePreviousTool() {
         const prev = this.previousMode && this.previousMode !== 'eyedropper' ? this.previousMode : 'paint';
