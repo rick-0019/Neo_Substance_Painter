@@ -237,11 +237,12 @@ export class DecalLibraryManager {
         // Cerrar al hacer clic fuera del panel
         document.addEventListener('mousedown', (e) => {
             if (!this.isOpen) return;
-            if (!this.dom.popup?.contains(e.target) && 
-                !this.dom.trigger?.contains(e.target) &&
-                !this.dom.previewThumb?.contains(e.target)) {
-                this.close();
+            if (e.target.closest('#decal-library-popup') || 
+                e.target.closest('#btn-load-decal') || 
+                e.target.closest('#decal-preview-thumb')) {
+                return;
             }
+            this.close();
         });
 
         // Buscador reactivo
