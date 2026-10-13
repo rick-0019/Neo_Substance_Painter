@@ -235,11 +235,46 @@ export class DecalLibraryManager {
         reader.readAsDataURL(file);
     }
 
+    showToast(message, isSuccess = true) {
+        let toast = document.getElementById('decal-library-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'decal-library-toast';
+            toast.style.position = 'fixed';
+            toast.style.bottom = '24px';
+            toast.style.right = '24px';
+            toast.style.zIndex = '10015';
+            toast.style.padding = '8px 16px';
+            toast.style.borderRadius = '5px';
+            toast.style.fontSize = '12px';
+            toast.style.fontWeight = 'bold';
+            toast.style.boxShadow = '0 6px 18px rgba(0,0,0,0.6)';
+            toast.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+            toast.style.pointerEvents = 'none';
+            document.body.appendChild(toast);
+        }
+        toast.style.background = isSuccess ? '#2e7d32' : '#c62828';
+        toast.style.color = '#fff';
+        toast.textContent = message;
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateY(0)';
+        clearTimeout(this._toastTimeout);
+        this._toastTimeout = setTimeout(() => {
+            if (toast) {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(8px)';
+            }
+        }, 2200);
+    }
+
     async deleteDecal(item) {
         if (!confirm(`¿Eliminar la pegatina "${item.name}"?`)) return;
 
+        const cat = (item.category === 'custom' ? 'mis_calcas' : item.category) || 'mis_calcas';
+        const filename = item.filename || item.name;
+
         // 1. Borrar de la copia local
-        this.userDecals = this.userDecals.filter(d => d.id !== item.id && d.filename !== item.filename);
+        this.userDecals = this.userDecals.filter(d => d.id !== item.id && (!item.filename || d.filename !== item.filename));
         this.saveUserDecals();
 
         // 2. Si está en el servidor, borrar del disco
@@ -248,8 +283,8 @@ export class DecalLibraryManager {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    category: item.category,
-                    filename: item.filename
+                    category: cat,
+                    filename: filename
                 })
             });
             if (res.ok) {
@@ -264,19 +299,37 @@ export class DecalLibraryManager {
 
         this.renderTabsCount();
         this.renderGrid();
+        this.showToast(`🗑️ Pegatina "${item.name}" eliminada`);
     }
 
     async recategorizeDecal(item, newCategory) {
-        if (!item || item.category === newCategory) return;
+        if (!item || !newCategory) return;
+        const fromCat = (item.category === 'custom' ? 'mis_calcas' : item.category) || 'mis_calcas';
+        if (fromCat === newCategory) return;
 
+        const filename = item.filename || item.name;
+
+        // 1. Actualizar el elemento en memoria
+        item.category = newCategory;
+
+        // 2. Si está en localStorage, actualizar su categoría
+        if (this.userDecals) {
+            const local = this.userDecals.find(d => d.id === item.id || (item.filename && d.filename === item.filename));
+            if (local) {
+                local.category = newCategory;
+                this.saveUserDecals();
+            }
+        }
+
+        // 3. Notificar al backend para mover el archivo físico en calcas/
         try {
             const res = await fetch('/api/decals/recategorize', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    fromCategory: item.category,
+                    fromCategory: fromCat,
                     toCategory: newCategory,
-                    filename: item.filename
+                    filename: filename
                 })
             });
             if (res.ok) {
@@ -289,9 +342,18 @@ export class DecalLibraryManager {
             console.warn('Error reclasificando en disco:', e);
         }
 
-        item.category = newCategory;
+        // 4. Cambiar automáticamente a la categoría destino para que el usuario vea su calca allí
+        this.switchCategory(newCategory);
         this.renderTabsCount();
         this.renderGrid();
+
+        const catNames = {
+            insignias: 'Insignias & Logos',
+            avisos: 'Avisos Técnicos',
+            mecanica: 'Mecánica & Paneles',
+            mis_calcas: 'Mis Calcas'
+        };
+        this.showToast(`✓ Movida a "${catNames[newCategory] || newCategory}"`);
     }
 
     switchCategory(cat) {
@@ -418,25 +480,32 @@ export class DecalLibraryManager {
         menu.style.fontSize = '11px';
         menu.style.color = '#eee';
 
+        const currentCategory = (item.category === 'custom' ? 'mis_calcas' : item.category) || 'mis_calcas';
+
         const categories = [
-            { id: 'insignias', label: '🎖️ Mover a Insignias' },
+            { id: 'insignias', label: '🎖️ Mover a Insignias & Logos' },
             { id: 'avisos', label: '⚠️ Mover a Avisos Técnicos' },
-            { id: 'mecanica', label: '⚙️ Mover a Mecánica' },
+            { id: 'mecanica', label: '⚙️ Mover a Mecánica & Paneles' },
             { id: 'mis_calcas', label: '📁 Mover a Mis Calcas' }
         ];
 
-        let html = `<div style="padding: 4px 10px; font-weight: bold; color: #ff9800; border-bottom: 1px solid #3a3a3a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.name}</div>`;
+        let html = `<div style="padding: 6px 12px; font-weight: bold; color: #ff9800; border-bottom: 1px solid #3a3a3a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;">${item.name}</div>`;
         
         categories.forEach(cat => {
-            if (cat.id !== item.category) {
-                html += `<div class="decal-menu-item" data-action="move" data-cat="${cat.id}" style="padding: 6px 12px; cursor: pointer;">${cat.label}</div>`;
+            if (cat.id !== currentCategory) {
+                html += `<div class="decal-menu-item" data-action="move" data-cat="${cat.id}" style="padding: 7px 12px; cursor: pointer;">${cat.label}</div>`;
             }
         });
 
         html += `<div style="border-top: 1px solid #3a3a3a; margin: 3px 0;"></div>`;
-        html += `<div class="decal-menu-item" data-action="delete" style="padding: 6px 12px; cursor: pointer; color: #ff6b6b;">🗑️ Eliminar Calca</div>`;
+        html += `<div class="decal-menu-item" data-action="delete" style="padding: 7px 12px; cursor: pointer; color: #ff6b6b;">🗑️ Eliminar Calca</div>`;
 
         menu.innerHTML = html;
+
+        // Evitar que un clic o mousedown dentro del menú se propague a document y lo cierre antes de tiempo
+        menu.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+        });
 
         menu.querySelectorAll('.decal-menu-item').forEach(el => {
             el.addEventListener('mouseenter', () => el.style.background = '#383838');
@@ -456,11 +525,12 @@ export class DecalLibraryManager {
 
         document.body.appendChild(menu);
 
-        const closeMenu = () => {
+        const closeMenu = (e) => {
+            if (e && (menu.contains(e.target) || e.target.closest('.decal-context-menu'))) return;
             menu.remove();
             document.removeEventListener('mousedown', closeMenu);
         };
-        setTimeout(() => document.addEventListener('mousedown', closeMenu), 10);
+        setTimeout(() => document.addEventListener('mousedown', closeMenu), 20);
     }
 
     applyDecal(item) {

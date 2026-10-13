@@ -155,11 +155,19 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
                 body = self.rfile.read(content_len).decode('utf-8')
                 data = json.loads(body)
 
-                category = data.get('category', 'mis_calcas')
-                filename = data.get('filename', '')
+                raw_cat = data.get('category', 'mis_calcas')
+                category = 'mis_calcas' if raw_cat == 'custom' else raw_cat
+                filename = urllib.parse.unquote(data.get('filename', ''))
 
-                if category and filename:
+                if filename:
                     target_file = os.path.join(CALCAS_DIR, category, filename)
+                    if not os.path.exists(target_file):
+                        # Buscar en todas las carpetas por si acaso
+                        for c in CATEGORIES:
+                            test_p = os.path.join(CALCAS_DIR, c, filename)
+                            if os.path.exists(test_p):
+                                target_file = test_p
+                                break
                     if os.path.exists(target_file):
                         os.remove(target_file)
 
@@ -186,17 +194,41 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
                 body = self.rfile.read(content_len).decode('utf-8')
                 data = json.loads(body)
 
-                from_cat = data.get('fromCategory', '')
-                to_cat = data.get('toCategory', '')
-                filename = data.get('filename', '')
+                def norm_cat(c):
+                    c = (c or '').strip().lower()
+                    if c in ('custom', 'mis_calcas', 'mis calcas'):
+                        return 'mis_calcas'
+                    if c in ('insignias', 'insignias & logos'):
+                        return 'insignias'
+                    if c in ('avisos', 'avisos técnicos', 'avisos tecnicos'):
+                        return 'avisos'
+                    if c in ('mecanica', 'mecánica & paneles', 'mecanica y paneles'):
+                        return 'mecanica'
+                    return c
+
+                from_cat = norm_cat(data.get('fromCategory', ''))
+                to_cat = norm_cat(data.get('toCategory', ''))
+                filename = urllib.parse.unquote(data.get('filename', ''))
 
                 if from_cat and to_cat and filename:
                     src_file = os.path.join(CALCAS_DIR, from_cat, filename)
+                    if not os.path.exists(src_file):
+                        # Buscar en todas las categorías
+                        for c in CATEGORIES:
+                            test_p = os.path.join(CALCAS_DIR, c, filename)
+                            if os.path.exists(test_p):
+                                src_file = test_p
+                                break
+
                     dest_dir = os.path.join(CALCAS_DIR, to_cat)
                     os.makedirs(dest_dir, exist_ok=True)
                     dest_file = os.path.join(dest_dir, filename)
+
                     if os.path.exists(src_file):
-                        os.rename(src_file, dest_file)
+                        if os.path.abspath(src_file) != os.path.abspath(dest_file):
+                            if os.path.exists(dest_file):
+                                os.remove(dest_file)
+                            os.replace(src_file, dest_file)
 
                 decals = scan_decals()
                 resp = json.dumps({"success": True, "decals": decals}, ensure_ascii=False).encode('utf-8')

@@ -7,7 +7,7 @@ import { LayerManager } from './layers.js?v=8.6';
 import { PapercraftEngine } from './papercraft.js?v=8.6';
 import { SelectionManager } from './selection.js?v=8.6';
 import { ColorPickerManager } from './colorPicker.js?v=8.6';
-import { DecalLibraryManager } from './decalLibrary.js?v=8.6';
+import { DecalLibraryManager } from './decalLibrary.js?v=8.7';
 
 // Configuration
 let TEX_SIZE = 2048;
