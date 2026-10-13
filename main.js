@@ -6,6 +6,7 @@ import { DecalSystem } from './decals.js?v=7.4';
 import { LayerManager } from './layers.js?v=8.2';
 import { PapercraftEngine } from './papercraft.js?v=7.3';
 import { SelectionManager } from './selection.js?v=8.2';
+import { ColorPickerManager } from './colorPicker.js?v=8.3';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -340,6 +341,13 @@ function updatePapercraftUI() {
             btn.style.background = '#222';
         }
     });
+
+    const cutColorSel = document.getElementById('unfold-cut-color');
+    if (cutColorSel && papercraft.cutLineColor) cutColorSel.value = papercraft.cutLineColor;
+    const cutWidthSel = document.getElementById('unfold-cut-width');
+    if (cutWidthSel && papercraft.cutLineWidthMm !== undefined) {
+        cutWidthSel.value = Number(papercraft.cutLineWidthMm).toFixed(2);
+    }
 
     const partsCount = document.getElementById('unfold-parts-count');
     if (partsCount) partsCount.textContent = `${papercraft.parts.length} piezas (${papercraft.pagesCount} Hojas A4)`;
@@ -861,11 +869,16 @@ function switchSidebarTab(tab) {
 }
 window.switchSidebarTab = switchSidebarTab;
 
-tabBtnLayers?.addEventListener('click', () => switchSidebarTab('layers'));
+tabBtnLayers?.addEventListener('click', () => {
+    switchSidebarTab('layers');
+    if (papercraft.active && typeof window.setUnfoldMode === 'function') {
+        window.setUnfoldMode(false);
+    }
+});
 tabBtnUnfold?.addEventListener('click', () => {
     switchSidebarTab('unfold');
-    if (!papercraft.active) {
-        btnRibbonUnfold?.click();
+    if (!papercraft.active && typeof window.setUnfoldMode === 'function') {
+        window.setUnfoldMode(true);
     }
 });
 
@@ -1165,13 +1178,17 @@ window.addEventListener('drop', (e) => {
     }
 });
 
-// Botón Ribbon Modo Papercraft / Unfold
+// Botón Ribbon Modo Papercraft / Unfold y retorno a Vista 2D
 const btnRibbonUnfold = document.getElementById('btn-ribbon-unfold-mode');
-btnRibbonUnfold?.addEventListener('click', () => {
-    papercraft.active = !papercraft.active;
+const btnUnfoldBackTo2D = document.getElementById('btn-unfold-back-to-2d');
+
+function setUnfoldMode(active) {
+    papercraft.active = !!active;
     if (papercraft.active) {
-        btnRibbonUnfold.style.background = '#e65100';
-        btnRibbonUnfold.textContent = '✂️ Unfold (ON)';
+        if (btnRibbonUnfold) {
+            btnRibbonUnfold.style.background = '#e65100';
+            btnRibbonUnfold.textContent = '✂️ Unfold (ON)';
+        }
         if (unfoldWorkbench) unfoldWorkbench.style.display = 'block';
         if (canvasContainer) canvasContainer.style.display = 'none';
         if (view2dLabel) view2dLabel.style.display = 'none';
@@ -1182,8 +1199,10 @@ btnRibbonUnfold?.addEventListener('click', () => {
         }
         renderUnfoldWorkbench();
     } else {
-        btnRibbonUnfold.style.background = '#555';
-        btnRibbonUnfold.textContent = '✂️ Modo Unfold';
+        if (btnRibbonUnfold) {
+            btnRibbonUnfold.style.background = '#555';
+            btnRibbonUnfold.textContent = '✂️ Modo Unfold';
+        }
         if (unfoldWorkbench) unfoldWorkbench.style.display = 'none';
         if (canvasContainer) canvasContainer.style.display = 'block';
         if (view2dLabel) {
@@ -1192,6 +1211,19 @@ btnRibbonUnfold?.addEventListener('click', () => {
         }
         drawUVWireframe();
     }
+}
+window.setUnfoldMode = setUnfoldMode;
+
+btnRibbonUnfold?.addEventListener('click', () => {
+    setUnfoldMode(!papercraft.active);
+    if (!papercraft.active) {
+        switchSidebarTab('layers');
+    }
+});
+
+btnUnfoldBackTo2D?.addEventListener('click', () => {
+    setUnfoldMode(false);
+    switchSidebarTab('layers');
 });
 
 // Interacción de Arrastre, Rotación y Medición (Regla) en el Banco de Hojas A4
@@ -1923,6 +1955,11 @@ toolButtons.forEach(btn => {
         const mode = targetBtn.getAttribute('data-mode');
         if (!mode) return;
 
+        if (papercraft.active && typeof window.setUnfoldMode === 'function') {
+            window.setUnfoldMode(false);
+            switchSidebarTab('layers');
+        }
+
         // Desactivar botón de gotero si estuviera activo
         document.getElementById('btn-eyedropper')?.classList.remove('active');
 
@@ -2640,8 +2677,13 @@ bgColorPicker?.addEventListener('input', (e) => {
     setViewportBackground(e.target.value);
 });
 
-// --- Ranuras de Colores Rápidos (Color 1, Color 2, Color 3) ---
+// --- Selector Profesional de Color (ColorPickerManager) ---
 const colorInput = document.getElementById('brush-color');
+const colorPicker = new ColorPickerManager();
+window.colorPicker = colorPicker;
+colorPicker.init();
+
+// --- Ranuras de Colores Rápidos (Color 1, Color 2, Color 3) ---
 let activeQuickSlot = document.getElementById('slot-color-1');
 const quickSlots = document.querySelectorAll('.quick-color-slot');
 
@@ -2651,8 +2693,9 @@ quickSlots.forEach(slot => {
         slot.classList.add('active');
         activeQuickSlot = slot;
         const color = slot.getAttribute('data-color');
-        if (color && colorInput) {
-            colorInput.value = color;
+        if (color) {
+            if (colorInput) colorInput.value = color;
+            if (colorPicker) colorPicker.setColor(color, true);
             if (window.decalSystem && window.decalSystem.isTextMode) {
                 window.decalSystem.updateTextDecal({ color });
                 const textColorInput = document.getElementById('text-color');
@@ -2677,6 +2720,12 @@ function updateActiveQuickColor(newColor) {
         activeQuickSlot.setAttribute('data-color', newColor);
         activeQuickSlot.style.backgroundColor = newColor;
     }
+    if (colorInput && colorInput.value.toUpperCase() !== newColor.toUpperCase()) {
+        colorInput.value = newColor;
+    }
+    if (colorPicker && colorPicker.currentColor.toUpperCase() !== newColor.toUpperCase()) {
+        colorPicker.setColor(newColor, false);
+    }
     if (window.decalSystem && window.decalSystem.isTextMode) {
         window.decalSystem.updateTextDecal({ color: newColor });
         const textColorInput = document.getElementById('text-color');
@@ -2687,6 +2736,7 @@ window.updateActiveQuickColor = updateActiveQuickColor;
 
 colorInput?.addEventListener('input', (e) => {
     updateActiveQuickColor(e.target.value);
+    if (colorPicker) colorPicker.setColor(e.target.value, false);
     if (window.decalSystem && window.decalSystem.selectedDecalId) {
         window.decalSystem.updateSelectedShapeFillFromColor(e.target.value);
     }
@@ -2696,6 +2746,7 @@ document.querySelectorAll('.palette-swatch').forEach(swatch => {
     swatch.addEventListener('click', (e) => {
         const col = e.target.getAttribute('data-color');
         if (colorInput) colorInput.value = col;
+        if (colorPicker) colorPicker.setColor(col, true);
         updateActiveQuickColor(col);
         if (window.decalSystem && window.decalSystem.selectedDecalId) {
             window.decalSystem.updateSelectedShapeFillFromColor(col);
@@ -2974,7 +3025,7 @@ async function loadProjectNSP(fileOrData, silent = false) {
             if (pp.cutLineWidthMm) {
                 papercraft.cutLineWidthMm = pp.cutLineWidthMm;
                 const sel = document.getElementById('unfold-cut-width');
-                if (sel) sel.value = String(pp.cutLineWidthMm);
+                if (sel) sel.value = Number(pp.cutLineWidthMm).toFixed(2);
             }
             if (pp.tabHeightMm) updateTabHeight(pp.tabHeightMm);
             if (pp.tabAngleDeg) {

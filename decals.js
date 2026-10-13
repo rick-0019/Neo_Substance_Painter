@@ -105,6 +105,10 @@ export class DecalSystem {
     setMode(mode) {
         this.mode = mode;
         if (this.textOptions) this.textOptions.mode = mode;
+        if (mode === '2d' && window.papercraft?.active && typeof window.setUnfoldMode === 'function') {
+            window.setUnfoldMode(false);
+            if (typeof window.switchSidebarTab === 'function') window.switchSidebarTab('layers');
+        }
         const btnMode3D = document.getElementById('btn-decal-mode-3d');
         const btnMode2D = document.getElementById('btn-decal-mode-2d');
         if (btnMode3D) btnMode3D.classList.toggle('active', mode === '3d');

@@ -229,15 +229,84 @@ body, html {
     justify-content: center;
     align-items: center;
     height: 60px;
+    cursor: pointer;
+}
+
+.color-preview-box {
+    width: 44px;
+    height: 44px;
+    border-radius: 5px;
+    border: 2px solid #555;
+    cursor: pointer;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    overflow: hidden;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5), inset 0 0 4px rgba(0,0,0,0.3);
+    transition: transform 0.1s, border-color 0.15s;
+    user-select: none;
+    box-sizing: border-box;
+}
+
+.color-preview-box:hover {
+    border-color: #00f3ff;
+    transform: scale(1.04);
+}
+
+#brush-color-hex-label {
+    font-size: 8px;
+    font-family: monospace;
+    font-weight: bold;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.75);
+    padding: 1px 2px;
+    width: 100%;
+    text-align: center;
+    letter-spacing: 0.3px;
+    pointer-events: none;
 }
 
 #brush-color {
-    width: 48px;
-    height: 48px;
-    padding: 0;
-    border: 1px solid var(--border);
+    display: none;
+}
+
+.color-picker-panel {
+    position: fixed;
+    z-index: 10001;
+    background: #222222;
+    border: 1px solid #555;
+    border-radius: 8px;
+    box-shadow: 0 12px 35px rgba(0,0,0,0.95);
+    color: #eee;
+    box-sizing: border-box;
+}
+
+.cp-swatch-item {
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    border: 1px solid #444;
     cursor: pointer;
-    background: none;
+    box-sizing: border-box;
+    transition: transform 0.1s, border-color 0.1s;
+}
+
+.cp-swatch-item:hover {
+    transform: scale(1.15);
+    border-color: #fff;
+    z-index: 2;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+}
+
+.cp-swatch-item.active {
+    border: 2px solid #00f3ff !important;
+    box-shadow: 0 0 4px #00f3ff;
+}
+
+.cp-num-input:focus, #cp-input-hex:focus {
+    outline: none;
+    border-color: #00f3ff !important;
+    background: #333 !important;
 }
 
 .ribbon-palette {
