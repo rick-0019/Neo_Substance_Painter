@@ -7,6 +7,7 @@ import { LayerManager } from './layers.js?v=8.2';
 import { PapercraftEngine } from './papercraft.js?v=7.3';
 import { SelectionManager } from './selection.js?v=8.2';
 import { ColorPickerManager } from './colorPicker.js?v=8.3';
+import { DecalLibraryManager } from './decalLibrary.js?v=8.3';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -197,6 +198,11 @@ painter.setSelectionManager(selectionManager);
 window.painter = painter;
 const decalSystem = new DecalSystem(scene, camera, renderer, canvas2d, canvasTexture, layerManager, painter);
 window.decalSystem = decalSystem;
+
+// Biblioteca y Catálogo Interno de Pegatinas / Calcas
+const decalLibrary = new DecalLibraryManager();
+window.decalLibrary = decalLibrary;
+decalLibrary.init();
 
 // Exponer sistemas y componentes al scope global para el Ensamblador y extensiones
 window.scene = scene;

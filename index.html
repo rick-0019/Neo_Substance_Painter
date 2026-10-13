@@ -707,13 +707,13 @@
             <div class="ribbon-divider"></div>
 
             <!-- Grupo: Calcomanías (Decals / Logos) -->
-            <div class="ribbon-group" id="group-decals">
+            <div class="ribbon-group" id="group-decals" style="position: relative;">
                 <div class="ribbon-items-horizontal" style="display: flex; align-items: center; gap: 4px; height: 60px;">
                     <div style="display: flex; flex-direction: column; gap: 2px; justify-content: center;">
-                        <button id="btn-load-decal" class="ribbon-btn" style="min-width: 68px; padding: 2px 4px; font-size: 10px;" title="Cargar imagen PNG/SVG/JPG/WebP para estampar en el modelo 3D">🏷️ Pegatina</button>
-                        <button id="btn-load-camo-stencil" class="ribbon-btn" style="min-width: 68px; background: #2e7d32; border-color: #1b5e20; padding: 2px 4px; font-size: 10px;" title="Estampar mancha de camuflaje 3D envolvente que pasa naturalmente del fuselaje a las alas">🎭 Mancha</button>
+                        <button id="btn-load-decal" class="ribbon-btn" style="min-width: 72px; padding: 2px 4px; font-size: 10px; font-weight: bold; background: #1976d2; border-color: #0d47a1;" title="Abrir Catálogo y Biblioteca de Calcas / Pegatinas">🏷️ Pegatinas ▼</button>
+                        <button id="btn-load-camo-stencil" class="ribbon-btn" style="min-width: 72px; background: #2e7d32; border-color: #1b5e20; padding: 2px 4px; font-size: 10px;" title="Estampar mancha de camuflaje 3D envolvente que pasa naturalmente del fuselaje a las alas">🎭 Mancha</button>
                         <input type="file" id="input-decal" accept=".svg,.png,.jpg,.jpeg,.webp,image/*" style="display: none;">
-                        <div id="decal-preview-thumb" class="decal-thumb" style="display: none;" title="Previsualización de la calcomanía"></div>
+                        <div id="decal-preview-thumb" class="decal-thumb" style="display: none; cursor: pointer;" title="Calca activa (Clic para abrir catálogo)"></div>
                     </div>
 
                     <div id="decal-controls" style="display: none; align-items: center; gap: 6px;">
@@ -808,6 +808,56 @@
                     </div>
                 </div>
                 <span class="ribbon-label">Calcomanías (Decals)</span>
+
+                <!-- Panel Popover Flotante de Catálogo de Calcas -->
+                <div id="decal-library-popup" class="paint-floating-panel decal-library-panel" style="display: none;">
+                    <div class="floating-panel-header" style="margin-bottom: 8px;">
+                        <span style="display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 14px;">🏷️</span>
+                            <span>Catálogo de Calcomanías y Esténciles</span>
+                        </span>
+                        <button type="button" id="btn-close-decal-library" class="floating-panel-close" title="Cerrar catálogo">✖</button>
+                    </div>
+
+                    <!-- Buscador y Botón Importar -->
+                    <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
+                        <div style="position: relative; flex: 1;">
+                            <input type="text" id="decal-library-search" placeholder="🔍 Buscar por nombre o etiqueta (ej: spacy, danger, skull, fuel, cruz)..." style="width: 100%; height: 26px; background: #262626; border: 1px solid #444; border-radius: 4px; color: #fff; padding: 0 8px 0 26px; font-size: 11px; box-sizing: border-box;">
+                            <span style="position: absolute; left: 8px; top: 5px; font-size: 11px; color: #888; pointer-events: none;">🔍</span>
+                        </div>
+                        <button type="button" id="btn-decal-import-pc" class="ribbon-btn" style="background: #2e7d32; border-color: #1b5e20; font-size: 10.5px; height: 26px; font-weight: bold; padding: 0 8px; white-space: nowrap;" title="Cargar una imagen de tu PC y guardarla en Mis Calcas">
+                            ➕ Cargar de PC...
+                        </button>
+                    </div>
+
+                    <!-- Barra de Categorías / Tabs -->
+                    <div id="decal-library-tabs" style="display: flex; gap: 4px; margin-bottom: 10px; overflow-x: auto; padding-bottom: 2px;">
+                        <button type="button" class="decal-tab-btn active" data-cat="all">
+                            ⭐ Todas <span class="tab-count" style="font-size: 9px; opacity: 0.8;">(0)</span>
+                        </button>
+                        <button type="button" class="decal-tab-btn" data-cat="insignias">
+                            🎖️ Insignias & Logos <span class="tab-count" style="font-size: 9px; opacity: 0.8;">(0)</span>
+                        </button>
+                        <button type="button" class="decal-tab-btn" data-cat="avisos">
+                            ⚠️ Avisos Técnicos <span class="tab-count" style="font-size: 9px; opacity: 0.8;">(0)</span>
+                        </button>
+                        <button type="button" class="decal-tab-btn" data-cat="mecanica">
+                            ⚙️ Mecánica & Paneles <span class="tab-count" style="font-size: 9px; opacity: 0.8;">(0)</span>
+                        </button>
+                        <button type="button" class="decal-tab-btn" data-cat="custom">
+                            📁 Mis Calcas <span class="tab-count" style="font-size: 9px; opacity: 0.8;">(0)</span>
+                        </button>
+                    </div>
+
+                    <!-- Grilla de Tarjetas de Calcas -->
+                    <div id="decal-library-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; max-height: 330px; overflow-y: auto; padding-right: 4px;">
+                        <!-- Generado dinámicamente -->
+                    </div>
+
+                    <div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #333; padding-top: 6px; font-size: 10px; color: #888;">
+                        <span>💡 Haz clic en cualquier calca para activarla y colocarla. Clic derecho en 'Mis Calcas' para borrar.</span>
+                    </div>
+                </div>
             </div>
 
             <div class="ribbon-divider"></div>

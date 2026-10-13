@@ -548,17 +548,28 @@ export class DecalSystem {
         btnMode3D?.addEventListener('click', () => this.setMode('3d'));
         btnMode2D?.addEventListener('click', () => this.setMode('2d'));
 
-        btnLoad?.addEventListener('click', () => {
+        btnLoad?.addEventListener('click', (e) => {
+            e.preventDefault();
             const btnSelect = document.getElementById('btn-tool-select');
             if (btnSelect && !btnSelect.classList.contains('active')) {
                 btnSelect.click();
             }
-            inputDecal?.click();
+            if (window.decalLibrary) {
+                window.decalLibrary.toggle();
+            } else {
+                inputDecal?.click();
+            }
         });
 
         inputDecal?.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
+
+            if (window.decalLibrary) {
+                window.decalLibrary.importFile(file);
+                inputDecal.value = '';
+                return;
+            }
 
             const decalName = file.name.replace(/\.[^/.]+$/, '');
             const onImgReady = (img, name) => {
