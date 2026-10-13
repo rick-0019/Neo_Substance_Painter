@@ -1,0 +1,186 @@
+[
+  {
+    "id": "insignias_calabera_chica",
+    "name": "Calavera Skull Squadron",
+    "category": "insignias",
+    "src": "./calcas/insignias/Calabera%20chica.png",
+    "filename": "Calabera chica.png",
+    "isUser": false
+  },
+  {
+    "id": "insignias_logo_robotech",
+    "name": "Robotech Defense Force",
+    "category": "insignias",
+    "src": "./calcas/insignias/Logo_Robotech.png",
+    "filename": "Logo_Robotech.png",
+    "isUser": false
+  },
+  {
+    "id": "insignias_mars_base",
+    "name": "Mars Base (Base Marte)",
+    "category": "insignias",
+    "src": "./calcas/insignias/Mars_Base.png",
+    "filename": "Mars_Base.png",
+    "isUser": false
+  },
+  {
+    "id": "insignias_un_spacy",
+    "name": "U.N. Spacy (Cometa)",
+    "category": "insignias",
+    "src": "./calcas/insignias/UN_Spacy.png",
+    "filename": "UN_Spacy.png",
+    "isUser": false
+  },
+  {
+    "id": "insignias_cruz_balkenkreuz_ww2",
+    "name": "Balkenkreuz Militar",
+    "category": "insignias",
+    "src": "./calcas/insignias/cruz_balkenkreuz_ww2.png",
+    "filename": "cruz_balkenkreuz_ww2.png",
+    "isUser": false
+  },
+  {
+    "id": "insignias_cruz_hierro_militar_borde_blanco",
+    "name": "Cruz de Hierro (Borde Blanco)",
+    "category": "insignias",
+    "src": "./calcas/insignias/cruz_hierro_militar_borde_blanco.png",
+    "filename": "cruz_hierro_militar_borde_blanco.png",
+    "isUser": false
+  },
+  {
+    "id": "insignias_cruz_hierro_silueta",
+    "name": "Cruz de Hierro (Silueta)",
+    "category": "insignias",
+    "src": "./calcas/insignias/cruz_hierro_silueta.png",
+    "filename": "cruz_hierro_silueta.png",
+    "isUser": false
+  },
+  {
+    "id": "insignias_logo_raidar-x",
+    "name": "Destroid Raidar-X",
+    "category": "insignias",
+    "src": "./calcas/insignias/logo_Raidar-x.png",
+    "filename": "logo_Raidar-x.png",
+    "isUser": false
+  },
+  {
+    "id": "insignias_logo_zentran",
+    "name": "Emblema Zentradi",
+    "category": "insignias",
+    "src": "./calcas/insignias/logo_zentran.png",
+    "filename": "logo_zentran.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_beware_of_blast",
+    "name": "Beware of Blast (Chorro Escape)",
+    "category": "avisos",
+    "src": "./calcas/avisos/Beware%20of%20blast.png",
+    "filename": "Beware of blast.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_beware_of_blastblanco",
+    "name": "Beware of Blast (Blanco)",
+    "category": "avisos",
+    "src": "./calcas/avisos/Beware%20of%20blastBLANCO.png",
+    "filename": "Beware of blastBLANCO.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_caution-2k",
+    "name": "Caution (Precaución)",
+    "category": "avisos",
+    "src": "./calcas/avisos/Caution-2k.png",
+    "filename": "Caution-2k.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_danger",
+    "name": "Danger (Peligro Turbina)",
+    "category": "avisos",
+    "src": "./calcas/avisos/Danger.png",
+    "filename": "Danger.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_ejection_seat",
+    "name": "Ejection Seat (Triángulo Cabina)",
+    "category": "avisos",
+    "src": "./calcas/avisos/Ejection%20Seat.png",
+    "filename": "Ejection Seat.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_no_step",
+    "name": "No Step (No Pisar)",
+    "category": "avisos",
+    "src": "./calcas/avisos/No%20Step.png",
+    "filename": "No Step.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_rescue",
+    "name": "Rescue (Flecha Rescate)",
+    "category": "avisos",
+    "src": "./calcas/avisos/Rescue.png",
+    "filename": "Rescue.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_warning",
+    "name": "Warning (Advertencia)",
+    "category": "avisos",
+    "src": "./calcas/avisos/Warning.png",
+    "filename": "Warning.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_jet_fuel_only",
+    "name": "Jet Fuel Only (Combustible)",
+    "category": "avisos",
+    "src": "./calcas/avisos/jet%20fuel%20only.png",
+    "filename": "jet fuel only.png",
+    "isUser": false
+  },
+  {
+    "id": "avisos_push-open.close",
+    "name": "Push / Open / Close (Pestillo)",
+    "category": "avisos",
+    "src": "./calcas/avisos/push-open.close.png",
+    "filename": "push-open.close.png",
+    "isUser": false
+  },
+  {
+    "id": "mecanica_armament",
+    "name": "Armament (Bahía de Armas)",
+    "category": "mecanica",
+    "src": "./calcas/mecanica/Armament.png",
+    "filename": "Armament.png",
+    "isUser": false
+  },
+  {
+    "id": "mecanica_regilla_circular",
+    "name": "Rejilla Circular (Ventilación)",
+    "category": "mecanica",
+    "src": "./calcas/mecanica/regilla%20circular.png",
+    "filename": "regilla circular.png",
+    "isUser": false
+  },
+  {
+    "id": "mecanica_valvula-circulo",
+    "name": "Válvula / Tapa Presión",
+    "category": "mecanica",
+    "src": "./calcas/mecanica/valvula-circulo.png",
+    "filename": "valvula-circulo.png",
+    "isUser": false
+  },
+  {
+    "id": "mis_calcas_201e562914213207d8ecbe84b6b5a568",
+    "name": "201E562914213207D8Ecbe84B6B5A568",
+    "category": "mis_calcas",
+    "src": "./calcas/mis_calcas/201e562914213207d8ecbe84b6b5a568.jpg",
+    "filename": "201e562914213207d8ecbe84b6b5a568.jpg",
+    "isUser": true
+  }
+]

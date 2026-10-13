@@ -1,174 +1,13 @@
 // decalLibrary.js - Catálogo y Biblioteca Interna de Calcas / Pegatinas para Neo Substance Painter
-// Permite elegir calcomanías organizadas por categorías (Insignias, Avisos Técnicos, Mecánica, Mis Calcas)
-// con buscador instantáneo, sin abrir el explorador de Windows, y con soporte para importar nuevas calcas.
-
-export const BUILTIN_DECALS = [
-    // --- INSIGNIAS & LOGOS ---
-    {
-        id: 'un_spacy',
-        name: 'U.N. Spacy (Cometa)',
-        category: 'insignias',
-        tags: ['spacy', 'cometa', 'macross', 'un', 'logo', 'insignia', 'valkyrie'],
-        src: './texturas/UN_Spacy.png'
-    },
-    {
-        id: 'skull_squadron',
-        name: 'Calavera Skull Squadron',
-        category: 'insignias',
-        tags: ['skull', 'calavera', 'roy', 'focker', 'escuadron', 'insignia'],
-        src: './texturas/Calabera chica.png'
-    },
-    {
-        id: 'robotech_logo',
-        name: 'Robotech Defense Force',
-        category: 'insignias',
-        tags: ['robotech', 'rdf', 'logo', 'defensa'],
-        src: './texturas/Logo_Robotech.png'
-    },
-    {
-        id: 'mars_base',
-        name: 'Mars Base (Base Marte)',
-        category: 'insignias',
-        tags: ['mars', 'base', 'marte', 'sara', 'logo'],
-        src: './texturas/Mars_Base.png'
-    },
-    {
-        id: 'zentradi_logo',
-        name: 'Emblema Zentradi',
-        category: 'insignias',
-        tags: ['zentradi', 'zentran', 'enemigo', 'logo'],
-        src: './texturas/logo_zentran.png'
-    },
-    {
-        id: 'destroid_raidar_x',
-        name: 'Destroid Raidar-X',
-        category: 'insignias',
-        tags: ['raidar', 'destroid', 'logo'],
-        src: './texturas/logo_Raidar-x.png'
-    },
-    {
-        id: 'cruz_balkenkreuz',
-        name: 'Balkenkreuz Militar',
-        category: 'insignias',
-        tags: ['balkenkreuz', 'cruz', 'camo', 'militar', 'ww2'],
-        src: './texturas/cruz_balkenkreuz_ww2.png'
-    },
-    {
-        id: 'cruz_hierro_blanca',
-        name: 'Cruz de Hierro (Borde Blanco)',
-        category: 'insignias',
-        tags: ['cruz', 'hierro', 'militar', 'blanco'],
-        src: './texturas/cruz_hierro_militar_borde_blanco.png'
-    },
-    {
-        id: 'cruz_hierro_silueta',
-        name: 'Cruz de Hierro (Silueta)',
-        category: 'insignias',
-        tags: ['cruz', 'hierro', 'silueta', 'negro'],
-        src: './texturas/cruz_hierro_silueta.png'
-    },
-
-    // --- AVISOS & STENCILS TÉCNICOS ---
-    {
-        id: 'danger_jet',
-        name: 'Danger (Peligro Turbina)',
-        category: 'avisos',
-        tags: ['danger', 'peligro', 'turbina', 'rojo', 'stencil'],
-        src: './texturas/Danger.png'
-    },
-    {
-        id: 'warning_sign',
-        name: 'Warning (Advertencia)',
-        category: 'avisos',
-        tags: ['warning', 'advertencia', 'amarillo', 'stencil'],
-        src: './texturas/Warning.png'
-    },
-    {
-        id: 'caution_panel',
-        name: 'Caution (Precaución)',
-        category: 'avisos',
-        tags: ['caution', 'precaucion', 'amarillo', 'panel'],
-        src: './texturas/Caution-2k.png'
-    },
-    {
-        id: 'ejection_seat',
-        name: 'Ejection Seat (Triángulo Cabina)',
-        category: 'avisos',
-        tags: ['ejection', 'seat', 'asiento', 'cabina', 'cockpit', 'escape'],
-        src: './texturas/Ejection Seat.png'
-    },
-    {
-        id: 'rescue_arrow',
-        name: 'Rescue (Flecha Rescate)',
-        category: 'avisos',
-        tags: ['rescue', 'rescate', 'flecha', 'cabina', 'cockpit'],
-        src: './texturas/Rescue.png'
-    },
-    {
-        id: 'no_step',
-        name: 'No Step (No Pisar)',
-        category: 'avisos',
-        tags: ['no step', 'pisar', 'ala', 'aleron', 'lomo'],
-        src: './texturas/No Step.png'
-    },
-    {
-        id: 'jet_fuel_only',
-        name: 'Jet Fuel Only (Combustible)',
-        category: 'avisos',
-        tags: ['fuel', 'combustible', 'tanque', 'ala', 'jet'],
-        src: './texturas/jet fuel only.png'
-    },
-    {
-        id: 'beware_of_blast',
-        name: 'Beware of Blast (Chorro Escape)',
-        category: 'avisos',
-        tags: ['blast', 'exhaust', 'escape', 'tobera', 'peligro'],
-        src: './texturas/Beware of blast.png'
-    },
-    {
-        id: 'beware_of_blast_white',
-        name: 'Beware of Blast (Blanco)',
-        category: 'avisos',
-        tags: ['blast', 'blanco', 'exhaust', 'escape', 'tobera'],
-        src: './texturas/Beware of blastBLANCO.png'
-    },
-    {
-        id: 'push_open_close',
-        name: 'Push / Open / Close (Pestillo)',
-        category: 'avisos',
-        tags: ['push', 'open', 'close', 'pestillo', 'puerta', 'cabina'],
-        src: './texturas/push-open.close.png'
-    },
-
-    // --- MECÁNICA & PANELES ---
-    {
-        id: 'regilla_circular',
-        name: 'Rejilla Circular (Ventilación)',
-        category: 'mecanica',
-        tags: ['rejilla', 'ventilacion', 'panel', 'tobera', 'mecanica'],
-        src: './texturas/regilla circular.png'
-    },
-    {
-        id: 'valvula_circulo',
-        name: 'Válvula / Tapa de Presión',
-        category: 'mecanica',
-        tags: ['valvula', 'tapa', 'presion', 'circulo', 'mecanica'],
-        src: './texturas/valvula-circulo.png'
-    },
-    {
-        id: 'armament_panel',
-        name: 'Armament (Bahía de Armas)',
-        category: 'mecanica',
-        tags: ['armament', 'armas', 'misiles', 'bahia', 'mecanica'],
-        src: './texturas/Armament.png'
-    }
-];
+// Soporta escaneo dinámico de carpetas locales (calcas/insignias, avisos, mecanica, mis_calcas),
+// sincronización en vivo con el servidor local, subida con respaldo físico en disco y categorización.
 
 export class DecalLibraryManager {
     constructor() {
         this.isOpen = false;
         this.activeCategory = 'all';
         this.searchQuery = '';
+        this.serverDecals = [];
         this.userDecals = this.loadUserDecals();
         this.dom = {};
     }
@@ -181,7 +20,7 @@ export class DecalLibraryManager {
                 if (Array.isArray(parsed)) return parsed;
             }
         } catch (e) {
-            console.warn('Error cargando calcas de usuario:', e);
+            console.warn('Error cargando calcas de usuario locales:', e);
         }
         return [];
     }
@@ -194,10 +33,11 @@ export class DecalLibraryManager {
         }
     }
 
-    init() {
+    async init() {
         this.cacheDom();
         if (!this.dom.popup) return;
         this.bindEvents();
+        await this.syncDecalsFromServer();
         this.renderTabsCount();
         this.renderGrid();
     }
@@ -207,6 +47,7 @@ export class DecalLibraryManager {
             popup: document.getElementById('decal-library-popup'),
             trigger: document.getElementById('btn-load-decal'),
             btnClose: document.getElementById('btn-close-decal-library'),
+            btnRefresh: document.getElementById('btn-decal-refresh'),
             searchInput: document.getElementById('decal-library-search'),
             categoryTabs: document.getElementById('decal-library-tabs'),
             grid: document.getElementById('decal-library-grid'),
@@ -216,8 +57,45 @@ export class DecalLibraryManager {
         };
     }
 
+    async syncDecalsFromServer() {
+        try {
+            const res = await fetch('/api/decals');
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) {
+                    this.serverDecals = data;
+                    return;
+                }
+            }
+        } catch (e) {
+            // Servidor no disponible o modo estático (ej: GitHub Pages)
+        }
+
+        // Intento 2: manifest.json estático en calcas/
+        try {
+            const resManifest = await fetch('./calcas/manifest.json');
+            if (resManifest.ok) {
+                const manifestData = await resManifest.json();
+                if (Array.isArray(manifestData)) {
+                    this.serverDecals = manifestData;
+                    return;
+                }
+            }
+        } catch (e) {}
+    }
+
+    getAllDecals() {
+        if (this.serverDecals && this.serverDecals.length > 0) {
+            // Combinar calcas del servidor con calcas locales de memoria que aún no estén en disco
+            const serverFilenames = new Set(this.serverDecals.map(d => d.filename || d.name));
+            const extraLocal = this.userDecals.filter(d => !serverFilenames.has(d.filename || d.name));
+            return [...extraLocal, ...this.serverDecals];
+        }
+        return this.userDecals;
+    }
+
     bindEvents() {
-        // Abrir biblioteca al pulsar "Pegatina" en el Ribbon
+        // Abrir biblioteca al pulsar "Pegatinas" en el Ribbon
         this.dom.trigger?.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -234,12 +112,25 @@ export class DecalLibraryManager {
         // Botón cerrar
         this.dom.btnClose?.addEventListener('click', () => this.close());
 
+        // Botón Refrescar / Re-escanear carpeta
+        this.dom.btnRefresh?.addEventListener('click', async () => {
+            if (this.dom.btnRefresh) this.dom.btnRefresh.textContent = '⏳ Escaneando...';
+            await this.syncDecalsFromServer();
+            this.renderTabsCount();
+            this.renderGrid();
+            if (this.dom.btnRefresh) {
+                this.dom.btnRefresh.textContent = '✓ Listo';
+                setTimeout(() => { if (this.dom.btnRefresh) this.dom.btnRefresh.textContent = '🔄 Actualizar'; }, 1200);
+            }
+        });
+
         // Cerrar al hacer clic fuera del panel
         document.addEventListener('mousedown', (e) => {
             if (!this.isOpen) return;
             if (e.target.closest('#decal-library-popup') || 
                 e.target.closest('#btn-load-decal') || 
-                e.target.closest('#decal-preview-thumb')) {
+                e.target.closest('#decal-preview-thumb') ||
+                e.target.closest('.decal-context-menu')) {
                 return;
             }
             this.close();
@@ -295,33 +186,112 @@ export class DecalLibraryManager {
         }
     }
 
-    importFile(file) {
+    async importFile(file) {
         const decalName = file.name.replace(/\.[^/.]+$/, '');
         const reader = new FileReader();
-        reader.onload = (event) => {
+        reader.onload = async (event) => {
             const dataUrl = event.target.result;
             const newDecal = {
                 id: 'custom_' + Date.now(),
                 name: decalName,
-                category: 'custom',
+                filename: file.name,
+                category: 'mis_calcas',
                 tags: [decalName.toLowerCase(), 'custom', 'importada'],
                 src: dataUrl,
                 isUser: true
             };
 
+            // 1. Guardar en respaldo local del navegador
             this.userDecals.unshift(newDecal);
             this.saveUserDecals();
-            this.renderTabsCount();
-            this.switchCategory('custom');
 
-            // Cargar y activar inmediatamente en el canvas
+            // 2. Enviar al servidor para respaldo físico permanente en calcas/mis_calcas/
+            try {
+                const uploadRes = await fetch('/api/decals/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: decalName,
+                        category: 'mis_calcas',
+                        dataUrl: dataUrl
+                    })
+                });
+                if (uploadRes.ok) {
+                    const resJson = await uploadRes.json();
+                    if (resJson.decals) {
+                        this.serverDecals = resJson.decals;
+                    }
+                }
+            } catch (err) {
+                console.warn('No se pudo respaldar físicamente en disco por el servidor:', err);
+            }
+
+            this.renderTabsCount();
+            this.switchCategory('mis_calcas');
+
+            // Cargar y activar inmediatamente en el lienzo
             this.applyDecal(newDecal);
         };
         reader.readAsDataURL(file);
     }
 
-    getAllDecals() {
-        return [...this.userDecals, ...BUILTIN_DECALS];
+    async deleteDecal(item) {
+        if (!confirm(`¿Eliminar la pegatina "${item.name}"?`)) return;
+
+        // 1. Borrar de la copia local
+        this.userDecals = this.userDecals.filter(d => d.id !== item.id && d.filename !== item.filename);
+        this.saveUserDecals();
+
+        // 2. Si está en el servidor, borrar del disco
+        try {
+            const res = await fetch('/api/decals/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    category: item.category,
+                    filename: item.filename
+                })
+            });
+            if (res.ok) {
+                const resJson = await res.json();
+                if (resJson.decals) {
+                    this.serverDecals = resJson.decals;
+                }
+            }
+        } catch (e) {
+            console.warn('Error eliminando archivo en disco:', e);
+        }
+
+        this.renderTabsCount();
+        this.renderGrid();
+    }
+
+    async recategorizeDecal(item, newCategory) {
+        if (!item || item.category === newCategory) return;
+
+        try {
+            const res = await fetch('/api/decals/recategorize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fromCategory: item.category,
+                    toCategory: newCategory,
+                    filename: item.filename
+                })
+            });
+            if (res.ok) {
+                const resJson = await res.json();
+                if (resJson.decals) {
+                    this.serverDecals = resJson.decals;
+                }
+            }
+        } catch (e) {
+            console.warn('Error reclasificando en disco:', e);
+        }
+
+        item.category = newCategory;
+        this.renderTabsCount();
+        this.renderGrid();
     }
 
     switchCategory(cat) {
@@ -340,10 +310,10 @@ export class DecalLibraryManager {
         const all = this.getAllDecals();
         const counts = {
             all: all.length,
-            insignias: BUILTIN_DECALS.filter(d => d.category === 'insignias').length,
-            avisos: BUILTIN_DECALS.filter(d => d.category === 'avisos').length,
-            mecanica: BUILTIN_DECALS.filter(d => d.category === 'mecanica').length,
-            custom: this.userDecals.length
+            insignias: all.filter(d => d.category === 'insignias').length,
+            avisos: all.filter(d => d.category === 'avisos').length,
+            mecanica: all.filter(d => d.category === 'mecanica').length,
+            mis_calcas: all.filter(d => d.category === 'mis_calcas' || d.category === 'custom').length
         };
 
         this.dom.categoryTabs?.querySelectorAll('.decal-tab-btn').forEach(btn => {
@@ -364,13 +334,16 @@ export class DecalLibraryManager {
         const q = this.searchQuery;
 
         const filtered = all.filter(item => {
-            const matchesCat = this.activeCategory === 'all' || item.category === this.activeCategory;
-            if (!matchesCat) return false;
+            const catMatch = (this.activeCategory === 'all') || 
+                             (this.activeCategory === 'mis_calcas' && (item.category === 'mis_calcas' || item.category === 'custom')) ||
+                             (item.category === this.activeCategory);
+            if (!catMatch) return false;
 
             if (!q) return true;
             const nameMatch = item.name.toLowerCase().includes(q);
+            const filenameMatch = item.filename && item.filename.toLowerCase().includes(q);
             const tagsMatch = item.tags && item.tags.some(t => t.includes(q));
-            return nameMatch || tagsMatch;
+            return nameMatch || filenameMatch || tagsMatch;
         });
 
         if (filtered.length === 0) {
@@ -386,7 +359,9 @@ export class DecalLibraryManager {
             const card = document.createElement('div');
             card.className = 'decal-card-item';
             card.setAttribute('data-id', item.id);
-            card.title = `${item.name}\nClic para elegir y colocar en el modelo`;
+            card.title = `${item.name} (${item.filename || ''})\nClic para colocar en el modelo\nClic derecho para opciones`;
+
+            const isCustom = item.isUser || item.category === 'mis_calcas' || item.category === 'custom';
 
             card.innerHTML = `
                 <div class="decal-card-thumb decal-checker-bg">
@@ -395,22 +370,26 @@ export class DecalLibraryManager {
                 <div class="decal-card-info">
                     <span class="decal-card-title">${item.name}</span>
                 </div>
+                ${isCustom ? `<button type="button" class="decal-card-del-btn" title="Eliminar calca de la biblioteca">🗑️</button>` : ''}
             `;
 
-            // Botón de eliminar si es personalizada
-            if (item.isUser) {
-                card.addEventListener('contextmenu', (e) => {
-                    e.preventDefault();
-                    if (confirm(`¿Eliminar la pegatina "${item.name}" de Mis Calcas?`)) {
-                        this.userDecals = this.userDecals.filter(d => d.id !== item.id);
-                        this.saveUserDecals();
-                        this.renderTabsCount();
-                        this.renderGrid();
-                    }
+            // Botón eliminar visible en la tarjeta para calcas del usuario
+            if (isCustom) {
+                const delBtn = card.querySelector('.decal-card-del-btn');
+                delBtn?.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.deleteDecal(item);
                 });
             }
 
-            // Click para seleccionar y estampar
+            // Menú contextual en clic derecho para opciones de administración
+            card.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.showContextMenu(e.clientX, e.clientY, item);
+            });
+
+            // Click para seleccionar y colocar en el modelo
             card.addEventListener('click', () => {
                 this.applyDecal(item);
                 this.close();
@@ -418,6 +397,70 @@ export class DecalLibraryManager {
 
             grid.appendChild(card);
         });
+    }
+
+    showContextMenu(x, y, item) {
+        // Remover menú anterior si existiera
+        document.querySelectorAll('.decal-context-menu').forEach(m => m.remove());
+
+        const menu = document.createElement('div');
+        menu.className = 'decal-context-menu';
+        menu.style.position = 'fixed';
+        menu.style.top = `${y}px`;
+        menu.style.left = `${x}px`;
+        menu.style.zIndex = '10005';
+        menu.style.background = '#252525';
+        menu.style.border = '1px solid #555';
+        menu.style.borderRadius = '6px';
+        menu.style.boxShadow = '0 8px 24px rgba(0,0,0,0.8)';
+        menu.style.padding = '4px 0';
+        menu.style.minWidth = '170px';
+        menu.style.fontSize = '11px';
+        menu.style.color = '#eee';
+
+        const categories = [
+            { id: 'insignias', label: '🎖️ Mover a Insignias' },
+            { id: 'avisos', label: '⚠️ Mover a Avisos Técnicos' },
+            { id: 'mecanica', label: '⚙️ Mover a Mecánica' },
+            { id: 'mis_calcas', label: '📁 Mover a Mis Calcas' }
+        ];
+
+        let html = `<div style="padding: 4px 10px; font-weight: bold; color: #ff9800; border-bottom: 1px solid #3a3a3a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.name}</div>`;
+        
+        categories.forEach(cat => {
+            if (cat.id !== item.category) {
+                html += `<div class="decal-menu-item" data-action="move" data-cat="${cat.id}" style="padding: 6px 12px; cursor: pointer;">${cat.label}</div>`;
+            }
+        });
+
+        html += `<div style="border-top: 1px solid #3a3a3a; margin: 3px 0;"></div>`;
+        html += `<div class="decal-menu-item" data-action="delete" style="padding: 6px 12px; cursor: pointer; color: #ff6b6b;">🗑️ Eliminar Calca</div>`;
+
+        menu.innerHTML = html;
+
+        menu.querySelectorAll('.decal-menu-item').forEach(el => {
+            el.addEventListener('mouseenter', () => el.style.background = '#383838');
+            el.addEventListener('mouseleave', () => el.style.background = 'transparent');
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                menu.remove();
+                const action = el.getAttribute('data-action');
+                if (action === 'delete') {
+                    this.deleteDecal(item);
+                } else if (action === 'move') {
+                    const toCat = el.getAttribute('data-cat');
+                    this.recategorizeDecal(item, toCat);
+                }
+            });
+        });
+
+        document.body.appendChild(menu);
+
+        const closeMenu = () => {
+            menu.remove();
+            document.removeEventListener('mousedown', closeMenu);
+        };
+        setTimeout(() => document.addEventListener('mousedown', closeMenu), 10);
     }
 
     applyDecal(item) {
@@ -441,7 +484,7 @@ export class DecalLibraryManager {
         img.src = item.src;
     }
 
-    open() {
+    async open() {
         if (!this.dom.popup) return;
 
         // Posicionar debajo del botón en el ribbon
@@ -450,8 +493,8 @@ export class DecalLibraryManager {
             const rect = trigger.getBoundingClientRect();
             this.dom.popup.style.top = `${rect.bottom + 6}px`;
 
-            const panelWidth = 600;
-            let left = rect.left - 80;
+            const panelWidth = 620;
+            let left = rect.left - 40;
             if (left + panelWidth > window.innerWidth - 10) {
                 left = window.innerWidth - panelWidth - 10;
             }
@@ -461,10 +504,12 @@ export class DecalLibraryManager {
 
         this.dom.popup.style.display = 'block';
         this.isOpen = true;
+
+        // Sincronizar en vivo por si agregaron archivos en la carpeta de Windows
+        await this.syncDecalsFromServer();
         this.renderTabsCount();
         this.renderGrid();
 
-        // Enfocar el buscador para teclear de inmediato si se desea
         setTimeout(() => {
             this.dom.searchInput?.focus();
         }, 50);
@@ -474,6 +519,7 @@ export class DecalLibraryManager {
         if (!this.dom.popup) return;
         this.dom.popup.style.display = 'none';
         this.isOpen = false;
+        document.querySelectorAll('.decal-context-menu').forEach(m => m.remove());
     }
 
     toggle() {

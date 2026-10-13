@@ -1843,3 +1843,39 @@ input[type=range]::-webkit-slider-runnable-track {
 .decal-card-item:hover .decal-card-title {
     color: #00f3ff;
 }
+
+.decal-card-del-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: rgba(20, 20, 20, 0.85);
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #ff6b6b;
+    font-size: 11px;
+    padding: 2px 4px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s, transform 0.1s;
+    line-height: 1;
+}
+
+.decal-card-item:hover .decal-card-del-btn {
+    opacity: 1;
+}
+
+.decal-card-del-btn:hover {
+    background: #c62828 !important;
+    border-color: #ff5252 !important;
+    color: #fff !important;
+    transform: scale(1.1);
+}
+
+.decal-context-menu {
+    animation: fadeInMenu 0.12s ease-out;
+}
+
+@keyframes fadeInMenu {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
