@@ -2,12 +2,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { Painter } from './painter.js?v=8.2';
-import { DecalSystem } from './decals.js?v=8.6';
+import { DecalSystem } from './decals.js?v=8.9';
 import { LayerManager } from './layers.js?v=8.6';
 import { PapercraftEngine } from './papercraft.js?v=8.6';
 import { SelectionManager } from './selection.js?v=8.6';
 import { ColorPickerManager } from './colorPicker.js?v=8.6';
-import { DecalLibraryManager } from './decalLibrary.js?v=8.7';
+import { DecalLibraryManager } from './decalLibrary.js?v=8.9';
 
 // Configuration
 let TEX_SIZE = 2048;

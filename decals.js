@@ -475,7 +475,13 @@ export class DecalSystem {
 
         // Escala física exacta de 1 píxel de pantalla en el espacio 3D (soporta tanto Perspectiva como Ortogonal)
         const pxWorld = this.getWorldUnitsPerPixel(offsetPos);
-        const handlePx = 8.0; // Exactamente 8 píxeles en pantalla, idéntico al 2D
+        const minDim3D = Math.min(size.x, size.y);
+        let handlePx = 8.0;
+        if (minDim3D < 36 * pxWorld) {
+            handlePx = Math.max(4.0, (minDim3D / pxWorld) * 0.14);
+        } else if (minDim3D < 60 * pxWorld) {
+            handlePx = 6.0;
+        }
         const handleSize = handlePx * pxWorld;
 
         // Escalar trazo punteado según píxeles de pantalla
@@ -495,8 +501,8 @@ export class DecalSystem {
 
         // Collider central para mover el objeto completo al agarrar su cuerpo
         if (this.gizmoBodyMesh) {
-            const bodyW = Math.max(0.0001, (halfW * 2) - handleSize * 2.0);
-            const bodyH = Math.max(0.0001, (halfH * 2) - handleSize * 2.0);
+            const bodyW = Math.max(12 * pxWorld, (halfW * 2) - handleSize * 1.2);
+            const bodyH = Math.max(12 * pxWorld, (halfH * 2) - handleSize * 1.2);
             this.gizmoBodyMesh.scale.set(bodyW, bodyH, 1);
             this.gizmoBodyMesh.position.set(0, 0, 0);
         }
@@ -518,8 +524,8 @@ export class DecalSystem {
         setNode('sw', -halfW, -halfH);
         setNode('se',  halfW, -halfH);
 
-        // Bordes para anchura/altura (solo si la forma es suficientemente amplia en pantalla: > 36px)
-        const showEdges = (size.x > 36 * pxWorld) && (size.y > 36 * pxWorld);
+        // Bordes para anchura/altura (solo si la calca es suficientemente amplia en pantalla: > 70px)
+        const showEdges = (size.x > 70 * pxWorld) && (size.y > 70 * pxWorld);
         setNode('n', 0,  halfH, showEdges);
         setNode('s', 0, -halfH, showEdges);
         setNode('w', -halfW, 0, showEdges);
@@ -1481,6 +1487,46 @@ export class DecalSystem {
         this.canvas.addEventListener('pointerdown', (e) => this.onPointerDown2D(e));
         window.addEventListener('pointermove', (e) => this.onPointerMove2D(e));
         window.addEventListener('pointerup', (e) => this.onPointerUp2D(e));
+
+        // Atajos Profesionales: Flechas del teclado para desplazar con precisión sub-píxel
+        window.addEventListener('keydown', (e) => {
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+            if (!this.isActive || !this.selectedDecalId) return;
+
+            const step = e.shiftKey ? 10 : (e.altKey ? 0.2 : 1);
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                this.nudgeDecal(-step, 0);
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                this.nudgeDecal(step, 0);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.nudgeDecal(0, -step);
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.nudgeDecal(0, step);
+            }
+        });
+    }
+
+    nudgeDecal(dx, dy) {
+        if (!this.isActive || !this.selectedDecalId || !this.decal2D) return;
+        this.decal2D.x += dx;
+        this.decal2D.y += dy;
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        const dObj = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+        if (dObj) {
+            dObj.x = this.decal2D.x;
+            dObj.y = this.decal2D.y;
+        }
+        if (this.mode === '2d') {
+            this.render2DPreview();
+            this.scheduleSync(false);
+        } else {
+            this._doUpdatePreviewTransform();
+            if (dObj) this.update3DUnwrapForDecal(dObj, true);
+        }
     }
 
     setDecalImage(img, decalName = null) {
@@ -2438,27 +2484,7 @@ export class DecalSystem {
         dObj.rotation = this.decal2D.rotation;
         dObj.flipH = !!this.decal2D.flipH;
         dObj.flipV = !!this.decal2D.flipV;
-        if (this.mesh && this.mode === '2d' && this.canvas) {
-            const u = this.decal2D.x / this.canvas.width;
-            const v = 1 - (this.decal2D.y / this.canvas.height);
-            const pt3D = this.find3DPointFromUV(u, v);
-            if (pt3D) {
-                this.projectorPosition.copy(pt3D.point);
-                this.projectorNormal.copy(pt3D.normal);
-                if (pt3D.tangent) {
-                    this.surfaceTangent = pt3D.tangent.clone();
-                }
-            }
-        }
-        if (this.projectorPosition) {
-            dObj.projectorPosition = this.projectorPosition.clone();
-            dObj.projectorNormal = this.projectorNormal.clone();
-            dObj.projectorScale = this.projectorScale;
-            dObj.projectorRotation = this.projectorRotation;
-            if (this.surfaceTangent) {
-                dObj.surfaceTangent = this.surfaceTangent.clone();
-            }
-        }
+
         if (this.currentDecalImage) {
             dObj.img = this.currentDecalImage;
         }
@@ -2466,13 +2492,46 @@ export class DecalSystem {
             dObj.shapeOptions = { ...this.decal2D.shapeOptions };
         }
 
-        this.layerManager.recomposite();
-        if (this.painter) {
-            this.painter.needsUpdate = true;
-            this.painter.forceUpdate = true;
+        const isDragging = this.decal2D && this.decal2D.isDragging;
+
+        // Optimización Crítica: find3DPointFromUV() recorre todos los triángulos de la malla en CPU.
+        // En modo 2D NO debe ejecutarse en cada fotograma del arrastre; solo al soltar el puntero (force=true) o al conmutar a 3D.
+        if (force || !isDragging) {
+            if (this.mesh && this.mode === '2d' && this.canvas) {
+                const u = this.decal2D.x / this.canvas.width;
+                const v = 1 - (this.decal2D.y / this.canvas.height);
+                const pt3D = this.find3DPointFromUV(u, v);
+                if (pt3D) {
+                    this.projectorPosition.copy(pt3D.point);
+                    this.projectorNormal.copy(pt3D.normal);
+                    if (pt3D.tangent) {
+                        this.surfaceTangent = pt3D.tangent.clone();
+                    }
+                }
+            }
+            if (this.projectorPosition) {
+                dObj.projectorPosition = this.projectorPosition.clone();
+                dObj.projectorNormal = this.projectorNormal.clone();
+                dObj.projectorScale = this.projectorScale;
+                dObj.projectorRotation = this.projectorRotation;
+                if (this.surfaceTangent) {
+                    dObj.surfaceTangent = this.surfaceTangent.clone();
+                }
+            }
         }
-        if (this.texture) {
-            this.texture.needsUpdate = true;
+
+        // Recomposición de capas 2D (rápida sobre canvas 2D)
+        this.layerManager.recomposite();
+
+        // Subida pesada de textura WebGL a la GPU: omitir durante arrastre interactivo en 2D para garantizar 60-144fps continuos sin tirones
+        if (force || !isDragging) {
+            if (this.painter) {
+                this.painter.needsUpdate = true;
+                this.painter.forceUpdate = true;
+            }
+            if (this.texture) {
+                this.texture.needsUpdate = true;
+            }
         }
     }
 
@@ -3266,23 +3325,38 @@ export class DecalSystem {
         ctx.setLineDash([]);
 
         const minDim = Math.min(d.width, d.height);
-        const handleRadius = Math.max(3.5, Math.min(6, Math.round(minDim / 12)));
-        const showEdgeHandles = d.width >= 36 && d.height >= 36;
+
+        // 1. Tamaño adaptativo inteligente de los nodos:
+        // Si la pegatina es pequeña, los nodos se reducen proporcionalmente para no tapar la calca ni obstaculizar la visión
+        let handleRadius = 4.5;
+        if (minDim < 36) {
+            handleRadius = Math.max(2.5, minDim * 0.09);
+        } else if (minDim < 70) {
+            handleRadius = 3.5;
+        } else if (minDim > 200) {
+            handleRadius = 5.5;
+        }
+
+        // Solo mostrar los 4 nodos intermedios (n, s, w, e) si la calca es grande (>= 70px)
+        const showEdgeHandles = d.width >= 70 && d.height >= 70;
 
         const drawHandle = (hx, hy, isRotate = false) => {
-            // Nodos con interior 100% transparente para ver el fondo
             if (isRotate) {
                 ctx.beginPath();
-                ctx.arc(hx, hy, handleRadius + 1, 0, Math.PI * 2);
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.arc(hx, hy, handleRadius + 1.2, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
                 ctx.lineWidth = 3;
                 ctx.stroke();
                 ctx.strokeStyle = '#0078d7';
                 ctx.lineWidth = 1.5;
                 ctx.stroke();
+                ctx.fillStyle = '#00f3ff';
+                ctx.beginPath();
+                ctx.arc(hx, hy, Math.max(1.5, handleRadius * 0.5), 0, Math.PI * 2);
+                ctx.fill();
             } else {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-                ctx.lineWidth = 3;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.lineWidth = 2.5;
                 ctx.strokeRect(hx - handleRadius, hy - handleRadius, handleRadius * 2, handleRadius * 2);
                 ctx.strokeStyle = '#0078d7';
                 ctx.lineWidth = 1.5;
@@ -3296,7 +3370,7 @@ export class DecalSystem {
         drawHandle(-halfW,  halfH);
         drawHandle( halfW,  halfH);
 
-        // Bordes (ajuste de anchura o altura)
+        // Bordes (ajuste de anchura o altura, solo cuando el tamaño es suficiente)
         if (showEdgeHandles) {
             drawHandle(0, -halfH);
             drawHandle(0,  halfH);
@@ -3304,14 +3378,37 @@ export class DecalSystem {
             drawHandle( halfW, 0);
         }
 
-        // Palo y nodo de rotación proporcional
-        const stemLength = Math.max(16, Math.min(28, Math.round(minDim * 0.25 + 10)));
+        // Palo y nodo de rotación proporcional (distancia cómoda que no interfiera con esquinas)
+        const stemLength = Math.max(22, Math.min(36, Math.round(minDim * 0.22 + 14)));
         ctx.beginPath();
         ctx.moveTo(0, -halfH);
         ctx.lineTo(0, -halfH - stemLength);
         ctx.strokeStyle = '#0078d7';
         ctx.lineWidth = 1.5;
         ctx.stroke();
+
+        drawHandle(0, -halfH - stemLength, true);
+
+        // Diana / Cruz central de movimiento para manipulación directa y ágil (especialmente en calcas pequeñas)
+        const crossSize = Math.max(3.5, Math.min(7, Math.round(minDim * 0.16)));
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(-crossSize, 0); ctx.lineTo(crossSize, 0);
+        ctx.moveTo(0, -crossSize); ctx.lineTo(0, crossSize);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#0078d7';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-crossSize, 0); ctx.lineTo(crossSize, 0);
+        ctx.moveTo(0, -crossSize); ctx.lineTo(0, crossSize);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(0, 0, 1.8, 0, Math.PI * 2);
+        ctx.fillStyle = '#00f3ff';
+        ctx.fill();
 
         // Nodos interactivos Bézier en la curva
         if (d.type === 'curve' && d.shapeOptions) {
@@ -3397,8 +3494,6 @@ export class DecalSystem {
             ctx.restore();
         }
 
-        drawHandle(0, -halfH - stemLength, true);
-
         ctx.restore();
     }
 
@@ -3416,31 +3511,29 @@ export class DecalSystem {
         const halfW = d.width / 2;
         const halfH = d.height / 2;
         const minDim = Math.min(d.width, d.height);
-        const stemLength = Math.max(16, Math.min(28, Math.round(minDim * 0.25 + 10)));
-        const hitTol = 16; // Tolerancia generosa para asegurar agarre fácil y preciso
+        const stemLength = Math.max(22, Math.min(36, Math.round(minDim * 0.22 + 14)));
 
-        // 1. Círculo de rotación superior (rotar sobre su eje)
-        if (Math.hypot(lx, ly - (-halfH - stemLength)) <= hitTol + 2) {
-            return 'rotate';
+        // 1. ZONA SEGURA CENTRAL DE MOVIMIENTO (Solución profesional para calcas pequeñas):
+        // Garantiza que el centro de la calca NUNCA sea bloqueado por la tolerancia de los nodos.
+        const centerSafeRadius = Math.max(10, Math.min(26, minDim * 0.45));
+        if (Math.hypot(lx, ly) <= centerSafeRadius) {
+            return 'move';
         }
 
-        // 2. Esquinas (nw, ne, sw, se) - Ampliar proporcionalmente
-        if (Math.hypot(lx - (-halfW), ly - (-halfH)) <= hitTol) return 'nw';
-        if (Math.hypot(lx - ( halfW), ly - (-halfH)) <= hitTol) return 'ne';
-        if (Math.hypot(lx - (-halfW), ly - ( halfH)) <= hitTol) return 'sw';
-        if (Math.hypot(lx - ( halfW), ly - ( halfH)) <= hitTol) return 'se';
+        // 2. Tolerancia adaptativa: si la calca es pequeña, la tolerancia se reduce proporcionalmente
+        // para que las esquinas no canibalicen el espacio interior de la calca
+        const handleHitTol = Math.max(4, Math.min(13, minDim * 0.28));
 
-        // 3. Nodos del medio (n, s, w, e) - Estirar solo en ese sentido
-        if (Math.hypot(lx, ly - (-halfH)) <= hitTol) return 'n';
-        if (Math.hypot(lx, ly - ( halfH)) <= hitTol) return 's';
-        if (Math.hypot(lx - (-halfW), ly) <= hitTol) return 'w';
-        if (Math.hypot(lx - ( halfW), ly) <= hitTol) return 'e';
+        // 3. Círculo de rotación superior
+        if (Math.hypot(lx, ly - (-halfH - stemLength)) <= Math.max(8, handleHitTol + 2)) {
+            return 'rotate';
+        }
 
         // 4. Nodos de vértices individuales de Contenedor Vectorial
         if (d.type === 'vector_container' && d.shapeOptions && d.shapeOptions.points) {
             const pts = d.shapeOptions.points;
             for (let i = 0; i < pts.length; i++) {
-                if (Math.hypot(lx - pts[i].x, ly - pts[i].y) <= hitTol) {
+                if (Math.hypot(lx - pts[i].x, ly - pts[i].y) <= handleHitTol + 3) {
                     return 'vnode_' + i;
                 }
             }
@@ -3451,12 +3544,26 @@ export class DecalSystem {
             const s = d.shapeOptions;
             const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
             const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
-            if (Math.hypot(lx - midX, ly - midY) <= hitTol) return 'curve_mid';
-            if (Math.hypot(lx - s.x1, ly - s.y1) <= hitTol) return 'curve_p1';
-            if (Math.hypot(lx - s.x2, ly - s.y2) <= hitTol) return 'curve_p2';
+            if (Math.hypot(lx - midX, ly - midY) <= handleHitTol + 3) return 'curve_mid';
+            if (Math.hypot(lx - s.x1, ly - s.y1) <= handleHitTol + 3) return 'curve_p1';
+            if (Math.hypot(lx - s.x2, ly - s.y2) <= handleHitTol + 3) return 'curve_p2';
         }
 
-        // 6. Clic dentro del polígono (si es vector_container) o dentro del recuadro: mover
+        // 6. Esquinas (nw, ne, sw, se) - Escala proporcional
+        if (Math.hypot(lx - (-halfW), ly - (-halfH)) <= handleHitTol) return 'nw';
+        if (Math.hypot(lx - ( halfW), ly - (-halfH)) <= handleHitTol) return 'ne';
+        if (Math.hypot(lx - (-halfW), ly - ( halfH)) <= handleHitTol) return 'sw';
+        if (Math.hypot(lx - ( halfW), ly - ( halfH)) <= handleHitTol) return 'se';
+
+        // 7. Nodos del medio (n, s, w, e) - Solo si la calca es amplia (>= 70px)
+        if (d.width >= 70 && d.height >= 70) {
+            if (Math.hypot(lx, ly - (-halfH)) <= handleHitTol) return 'n';
+            if (Math.hypot(lx, ly - ( halfH)) <= handleHitTol) return 's';
+            if (Math.hypot(lx - (-halfW), ly) <= handleHitTol) return 'w';
+            if (Math.hypot(lx - ( halfW), ly) <= handleHitTol) return 'e';
+        }
+
+        // 8. Clic dentro del polígono (si es vector_container) o dentro del recuadro: mover
         if (d.type === 'vector_container' && d.shapeOptions && d.shapeOptions.points) {
             const pts = d.shapeOptions.points;
             let inside = false;
@@ -3469,7 +3576,7 @@ export class DecalSystem {
             if (inside) return 'move';
         }
 
-        if (Math.abs(lx) <= halfW && Math.abs(ly) <= halfH) {
+        if (Math.abs(lx) <= halfW + 4 && Math.abs(ly) <= halfH + 4) {
             return 'move';
         }
 
@@ -3481,10 +3588,12 @@ export class DecalSystem {
         const currentBrushMode = document.getElementById('brush-mode')?.value;
         const { x, y } = this.getCanvas2DCoords(e);
 
-        // 1. Si hay una calca seleccionada, verificar primero si se hizo clic en un nodo de control o manipulación (rotar, escalar, vértices)
+        // 1. Si hay una calca seleccionada, verificar manipulación (nodos o mover)
         if (this.selectedDecalId) {
-            const hit = this.hitTest2D(x, y);
-            if (hit && hit !== 'move') {
+            // Tecla Alt o Espacio fuerza inmediatamente modo mover
+            const isForceMove = e.altKey || e.spaceKey;
+            const hit = isForceMove ? 'move' : this.hitTest2D(x, y);
+            if (hit) {
                 this.decal2D.isDragging = true;
                 this.decal2D.dragHandle = hit;
                 this.decal2D.dragOffset = { x: x - this.decal2D.x, y: y - this.decal2D.y };
@@ -3618,6 +3727,7 @@ export class DecalSystem {
                 }
             }
 
+            this.render2DPreview();
             this.scheduleSync(false);
             return;
         }
@@ -3681,13 +3791,12 @@ export class DecalSystem {
                 }
             }
 
+            this.render2DPreview();
             this.scheduleSync(false);
             return;
         }
 
         if (h === 'move') {
-            const moveDist = Math.hypot(x - d.dragStart.x, y - d.dragStart.y);
-            if (moveDist < 3) return;
             d.x = x - d.dragOffset.x;
             d.y = y - d.dragOffset.y;
         } else if (h === 'rotate') {
@@ -3723,8 +3832,8 @@ export class DecalSystem {
                 newHalfW = newHalfH * aspect;
             }
 
-            d.width = Math.max(20, Math.round(newHalfW * 2));
-            d.height = Math.max(20, Math.round(newHalfH * 2));
+            d.width = Math.max(8, Math.round(newHalfW * 2));
+            d.height = Math.max(8, Math.round(newHalfH * 2));
 
             // Si es vector_container, re-escalar proporcionalmente los puntos vectoriales y regenerar canvas
             if (d.type === 'vector_container' && d.shapeOptions && init.points && init.width > 0 && init.height > 0) {
@@ -3762,7 +3871,7 @@ export class DecalSystem {
             const cos = Math.cos(-init.rotation);
             const sin = Math.sin(-init.rotation);
             const ly = dx * sin + dy * cos;
-            d.height = Math.max(20, Math.round(Math.abs(ly) * 2));
+            d.height = Math.max(8, Math.round(Math.abs(ly) * 2));
             d.width = init.width; // Estira únicamente en sentido vertical
 
             if (d.type === 'vector_container' && d.shapeOptions && init.points && init.height > 0) {
@@ -3786,7 +3895,7 @@ export class DecalSystem {
             const cos = Math.cos(-init.rotation);
             const sin = Math.sin(-init.rotation);
             const lx = dx * cos - dy * sin;
-            d.width = Math.max(20, Math.round(Math.abs(lx) * 2));
+            d.width = Math.max(8, Math.round(Math.abs(lx) * 2));
             d.height = init.height; // Estira únicamente en sentido horizontal
 
             if (d.type === 'vector_container' && d.shapeOptions && init.points && init.width > 0) {
@@ -3806,6 +3915,17 @@ export class DecalSystem {
             }
         }
 
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        const dObj = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+        if (dObj) {
+            dObj.x = d.x;
+            dObj.y = d.y;
+            dObj.width = d.width;
+            dObj.height = d.height;
+            dObj.rotation = d.rotation;
+        }
+
+        this.render2DPreview();
         this.scheduleSync(false);
     }
 

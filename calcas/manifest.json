@@ -72,6 +72,14 @@
     "isUser": false
   },
   {
+    "id": "avisos_armament",
+    "name": "Armament (Bahía de Armas)",
+    "category": "avisos",
+    "src": "./calcas/avisos/Armament.png",
+    "filename": "Armament.png",
+    "isUser": false
+  },
+  {
     "id": "avisos_beware_of_blast",
     "name": "Beware of Blast (Chorro Escape)",
     "category": "avisos",
@@ -152,14 +160,6 @@
     "isUser": false
   },
   {
-    "id": "mecanica_armament",
-    "name": "Armament (Bahía de Armas)",
-    "category": "mecanica",
-    "src": "./calcas/mecanica/Armament.png",
-    "filename": "Armament.png",
-    "isUser": false
-  },
-  {
     "id": "mecanica_regilla_circular",
     "name": "Rejilla Circular (Ventilación)",
     "category": "mecanica",
@@ -176,11 +176,11 @@
     "isUser": false
   },
   {
-    "id": "mis_calcas_201e562914213207d8ecbe84b6b5a568",
-    "name": "201E562914213207D8Ecbe84B6B5A568",
+    "id": "mis_calcas_valvula-circulo-2",
+    "name": "Valvula Circulo 2",
     "category": "mis_calcas",
-    "src": "./calcas/mis_calcas/201e562914213207d8ecbe84b6b5a568.jpg",
-    "filename": "201e562914213207d8ecbe84b6b5a568.jpg",
+    "src": "./calcas/mis_calcas/valvula-circulo-2.png",
+    "filename": "valvula-circulo-2.png",
     "isUser": true
   }
 ]

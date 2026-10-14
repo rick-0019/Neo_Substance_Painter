@@ -1741,15 +1741,92 @@ input[type=range]::-webkit-slider-runnable-track {
     padding: 12px 14px;
 }
 
-.decal-checker-bg {
+/* Selector de Fondo de Previsualización para Calcas */
+.decal-bg-toggle {
+    display: inline-flex;
+    background: #1c1c1c;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 1px;
+    gap: 1px;
+}
+
+.decal-bg-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: #aaa;
+    font-size: 11px;
+    width: 22px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.decal-bg-btn:hover {
+    background: #333;
+    color: #fff;
+}
+
+.decal-bg-btn.active {
+    background: #1976d2;
+    border-color: #00f3ff;
+    color: #fff;
+    box-shadow: 0 0 6px rgba(0, 243, 255, 0.4);
+}
+
+/* Modos de Fondo de Miniatura para Calcas */
+/* 1. Modo Neutro (Por defecto) - Gris al 50%: ratio de contraste 50/50 perfecto para calcas negras y blancas */
+.decal-checker-bg,
+.decal-card-thumb.bg-neutral {
+    background-color: #525252;
+    background-image: 
+        linear-gradient(45deg, #5c5c5c 25%, transparent 25%), 
+        linear-gradient(-45deg, #5c5c5c 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #5c5c5c 75%), 
+        linear-gradient(-45deg, transparent 75%, #5c5c5c 75%);
+    background-size: 12px 12px;
+    background-position: 0 0, 0 6px, 6px -6px, -6px 0px;
+}
+
+/* 2. Modo Claro - Blanco grisáceo / Chapa clara (ideal para avisos negros y siluetas oscuras) */
+.decal-card-thumb.bg-light {
+    background-color: #eaeaea;
+    background-image: 
+        linear-gradient(45deg, #dedede 25%, transparent 25%), 
+        linear-gradient(-45deg, #dedede 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #dedede 75%), 
+        linear-gradient(-45deg, transparent 75%, #dedede 75%);
+    background-size: 12px 12px;
+    background-position: 0 0, 0 6px, 6px -6px, -6px 0px;
+}
+
+/* 3. Modo Oscuro - Grafito / Carbón (ideal para calcas blancas y brillantes) */
+.decal-card-thumb.bg-dark {
     background-color: #1e1e1e;
     background-image: 
-        linear-gradient(45deg, #2c2c2c 25%, transparent 25%), 
-        linear-gradient(-45deg, #2c2c2c 25%, transparent 25%), 
-        linear-gradient(45deg, transparent 75%, #2c2c2c 75%), 
-        linear-gradient(-45deg, transparent 75%, #2c2c2c 75%);
-    background-size: 14px 14px;
-    background-position: 0 0, 0 7px, 7px -7px, -7px 0px;
+        linear-gradient(45deg, #272727 25%, transparent 25%), 
+        linear-gradient(-45deg, #272727 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #272727 75%), 
+        linear-gradient(-45deg, transparent 75%, #272727 75%);
+    background-size: 12px 12px;
+    background-position: 0 0, 0 6px, 6px -6px, -6px 0px;
+}
+
+/* 4. Modo Cuadrícula Clásica de Transparencia (Photoshop style) */
+.decal-card-thumb.bg-checker {
+    background-color: #888888;
+    background-image: 
+        linear-gradient(45deg, #b0b0b0 25%, transparent 25%), 
+        linear-gradient(-45deg, #b0b0b0 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #b0b0b0 75%), 
+        linear-gradient(-45deg, transparent 75%, #b0b0b0 75%);
+    background-size: 12px 12px;
+    background-position: 0 0, 0 6px, 6px -6px, -6px 0px;
 }
 
 .decal-tab-btn {
@@ -1808,14 +1885,16 @@ input[type=range]::-webkit-slider-runnable-track {
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    transition: background 0.15s ease;
 }
 
 .decal-card-thumb img {
     max-width: 90%;
     max-height: 90%;
     object-fit: contain;
-    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+    /* Auto-contraste profesional: sutil realce perimetral que destaca letras negras en oscuro y blancas en claro */
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 1px rgba(255,255,255,0.3));
     transition: transform 0.15s;
 }
 

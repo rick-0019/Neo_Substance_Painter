@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neo Substance Painter - Pepakura Edition</title>
     <link rel="icon" type="image/x-icon" href="app_icon.ico">
-    <link rel="stylesheet" href="style.css?v=8.2">
+    <link rel="stylesheet" href="style.css?v=8.3">
     <script>
         window.currentShapeStrokeDash = 'solid';
         window.updateShapeStrokeDash = function(dashStyle) {
@@ -817,6 +817,13 @@
                             <span>Catálogo de Calcomanías y Esténciles</span>
                         </span>
                         <div style="display: flex; align-items: center; gap: 6px;">
+                            <!-- Selector de fondo de previsualización (Substance / Blender style) -->
+                            <div class="decal-bg-toggle" id="decal-bg-toggle-group" title="Fondo de previsualización de miniaturas">
+                                <button type="button" class="decal-bg-btn active" data-bg="neutral" title="Gris Neutro 50% (Equilibrado para ver calcas blancas y negras)">🌗</button>
+                                <button type="button" class="decal-bg-btn" data-bg="light" title="Fondo Claro (Ideal para letras y avisos negros)">⚪</button>
+                                <button type="button" class="decal-bg-btn" data-bg="dark" title="Fondo Oscuro (Ideal para calcas blancas)">⚫</button>
+                                <button type="button" class="decal-bg-btn" data-bg="checker" title="Cuadrícula Clásica de Transparencia">🏁</button>
+                            </div>
                             <button type="button" id="btn-decal-refresh" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 11px; color: #00f3ff;" title="Escanear carpeta 'calcas/' y actualizar catálogo en vivo">🔄 Actualizar</button>
                             <button type="button" id="btn-close-decal-library" class="floating-panel-close" title="Cerrar catálogo">✖</button>
                         </div>
@@ -1480,7 +1487,7 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=8.7"></script>
-    <script type="module" src="assembler.js?v=8.7"></script>
+    <script type="module" src="main.js?v=8.9"></script>
+    <script type="module" src="assembler.js?v=8.9"></script>
 </body>
 </html>

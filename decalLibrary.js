@@ -9,6 +9,7 @@ export class DecalLibraryManager {
         this.searchQuery = '';
         this.serverDecals = [];
         this.userDecals = this.loadUserDecals();
+        this.thumbBgMode = localStorage.getItem('nsp_decal_thumb_bg') || 'neutral';
         this.dom = {};
     }
 
@@ -28,15 +29,14 @@ export class DecalLibraryManager {
     saveUserDecals() {
         try {
             localStorage.setItem('nsp_user_decals', JSON.stringify(this.userDecals));
-        } catch (e) {
-            console.warn('Error guardando calcas de usuario:', e);
-        }
+        } catch (e) {}
     }
 
     async init() {
         this.cacheDom();
         if (!this.dom.popup) return;
         this.bindEvents();
+        this.setThumbBackground(this.thumbBgMode);
         await this.syncDecalsFromServer();
         this.renderTabsCount();
         this.renderGrid();
@@ -48,6 +48,7 @@ export class DecalLibraryManager {
             trigger: document.getElementById('btn-load-decal'),
             btnClose: document.getElementById('btn-close-decal-library'),
             btnRefresh: document.getElementById('btn-decal-refresh'),
+            bgToggleGroup: document.getElementById('decal-bg-toggle-group'),
             searchInput: document.getElementById('decal-library-search'),
             categoryTabs: document.getElementById('decal-library-tabs'),
             grid: document.getElementById('decal-library-grid'),
@@ -164,6 +165,15 @@ export class DecalLibraryManager {
             e.target.value = '';
         });
 
+        // Selector de fondo de previsualización (Gris Neutro, Claro, Oscuro, Transparencia)
+        this.dom.bgToggleGroup?.querySelectorAll('.decal-bg-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const bg = btn.getAttribute('data-bg');
+                this.setThumbBackground(bg);
+            });
+        });
+
         // Soporte Drag & Drop sobre el panel
         const popup = this.dom.popup;
         if (popup) {
@@ -182,6 +192,23 @@ export class DecalLibraryManager {
                 if (file && file.type.startsWith('image/')) {
                     this.importFile(file);
                 }
+            });
+        }
+    }
+
+    setThumbBackground(mode) {
+        this.thumbBgMode = mode || 'neutral';
+        try {
+            localStorage.setItem('nsp_decal_thumb_bg', this.thumbBgMode);
+        } catch (e) {}
+
+        this.dom.bgToggleGroup?.querySelectorAll('.decal-bg-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.getAttribute('data-bg') === this.thumbBgMode);
+        });
+
+        if (this.dom.grid) {
+            this.dom.grid.querySelectorAll('.decal-card-thumb').forEach(el => {
+                el.className = `decal-card-thumb decal-checker-bg bg-${this.thumbBgMode}`;
             });
         }
     }
@@ -426,7 +453,7 @@ export class DecalLibraryManager {
             const isCustom = item.isUser || item.category === 'mis_calcas' || item.category === 'custom';
 
             card.innerHTML = `
-                <div class="decal-card-thumb decal-checker-bg">
+                <div class="decal-card-thumb decal-checker-bg bg-${this.thumbBgMode}">
                     <img src="${item.src}" alt="${item.name}" loading="lazy">
                 </div>
                 <div class="decal-card-info">

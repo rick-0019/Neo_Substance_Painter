@@ -1562,6 +1562,10 @@ export class Painter {
 
     commitShape(targetMode = '2d') {
         if (!this.editingShape) return;
+        if (this._shape3DRaf) {
+            cancelAnimationFrame(this._shape3DRaf);
+            this._shape3DRaf = null;
+        }
         const s = this.editingShape;
 
         // 1. Generar canvas de alta fidelidad y agregarlo como objeto vivo a la capa activa
@@ -2079,23 +2083,34 @@ export class Painter {
         ctx.restore();
     }
 
+    scheduleShape3DPreview() {
+        if (this._shape3DRaf) return;
+        this._shape3DRaf = requestAnimationFrame(() => {
+            this._shape3DRaf = null;
+            if (!this.editingShape) return;
+            if (this.layerManager && this.layerManager.compositeCtx) {
+                this.layerManager.recomposite();
+                this.drawShapeDirect(this.layerManager.compositeCtx, this.editingShape);
+                this.needsUpdate = true;
+                this.forceUpdate = true;
+                if (this.texture) this.texture.needsUpdate = true;
+            }
+        });
+    }
+
     renderEditingShape() {
         if (!this.editingShape || !this.ctxUI) return;
         const s = this.editingShape;
 
-        // 1. Proyectar dibujo en tiempo real sobre la textura 3D mediante compositeCtx
-        if (this.layerManager && this.layerManager.compositeCtx) {
-            this.layerManager.recomposite();
-            this.drawShapeDirect(this.layerManager.compositeCtx, s);
-            this.needsUpdate = true;
-            this.forceUpdate = true;
-            if (this.texture) this.texture.needsUpdate = true;
-        }
-
-        // 2. Limpiar y dibujar trazo en ctxUI (lienzo de superposición 2D)
+        // 1. Limpiar y dibujar trazo de forma instantánea a 60-144fps en ctxUI (lienzo 2D ultra-rápido)
         this.clearUI();
         this.drawShapeDirect(this.ctxUI, s);
         this.uiNeedsUpdate = true;
+
+        // 2. Si se dibuja directamente en la vista 3D, proyectar sobre la textura 3D mediante rAF desacoplado
+        if (this.isPaintingShape3D) {
+            this.scheduleShape3DPreview();
+        }
 
         // 3. Dibujar nodos interactivos (P1, P2, Curvatura)
         if (this.dragMode !== 'create' && this.ctxUI) {
@@ -2285,9 +2300,13 @@ export class Painter {
         ctx.restore();
 
         this.layerManager.recomposite();
-        this.needsUpdate = true;
-        this.forceUpdate = true;
-        if (this.texture) this.texture.needsUpdate = true;
+        if (this._transformRaf) return;
+        this._transformRaf = requestAnimationFrame(() => {
+            this._transformRaf = null;
+            this.needsUpdate = true;
+            this.forceUpdate = true;
+            if (this.texture) this.texture.needsUpdate = true;
+        });
     }
 
     renderTransformUI() {
@@ -2429,6 +2448,10 @@ export class Painter {
 
     commitLayerTransform() {
         if (!this.transformState || !this.transformState.active) return;
+        if (this._transformRaf) {
+            cancelAnimationFrame(this._transformRaf);
+            this._transformRaf = null;
+        }
         const t = this.transformState;
 
         // Guardar estado en pila de Deshacer
@@ -2439,6 +2462,9 @@ export class Painter {
         });
 
         this.updateLiveLayerPreview();
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
 
         this.transformState = null;
         this.clearUI();
@@ -2449,6 +2475,10 @@ export class Painter {
 
     cancelLayerTransform() {
         if (!this.transformState || !this.transformState.active) return;
+        if (this._transformRaf) {
+            cancelAnimationFrame(this._transformRaf);
+            this._transformRaf = null;
+        }
         const t = this.transformState;
         const layer = this.layerManager ? this.layerManager.layers.find(l => l.id === t.layerId) : null;
         if (layer && t.originalLayerData) {
