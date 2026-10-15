@@ -923,6 +923,13 @@ input[type=range]::-webkit-slider-runnable-track {
     color: #fff;
 }
 
+.size-step-btn.active {
+    background: #0288d1 !important;
+    border-color: #00e5ff !important;
+    color: #fff !important;
+    box-shadow: 0 0 6px rgba(0, 229, 255, 0.45);
+}
+
 /* Previsualización de miniatura de Calcomanías */
 .decal-thumb {
     width: 26px;

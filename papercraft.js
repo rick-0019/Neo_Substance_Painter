@@ -61,6 +61,15 @@ export class PapercraftEngine {
         this.panX = 40;
         this.panY = 40;
 
+        // Anotaciones técnicas y guías de ensamblaje en Hojas A4
+        this.annotations = [];
+        this.selectedAnnotation = null;
+        this.activeAnnotationTool = 'select'; // 'select', 'text', 'arrow', 'badge', 'cut', 'glue'
+        this.nextBadgeNumber = 1;
+        this.drawingArrow = null;
+        this.isDraggingAnnotation = false;
+        this.annotationDragHandle = null;
+
         this.onRedraw = null;
     }
 
@@ -666,6 +675,367 @@ export class PapercraftEngine {
     }
 
     /**
+     * Gestión de Anotaciones e Indicadores en el Banco de Trabajo A4
+     */
+    addAnnotation(ann) {
+        if (!ann) return null;
+        if (!ann.id) {
+            ann.id = 'ann_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+        }
+        if (ann.pageIndex === undefined) ann.pageIndex = 0;
+        if (ann.x === undefined) ann.x = 20;
+        if (ann.y === undefined) ann.y = 20;
+        if (!ann.color) ann.color = '#d32f2f';
+        if (ann.fontSize === undefined) ann.fontSize = 9;
+        if (ann.rotation === undefined) ann.rotation = 0;
+
+        this.annotations.push(ann);
+        this.notifyChange();
+        return ann;
+    }
+
+    removeAnnotation(id) {
+        if (!id) return;
+        const idx = this.annotations.findIndex(a => a.id === id);
+        if (idx !== -1) {
+            this.annotations.splice(idx, 1);
+            if (this.selectedAnnotation && this.selectedAnnotation.id === id) {
+                this.selectedAnnotation = null;
+            }
+            this.notifyChange();
+        }
+    }
+
+    clearAnnotations(pageIndex = null) {
+        if (pageIndex === null) {
+            this.annotations = [];
+            this.selectedAnnotation = null;
+        } else {
+            this.annotations = this.annotations.filter(a => a.pageIndex !== pageIndex);
+            if (this.selectedAnnotation && this.selectedAnnotation.pageIndex === pageIndex) {
+                this.selectedAnnotation = null;
+            }
+        }
+        this.notifyChange();
+    }
+
+    _distToSegment(px, py, x1, y1, x2, y2) {
+        const l2 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+        if (l2 === 0) return Math.hypot(px - x1, py - y1);
+        let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+        t = Math.max(0, Math.min(1, t));
+        return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
+    }
+
+    getAnnotationAt(canvasX, canvasY, viewScale = 4.0) {
+        if (!this.annotations || this.annotations.length === 0) return null;
+
+        const sheetGapMm = 20.0;
+        const pagePitchMm = this.A4_W + sheetGapMm;
+        const mouseMmX = (canvasX - this.panX) / (this.zoom * viewScale);
+        const mouseMmY = (canvasY - this.panY) / (this.zoom * viewScale);
+
+        // Búsqueda en orden inverso (las más recientes arriba)
+        for (let i = this.annotations.length - 1; i >= 0; i--) {
+            const ann = this.annotations[i];
+            const p = ann.pageIndex || 0;
+            const pageOffsetMmX = p * pagePitchMm;
+            const pageMmX = mouseMmX - pageOffsetMmX;
+            const pageMmY = mouseMmY;
+
+            if (pageMmX < -10 || pageMmX > this.A4_W + 10 || pageMmY < -10 || pageMmY > this.A4_H + 10) {
+                continue;
+            }
+
+            if (ann.type === 'badge') {
+                const dist = Math.hypot(pageMmX - ann.x, pageMmY - ann.y);
+                if (dist <= 6.0) {
+                    return { annotation: ann, handle: 'body' };
+                }
+            } else if (ann.type === 'arrow') {
+                const endX = (ann.endX !== undefined ? ann.endX : ann.x + 20);
+                const endY = (ann.endY !== undefined ? ann.endY : ann.y + 20);
+                
+                // Comprobar nodo de la punta
+                if (Math.hypot(pageMmX - endX, pageMmY - endY) <= 5.0) {
+                    return { annotation: ann, handle: 'end' };
+                }
+                // Comprobar nodo de origen
+                if (Math.hypot(pageMmX - ann.x, pageMmY - ann.y) <= 5.0) {
+                    return { annotation: ann, handle: 'start' };
+                }
+                // Comprobar cuerpo de la flecha
+                if (this._distToSegment(pageMmX, pageMmY, ann.x, ann.y, endX, endY) <= 4.0) {
+                    return { annotation: ann, handle: 'body' };
+                }
+            } else {
+                // 'text', 'cut', 'glue'
+                const dx = pageMmX - ann.x;
+                const dy = pageMmY - ann.y;
+                const rad = (-(ann.rotation || 0) * Math.PI) / 180;
+                const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+                const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+                let w = 24, h = 10;
+                if (ann.type === 'text') {
+                    const txtLen = (ann.text || 'Texto').length;
+                    w = Math.max(16, txtLen * (ann.fontSize || 9) * 0.32 + 6);
+                    h = Math.max(8, (ann.fontSize || 9) * 0.45 + 4);
+                } else if (ann.type === 'cut') {
+                    w = 26; h = 10;
+                } else if (ann.type === 'glue') {
+                    w = 24; h = 9;
+                    if (lx >= -w / 2 - 3 && lx <= w / 2 + 3 && ly >= -h / 2 - 3 && ly <= h / 2 + 3) {
+                        return { annotation: ann, handle: 'body' };
+                    }
+                    continue;
+                }
+
+                if (lx >= -4 && lx <= w + 4 && ly >= -h - 2 && ly <= 6) {
+                    return { annotation: ann, handle: 'body' };
+                }
+            }
+        }
+        return null;
+    }
+
+    drawAnnotationsOnCanvas(ctx, pageIndex, pageX_px, pageY_px, mmToPx = 4.0) {
+        if (!this.annotations || this.annotations.length === 0) return;
+        const pageAnns = this.annotations.filter(a => (a.pageIndex || 0) === pageIndex);
+        for (const ann of pageAnns) {
+            if (this.selectedAnnotation && this.selectedAnnotation.id === ann.id) continue;
+            this.drawAnnotationOnCanvas(ctx, ann, pageX_px, pageY_px, mmToPx, false);
+        }
+    }
+
+    drawAnnotationOnCanvas(ctx, ann, pageX_px, pageY_px, mmToPx = 4.0, isSelected = false) {
+        const xPx = pageX_px + ann.x * mmToPx;
+        const yPx = pageY_px + ann.y * mmToPx;
+        const color = ann.color || '#d32f2f';
+        const rotRad = ((ann.rotation || 0) * Math.PI) / 180;
+
+        ctx.save();
+
+        if (ann.type === 'text') {
+            ctx.translate(xPx, yPx);
+            ctx.rotate(rotRad);
+
+            const fontSizePt = ann.fontSize || 9;
+            const fontSizePx = Math.max(10, fontSizePt * 0.3528 * mmToPx);
+            ctx.font = `bold ${Math.round(fontSizePx)}px Helvetica, Arial, sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+
+            const txt = ann.text || 'Nota';
+            const tm = ctx.measureText(txt);
+            const padX = 4;
+            const padY = 2;
+            const textH = fontSizePx * 0.85;
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+            ctx.strokeStyle = isSelected ? '#00e5ff' : color;
+            ctx.lineWidth = isSelected ? 1.8 : 0.8;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(-padX, -textH - padY, tm.width + padX * 2, textH + padY * 2 + 2, 3);
+            } else {
+                ctx.rect(-padX, -textH - padY, tm.width + padX * 2, textH + padY * 2 + 2);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = color;
+            ctx.fillText(txt, 0, 0);
+
+            if (isSelected) {
+                this._drawSelectionCorners(ctx, -padX, -textH - padY, tm.width + padX * 2, textH + padY * 2 + 2);
+            }
+
+        } else if (ann.type === 'arrow') {
+            const endXPx = pageX_px + (ann.endX !== undefined ? ann.endX : ann.x + 20) * mmToPx;
+            const endYPx = pageY_px + (ann.endY !== undefined ? ann.endY : ann.y + 20) * mmToPx;
+
+            ctx.strokeStyle = isSelected ? '#00e5ff' : color;
+            ctx.fillStyle = isSelected ? '#00e5ff' : color;
+            ctx.lineWidth = Math.max(2, (ann.lineWidthMm || 0.4) * mmToPx);
+            ctx.lineCap = 'round';
+
+            ctx.beginPath();
+            ctx.moveTo(xPx, yPx);
+            ctx.lineTo(endXPx, endYPx);
+            ctx.stroke();
+
+            const angle = Math.atan2(endYPx - yPx, endXPx - xPx);
+            const headLen = Math.max(10, 3.2 * mmToPx);
+            ctx.beginPath();
+            ctx.moveTo(endXPx, endYPx);
+            ctx.lineTo(endXPx - headLen * Math.cos(angle - Math.PI / 6), endYPx - headLen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(endXPx - headLen * Math.cos(angle + Math.PI / 6), endYPx - headLen * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.fill();
+
+            if (ann.text) {
+                const midX = (xPx + endXPx) / 2;
+                const midY = (yPx + endYPx) / 2;
+                const fontSizePt = ann.fontSize || 8;
+                const fontSizePx = Math.max(9, fontSizePt * 0.3528 * mmToPx);
+                ctx.font = `bold ${Math.round(fontSizePx)}px Helvetica, Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 3;
+                ctx.strokeText(ann.text, midX, midY - 3);
+                ctx.fillStyle = color;
+                ctx.fillText(ann.text, midX, midY - 3);
+            }
+
+            if (isSelected) {
+                ctx.fillStyle = '#00e5ff';
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(xPx, yPx, 4.5, 0, Math.PI * 2);
+                ctx.arc(endXPx, endYPx, 4.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            }
+
+        } else if (ann.type === 'badge') {
+            const radiusPx = Math.max(12, 3.5 * mmToPx);
+            ctx.translate(xPx, yPx);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = isSelected ? '#00e5ff' : color;
+            ctx.lineWidth = isSelected ? 3 : 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, radiusPx, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            const badgeStr = String(ann.text || ann.badgeNumber || 1);
+            const fontSizePx = Math.max(11, radiusPx * 1.05);
+            ctx.font = `bold ${Math.round(fontSizePx)}px Helvetica, Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = color;
+            ctx.fillText(badgeStr, 0, 1);
+
+            if (isSelected) {
+                ctx.strokeStyle = '#00e5ff';
+                ctx.setLineDash([3, 3]);
+                ctx.lineWidth = 1;
+                ctx.strokeRect(-radiusPx - 3, -radiusPx - 3, (radiusPx + 3) * 2, (radiusPx + 3) * 2);
+                ctx.setLineDash([]);
+            }
+
+        } else if (ann.type === 'cut') {
+            ctx.translate(xPx, yPx);
+            ctx.rotate(rotRad);
+
+            const lineLenPx = 22 * mmToPx;
+            ctx.strokeStyle = isSelected ? '#00e5ff' : (ann.color || '#333333');
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([6, 4]);
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(lineLenPx, 0);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.font = `bold ${Math.round(10 * mmToPx * 0.35)}px sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = ann.color || '#333333';
+            ctx.fillText(`✂ ${ann.text || 'Corte'}`, 4, -2);
+
+            if (isSelected) {
+                ctx.strokeStyle = '#00e5ff';
+                ctx.setLineDash([3, 3]);
+                ctx.strokeRect(-2, -14, lineLenPx + 4, 18);
+                ctx.setLineDash([]);
+            }
+
+        } else if (ann.type === 'glue') {
+            ctx.translate(xPx, yPx);
+            ctx.rotate(rotRad);
+
+            const boxWPx = 22 * mmToPx;
+            const boxHPx = 6.5 * mmToPx;
+            ctx.fillStyle = 'rgba(255, 249, 196, 0.94)';
+            ctx.strokeStyle = isSelected ? '#00e5ff' : '#f57f17';
+            ctx.lineWidth = isSelected ? 2 : 1;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(-boxWPx / 2, -boxHPx / 2, boxWPx, boxHPx, 3);
+            } else {
+                ctx.rect(-boxWPx / 2, -boxHPx / 2, boxWPx, boxHPx);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.font = `bold ${Math.round(7.5 * mmToPx * 0.35)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#b78103';
+            ctx.fillText(`💧 ${ann.text || 'Pegar acá'}`, 0, 0);
+
+            if (isSelected) {
+                ctx.strokeStyle = '#00e5ff';
+                ctx.setLineDash([3, 3]);
+                ctx.strokeRect(-boxWPx / 2 - 2, -boxHPx / 2 - 2, boxWPx + 4, boxHPx + 4);
+                ctx.setLineDash([]);
+            }
+        }
+
+        ctx.restore();
+    }
+
+    _drawSelectionCorners(ctx, x, y, w, h) {
+        ctx.strokeStyle = '#00e5ff';
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, w, h);
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#00e5ff';
+        const s = 4;
+        ctx.fillRect(x - s / 2, y - s / 2, s, s);
+        ctx.fillRect(x + w - s / 2, y - s / 2, s, s);
+        ctx.fillRect(x - s / 2, y + h - s / 2, s, s);
+        ctx.fillRect(x + w - s / 2, y + h - s / 2, s, s);
+    }
+
+    drawArrowPreview(ctx, arrow, pageX_px, pageY_px, mmToPx = 4.0) {
+        if (!arrow) return;
+        const xPx = pageX_px + arrow.startX * mmToPx;
+        const yPx = pageY_px + arrow.startY * mmToPx;
+        const endXPx = pageX_px + arrow.endX * mmToPx;
+        const endYPx = pageY_px + arrow.endY * mmToPx;
+
+        ctx.save();
+        ctx.strokeStyle = '#00e5ff';
+        ctx.fillStyle = '#00e5ff';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([4, 3]);
+
+        ctx.beginPath();
+        ctx.moveTo(xPx, yPx);
+        ctx.lineTo(endXPx, endYPx);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        const angle = Math.atan2(endYPx - yPx, endXPx - xPx);
+        const headLen = Math.max(10, 3.2 * mmToPx);
+        ctx.beginPath();
+        ctx.moveTo(endXPx, endYPx);
+        ctx.lineTo(endXPx - headLen * Math.cos(angle - Math.PI / 6), endYPx - headLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(endXPx - headLen * Math.cos(angle + Math.PI / 6), endYPx - headLen * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    /**
      * Dibuja una previsualización de las piezas y solapas sobre el lienzo UV estándar si es requerido
      */
     renderOverlay(ctx, w, h) {
@@ -714,12 +1084,27 @@ export class PapercraftEngine {
         for (let p = 0; p < this.pagesCount; p++) {
             const pageX_px = p * (this.A4_W + sheetGapMm) * mmToPx;
             this.renderSheetOnCanvas(ctx, p, canvas2d, pageX_px, 0, mmToPx);
+            this.drawAnnotationsOnCanvas(ctx, p, pageX_px, 0, mmToPx);
         }
 
         // Si hay una pieza seleccionada, redibujarla sobre su hoja para que sus cotas y marcas queden encima
         if (this.selectedPart) {
             const pageX_px = this.selectedPart.layout.pageIndex * (this.A4_W + sheetGapMm) * mmToPx;
             this.drawPartOnCanvas(ctx, this.selectedPart, canvas2d, pageX_px, 0, mmToPx, true);
+        }
+
+        // Si hay una anotación seleccionada, redibujarla encima con sus tiradores activos
+        if (this.selectedAnnotation) {
+            const p = this.selectedAnnotation.pageIndex || 0;
+            const pageX_px = p * (this.A4_W + sheetGapMm) * mmToPx;
+            this.drawAnnotationOnCanvas(ctx, this.selectedAnnotation, pageX_px, 0, mmToPx, true);
+        }
+
+        // Si se está trazando una flecha interactiva en vivo
+        if (this.drawingArrow) {
+            const p = this.drawingArrow.pageIndex || 0;
+            const pageX_px = p * (this.A4_W + sheetGapMm) * mmToPx;
+            this.drawArrowPreview(ctx, this.drawingArrow, pageX_px, 0, mmToPx);
         }
 
         // PASADA 3: Dibujar medición interactiva de la Regla (si está activa)
@@ -1342,6 +1727,9 @@ export class PapercraftEngine {
             }
         } // Fin de for (const part of this.parts)
 
+        // E) Renderizar Anotaciones e Indicadores Vectoriales en el PDF
+        this.renderAnnotationsToPDF(doc, p);
+
         if (!pageInfo.skipHeader) {
             doc.setFont('helvetica', 'normal');
             doc.setFontSize(7);
@@ -1354,6 +1742,165 @@ export class PapercraftEngine {
             );
         }
     } // Fin de renderPageToPDF
+
+    /**
+     * Renderiza vectorialmente las anotaciones de la página p al documento jsPDF
+     */
+    renderAnnotationsToPDF(doc, p) {
+        let allAnns = Array.isArray(this.annotations) ? [...this.annotations] : [];
+        if (typeof window !== 'undefined' && window.papercraft && window.papercraft !== this && Array.isArray(window.papercraft.annotations)) {
+            for (const a of window.papercraft.annotations) {
+                if (!allAnns.some(existing => existing.id === a.id)) {
+                    allAnns.push(a);
+                }
+            }
+        }
+        if (allAnns.length === 0) return;
+        const pageAnnotations = allAnns.filter(a => (a.pageIndex || 0) === p);
+        if (pageAnnotations.length === 0) return;
+
+        const hexToRgb = (hex) => {
+            if (!hex) return { r: 211, g: 47, b: 47 };
+            let c = hex.replace('#', '');
+            if (c.length === 3) c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+            const num = parseInt(c, 16);
+            return {
+                r: (num >> 16) & 255,
+                g: (num >> 8) & 255,
+                b: num & 255
+            };
+        };
+
+        for (const ann of pageAnnotations) {
+            try {
+                doc.saveGraphicsState();
+                const rgb = hexToRgb(ann.color || '#d32f2f');
+
+                if (ann.type === 'text') {
+                    doc.setFont('helvetica', 'bold');
+                    const fontPt = ann.fontSize || 9;
+                    doc.setFontSize(fontPt);
+                    doc.setTextColor(rgb.r, rgb.g, rgb.b);
+
+                    const txt = ann.text || 'Nota';
+                    const fontHeightMm = fontPt * 0.3528;
+                    const textWidth = doc.getTextWidth(txt);
+
+                    // Si no está rotado, dibujar fondo blanco de protección
+                    if (!ann.rotation) {
+                        doc.setFillColor(255, 255, 255);
+                        doc.setDrawColor(rgb.r, rgb.g, rgb.b);
+                        doc.setLineWidth(0.2);
+                        if (typeof doc.roundedRect === 'function') {
+                            doc.roundedRect(ann.x - 1, ann.y - fontHeightMm - 0.5, textWidth + 2, fontHeightMm + 2, 0.5, 0.5, 'FD');
+                        } else {
+                            doc.rect(ann.x - 1, ann.y - fontHeightMm - 0.5, textWidth + 2, fontHeightMm + 2, 'FD');
+                        }
+                    }
+
+                    const textOptions = {};
+                    if (ann.rotation) {
+                        textOptions.angle = ann.rotation;
+                    }
+                    doc.text(txt, ann.x, ann.y, textOptions);
+
+                } else if (ann.type === 'arrow') {
+                    doc.setDrawColor(rgb.r, rgb.g, rgb.b);
+                    doc.setFillColor(rgb.r, rgb.g, rgb.b);
+                    doc.setLineWidth(ann.lineWidthMm || 0.35);
+                    if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([], 0);
+                    else if (typeof doc.setLineDash === 'function') doc.setLineDash([], 0);
+
+                    const endX = (ann.endX !== undefined ? ann.endX : ann.x + 20);
+                    const endY = (ann.endY !== undefined ? ann.endY : ann.y + 20);
+
+                    doc.line(ann.x, ann.y, endX, endY);
+
+                    // Punta triangular de la flecha
+                    const angle = Math.atan2(endY - ann.y, endX - ann.x);
+                    const headLenMm = 3.0;
+                    const p1X = endX - headLenMm * Math.cos(angle - Math.PI / 6);
+                    const p1Y = endY - headLenMm * Math.sin(angle - Math.PI / 6);
+                    const p2X = endX - headLenMm * Math.cos(angle + Math.PI / 6);
+                    const p2Y = endY - headLenMm * Math.sin(angle + Math.PI / 6);
+
+                    if (typeof doc.triangle === 'function') {
+                        doc.triangle(endX, endY, p1X, p1Y, p2X, p2Y, 'FD');
+                    } else {
+                        doc.line(endX, endY, p1X, p1Y);
+                        doc.line(p1X, p1Y, p2X, p2Y);
+                        doc.line(p2X, p2Y, endX, endY);
+                    }
+
+                    if (ann.text) {
+                        doc.setFont('helvetica', 'bold');
+                        doc.setFontSize(ann.fontSize || 7.5);
+                        doc.setTextColor(rgb.r, rgb.g, rgb.b);
+                        const midX = (ann.x + endX) / 2;
+                        const midY = (ann.y + endY) / 2;
+                        doc.text(ann.text, midX, midY - 1, { align: 'center' });
+                    }
+
+                } else if (ann.type === 'badge') {
+                    const rMm = 3.2; // ~6.4 mm diámetro
+                    doc.setDrawColor(rgb.r, rgb.g, rgb.b);
+                    doc.setFillColor(255, 255, 255);
+                    doc.setLineWidth(0.4);
+                    if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([], 0);
+                    else if (typeof doc.setLineDash === 'function') doc.setLineDash([], 0);
+
+                    doc.circle(ann.x, ann.y, rMm, 'FD');
+
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(ann.fontSize || 8);
+                    doc.setTextColor(rgb.r, rgb.g, rgb.b);
+                    const badgeStr = String(ann.text || ann.badgeNumber || 1);
+                    doc.text(badgeStr, ann.x, ann.y + 0.9, { align: 'center', baseline: 'middle' });
+
+                } else if (ann.type === 'cut') {
+                    doc.setDrawColor(rgb.r, rgb.g, rgb.b);
+                    doc.setLineWidth(0.2);
+                    if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([2, 1.5], 0);
+                    else if (typeof doc.setLineDash === 'function') doc.setLineDash([2, 1.5], 0);
+
+                    const lenMm = 20.0;
+                    const rad = ((ann.rotation || 0) * Math.PI) / 180;
+                    const dx = Math.cos(rad) * lenMm;
+                    const dy = Math.sin(rad) * lenMm;
+                    doc.line(ann.x, ann.y, ann.x + dx, ann.y + dy);
+
+                    if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([], 0);
+                    else if (typeof doc.setLineDash === 'function') doc.setLineDash([], 0);
+
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(7);
+                    doc.setTextColor(rgb.r, rgb.g, rgb.b);
+                    doc.text(`[CORTE] ${ann.text || ''}`, ann.x + 1, ann.y - 1);
+
+                } else if (ann.type === 'glue') {
+                    const boxW = 20.0;
+                    const boxH = 5.5;
+                    doc.setDrawColor(218, 165, 32);
+                    doc.setFillColor(255, 250, 205);
+                    doc.setLineWidth(0.3);
+                    if (typeof doc.roundedRect === 'function') {
+                        doc.roundedRect(ann.x - boxW / 2, ann.y - boxH / 2, boxW, boxH, 1, 1, 'FD');
+                    } else {
+                        doc.rect(ann.x - boxW / 2, ann.y - boxH / 2, boxW, boxH, 'FD');
+                    }
+
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(6.5);
+                    doc.setTextColor(180, 100, 0);
+                    doc.text(ann.text || 'PEGAR ACÁ', ann.x, ann.y + 0.8, { align: 'center', baseline: 'middle' });
+                }
+
+                doc.restoreGraphicsState();
+            } catch (errAnn) {
+                console.warn('Error renderizando anotación a PDF:', errAnn);
+            }
+        }
+    }
 
     showPdfPreviewModal(doc, filename, totalPages = null) {
         const blob = doc.output('blob');

@@ -1203,6 +1203,7 @@ function setUnfoldMode(active) {
         if (panel?.classList.contains('collapsed')) {
             panel.classList.remove('collapsed');
         }
+        if (typeof updateAnnotationUI === 'function') updateAnnotationUI();
         renderUnfoldWorkbench();
     } else {
         if (btnRibbonUnfold) {
@@ -1274,6 +1275,90 @@ function getActivePartEngine() {
 }
 window.getActivePartEngine = getActivePartEngine;
 
+// ==========================================
+// Herramientas de Anotación y Montaje Unfold
+// ==========================================
+function setUnfoldAnnotationTool(tool) {
+    if (!papercraft) return;
+    papercraft.activeAnnotationTool = tool || 'select';
+
+    const toolBtns = [
+        { id: 'btn-unfold-tool-select', name: 'select' },
+        { id: 'btn-unfold-tool-text', name: 'text' },
+        { id: 'btn-unfold-tool-arrow', name: 'arrow' },
+        { id: 'btn-unfold-tool-badge', name: 'badge' },
+        { id: 'btn-unfold-tool-cut', name: 'cut' },
+        { id: 'btn-unfold-tool-glue', name: 'glue' }
+    ];
+
+    toolBtns.forEach(b => {
+        const el = document.getElementById(b.id);
+        if (el) {
+            if (b.name === tool) el.classList.add('active');
+            else el.classList.remove('active');
+        }
+    });
+
+    if (canvasUnfold) {
+        if (tool === 'select') canvasUnfold.style.cursor = 'default';
+        else if (tool === 'text') canvasUnfold.style.cursor = 'text';
+        else canvasUnfold.style.cursor = 'crosshair';
+    }
+}
+window.setUnfoldAnnotationTool = setUnfoldAnnotationTool;
+
+function updateAnnotationUI() {
+    if (!papercraft) return;
+    const countBadge = document.getElementById('unfold-ann-count');
+    if (countBadge) {
+        countBadge.textContent = String(papercraft.annotations?.length || 0);
+    }
+
+    const propbar = document.getElementById('unfold-annotation-propbar');
+    const sel = papercraft.selectedAnnotation;
+    if (!propbar) return;
+
+    if (!sel) {
+        propbar.style.display = 'none';
+        return;
+    }
+
+    propbar.style.display = 'flex';
+    const textInput = document.getElementById('unfold-ann-text');
+    const colorInput = document.getElementById('unfold-ann-color');
+    const sizeSelect = document.getElementById('unfold-ann-size');
+
+    if (textInput) {
+        if (sel.type === 'text') {
+            textInput.style.display = 'inline-block';
+            textInput.placeholder = 'Texto de la nota...';
+            textInput.value = sel.text || '';
+        } else if (sel.type === 'badge') {
+            textInput.style.display = 'inline-block';
+            textInput.placeholder = 'Número...';
+            textInput.value = sel.badgeNumber !== undefined ? String(sel.badgeNumber) : '';
+        } else if (sel.type === 'cut') {
+            textInput.style.display = 'inline-block';
+            textInput.placeholder = 'Texto corte...';
+            textInput.value = sel.text || 'Corte';
+        } else if (sel.type === 'glue') {
+            textInput.style.display = 'inline-block';
+            textInput.placeholder = 'Texto pegado...';
+            textInput.value = sel.text || 'Pegar aquí';
+        } else {
+            textInput.style.display = 'none';
+        }
+    }
+
+    if (colorInput && sel.color) {
+        colorInput.value = sel.color;
+    }
+    if (sizeSelect && sel.fontSize) {
+        sizeSelect.value = String(sel.fontSize);
+    }
+}
+window.updateAnnotationUI = updateAnnotationUI;
+
 canvasUnfold?.addEventListener('mousedown', (e) => {
     const rect = canvasUnfold.getBoundingClientRect();
     const mouseCanvasX = e.clientX - rect.left;
@@ -1301,7 +1386,133 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
         return;
     }
 
-    if (e.button === 0) { // Clic izquierdo: arrastrar pieza o mover mesa
+    const mmToPx = 4.0;
+    const sheetGapMm = 20.0;
+    const pagePitchMm = papercraft.A4_W + sheetGapMm;
+    const totalMmX = (mouseCanvasX - papercraft.panX) / (papercraft.zoom * mmToPx);
+    const mmY = (mouseCanvasY - papercraft.panY) / (papercraft.zoom * mmToPx);
+    const pageIndex = Math.max(0, Math.floor(totalMmX / pagePitchMm));
+    const pageMmX = totalMmX - pageIndex * pagePitchMm;
+
+    const activeTool = papercraft.activeAnnotationTool || 'select';
+
+    if (e.button === 0) { // Clic izquierdo
+        // 1. Herramienta Texto
+        if (activeTool === 'text') {
+            const chosenColor = document.getElementById('unfold-ann-color')?.value || '#d32f2f';
+            const chosenSize = parseInt(document.getElementById('unfold-ann-size')?.value || '9', 10);
+            const newAnn = papercraft.addAnnotation({
+                type: 'text',
+                pageIndex,
+                x: Math.round(Math.max(5, Math.min(papercraft.A4_W - 10, pageMmX))),
+                y: Math.round(Math.max(5, Math.min(papercraft.A4_H - 10, mmY))),
+                text: 'Anotación',
+                color: chosenColor,
+                fontSize: chosenSize,
+                rotation: 0
+            });
+            papercraft.selectedAnnotation = newAnn;
+            setUnfoldAnnotationTool('select');
+            updateAnnotationUI();
+            renderUnfoldWorkbench();
+            setTimeout(() => {
+                const ti = document.getElementById('unfold-ann-text');
+                if (ti) { ti.focus(); ti.select(); }
+            }, 60);
+            return;
+        }
+
+        // 2. Herramienta Número / Badge (①, ②, ③...)
+        if (activeTool === 'badge') {
+            const num = papercraft.nextBadgeNumber || 1;
+            const chosenColor = document.getElementById('unfold-ann-color')?.value || '#0288d1';
+            const newAnn = papercraft.addAnnotation({
+                type: 'badge',
+                pageIndex,
+                x: Math.round(Math.max(5, Math.min(papercraft.A4_W - 5, pageMmX))),
+                y: Math.round(Math.max(5, Math.min(papercraft.A4_H - 5, mmY))),
+                badgeNumber: num,
+                color: chosenColor
+            });
+            papercraft.nextBadgeNumber = num + 1;
+            papercraft.selectedAnnotation = newAnn;
+            updateAnnotationUI();
+            renderUnfoldWorkbench();
+            return;
+        }
+
+        // 3. Herramienta Corte (✂️ Línea de corte asistida)
+        if (activeTool === 'cut') {
+            const newAnn = papercraft.addAnnotation({
+                type: 'cut',
+                pageIndex,
+                x: Math.round(Math.max(5, Math.min(papercraft.A4_W - 20, pageMmX))),
+                y: Math.round(Math.max(5, Math.min(papercraft.A4_H - 10, mmY))),
+                text: 'Corte',
+                color: '#e53935'
+            });
+            papercraft.selectedAnnotation = newAnn;
+            setUnfoldAnnotationTool('select');
+            updateAnnotationUI();
+            renderUnfoldWorkbench();
+            return;
+        }
+
+        // 4. Herramienta Pegar (💧 Guía de pegamento)
+        if (activeTool === 'glue') {
+            const newAnn = papercraft.addAnnotation({
+                type: 'glue',
+                pageIndex,
+                x: Math.round(Math.max(5, Math.min(papercraft.A4_W - 20, pageMmX))),
+                y: Math.round(Math.max(5, Math.min(papercraft.A4_H - 10, mmY))),
+                text: 'Pegar aquí',
+                color: '#1976d2'
+            });
+            papercraft.selectedAnnotation = newAnn;
+            setUnfoldAnnotationTool('select');
+            updateAnnotationUI();
+            renderUnfoldWorkbench();
+            return;
+        }
+
+        // 5. Herramienta Flecha (↗️ Trazado interactivo)
+        if (activeTool === 'arrow') {
+            const chosenColor = document.getElementById('unfold-ann-color')?.value || '#d32f2f';
+            papercraft.drawingArrow = {
+                pageIndex,
+                startX: Math.round(pageMmX),
+                startY: Math.round(mmY),
+                endX: Math.round(pageMmX),
+                endY: Math.round(mmY),
+                color: chosenColor
+            };
+            papercraft.selectedAnnotation = null;
+            updateAnnotationUI();
+            renderUnfoldWorkbench();
+            return;
+        }
+
+        // 6. Modo SELECT / MOVER:
+        // Primero verificar si se hace clic en una anotación
+        const hitAnn = papercraft.getAnnotationAt(mouseCanvasX, mouseCanvasY);
+        if (hitAnn) {
+            papercraft.selectedAnnotation = hitAnn.annotation;
+            papercraft.isDraggingAnnotation = true;
+            papercraft.annotationDragHandle = hitAnn.handle; // 'body', 'start', 'end'
+            papercraft.selectedPart = null;
+            updateAnnotationUI();
+            updateSelectedPartCard();
+            renderUnfoldWorkbench();
+            return;
+        }
+
+        // Si se hizo clic fuera de anotaciones, deseleccionar anotación previa
+        if (papercraft.selectedAnnotation) {
+            papercraft.selectedAnnotation = null;
+            updateAnnotationUI();
+        }
+
+        // Proceder con partes o paneo
         const hit = getWorkbenchPartAt(mouseCanvasX, mouseCanvasY);
         if (hit) {
             papercraft.selectedPart = hit.part;
@@ -1320,7 +1531,18 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
             updateSelectedPartCard();
             renderUnfoldWorkbench();
         }
-    } else if (e.button === 2) { // Clic derecho: rotar pieza o mover mesa
+    } else if (e.button === 2) { // Clic derecho
+        // Si clic derecho sobre una anotación, rotarla 45°
+        const hitAnn = papercraft.getAnnotationAt(mouseCanvasX, mouseCanvasY);
+        if (hitAnn) {
+            hitAnn.annotation.rotation = ((hitAnn.annotation.rotation || 0) + 45) % 360;
+            papercraft.selectedAnnotation = hitAnn.annotation;
+            papercraft.notifyChange();
+            updateAnnotationUI();
+            renderUnfoldWorkbench();
+            return;
+        }
+
         const hit = getWorkbenchPartAt(mouseCanvasX, mouseCanvasY);
         if (hit) {
             papercraft.selectedPart = hit.part;
@@ -1367,6 +1589,66 @@ window.addEventListener('mousemove', (e) => {
         return;
     }
 
+    // Trazado en vivo de flecha
+    if (papercraft.drawingArrow) {
+        const mmToPx = 4.0;
+        const sheetGapMm = 20.0;
+        const pagePitchMm = papercraft.A4_W + sheetGapMm;
+        const totalMmX = (mouseCanvasX - papercraft.panX) / (papercraft.zoom * mmToPx);
+        const mmY = (mouseCanvasY - papercraft.panY) / (papercraft.zoom * mmToPx);
+        const p = papercraft.drawingArrow.pageIndex || 0;
+        const pageMmX = totalMmX - p * pagePitchMm;
+        papercraft.drawingArrow.endX = Math.round(pageMmX);
+        papercraft.drawingArrow.endY = Math.round(mmY);
+        renderUnfoldWorkbench();
+        return;
+    }
+
+    // Arrastre interactivo de anotación
+    if (papercraft.isDraggingAnnotation && papercraft.selectedAnnotation) {
+        const mmToPx = 4.0;
+        const dx_px = lastMouseX !== null ? (e.clientX - lastMouseX) : (e.movementX || 0);
+        const dy_px = lastMouseY !== null ? (e.clientY - lastMouseY) : (e.movementY || 0);
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+
+        const dx_mm = dx_px / (papercraft.zoom * mmToPx);
+        const dy_mm = dy_px / (papercraft.zoom * mmToPx);
+
+        const ann = papercraft.selectedAnnotation;
+        const handle = papercraft.annotationDragHandle || 'body';
+
+        if (handle === 'start') {
+            ann.x = Math.round((ann.x + dx_mm) * 10) / 10;
+            ann.y = Math.round((ann.y + dy_mm) * 10) / 10;
+        } else if (handle === 'end') {
+            if (ann.endX === undefined) ann.endX = ann.x + 20;
+            if (ann.endY === undefined) ann.endY = ann.y + 20;
+            ann.endX = Math.round((ann.endX + dx_mm) * 10) / 10;
+            ann.endY = Math.round((ann.endY + dy_mm) * 10) / 10;
+        } else {
+            const sheetGapMm = 20.0;
+            const pagePitchMm = papercraft.A4_W + sheetGapMm;
+            let curWorkbenchX = (ann.pageIndex || 0) * pagePitchMm + ann.x + dx_mm;
+            const totalSheets = (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler)
+                ? window.modelAssembler.getTotalSheets()
+                : (papercraft.pagesCount || 1);
+            const newPage = Math.max(0, Math.min(totalSheets - 1, Math.floor(curWorkbenchX / pagePitchMm)));
+
+            ann.pageIndex = newPage;
+            ann.x = Math.round((curWorkbenchX - newPage * pagePitchMm) * 10) / 10;
+            ann.y = Math.round((ann.y + dy_mm) * 10) / 10;
+
+            if (ann.type === 'arrow' && ann.endX !== undefined && ann.endY !== undefined) {
+                ann.endX = Math.round((ann.endX + dx_mm) * 10) / 10;
+                ann.endY = Math.round((ann.endY + dy_mm) * 10) / 10;
+            }
+        }
+        papercraft.notifyChange();
+        renderUnfoldWorkbench();
+        return;
+    }
+
     if (papercraft.isDraggingPart && papercraft.selectedPart) {
         const mmToPx = 4.0;
         const dx_px = lastMouseX !== null ? (e.clientX - lastMouseX) : (e.movementX || 0);
@@ -1409,8 +1691,18 @@ window.addEventListener('mousemove', (e) => {
         renderUnfoldWorkbench();
     } else {
         if (mouseCanvasX >= 0 && mouseCanvasX <= rect.width && mouseCanvasY >= 0 && mouseCanvasY <= rect.height) {
-            const hit = getWorkbenchPartAt(mouseCanvasX, mouseCanvasY);
-            canvasUnfold.style.cursor = hit ? 'grab' : 'default';
+            const activeTool = papercraft.activeAnnotationTool || 'select';
+            if (activeTool !== 'select') {
+                canvasUnfold.style.cursor = (activeTool === 'text') ? 'text' : 'crosshair';
+            } else {
+                const hitAnn = papercraft.getAnnotationAt(mouseCanvasX, mouseCanvasY);
+                if (hitAnn) {
+                    canvasUnfold.style.cursor = (hitAnn.handle === 'end' || hitAnn.handle === 'start') ? 'crosshair' : 'grab';
+                } else {
+                    const hit = getWorkbenchPartAt(mouseCanvasX, mouseCanvasY);
+                    canvasUnfold.style.cursor = hit ? 'grab' : 'default';
+                }
+            }
         }
     }
 });
@@ -1419,13 +1711,47 @@ window.addEventListener('mouseup', () => {
     if (!papercraft.active) return;
     lastMouseX = null;
     lastMouseY = null;
+
+    if (papercraft.drawingArrow) {
+        const da = papercraft.drawingArrow;
+        const len = Math.hypot(da.endX - da.startX, da.endY - da.startY);
+        if (len >= 3.0) {
+            const newAnn = papercraft.addAnnotation({
+                type: 'arrow',
+                pageIndex: da.pageIndex,
+                x: da.startX,
+                y: da.startY,
+                endX: da.endX,
+                endY: da.endY,
+                color: da.color || '#d32f2f'
+            });
+            papercraft.selectedAnnotation = newAnn;
+            setUnfoldAnnotationTool('select');
+            updateAnnotationUI();
+        }
+        papercraft.drawingArrow = null;
+        renderUnfoldWorkbench();
+    }
+
+    if (papercraft.isDraggingAnnotation) {
+        papercraft.isDraggingAnnotation = false;
+        papercraft.annotationDragHandle = null;
+        renderUnfoldWorkbench();
+    }
+
     if (isMeasuringRuler) {
         isMeasuringRuler = false;
         renderUnfoldWorkbench();
     }
     papercraft.isDraggingPart = false;
     isPanningWorkbench = false;
-    if (canvasUnfold) canvasUnfold.style.cursor = papercraft.measureMode ? 'crosshair' : 'default';
+    if (canvasUnfold) {
+        const activeTool = papercraft.activeAnnotationTool || 'select';
+        if (papercraft.measureMode) canvasUnfold.style.cursor = 'crosshair';
+        else if (activeTool === 'text') canvasUnfold.style.cursor = 'text';
+        else if (activeTool !== 'select') canvasUnfold.style.cursor = 'crosshair';
+        else canvasUnfold.style.cursor = 'default';
+    }
     renderUnfoldWorkbench();
 });
 
@@ -1572,6 +1898,77 @@ document.getElementById('btn-unfold-sel-center')?.addEventListener('click', () =
         const pEngine = typeof getActivePartEngine === 'function' ? getActivePartEngine() : papercraft;
         if (pEngine) pEngine.notifyChange();
         updateSelectedPartCard();
+        renderUnfoldWorkbench();
+    }
+});
+
+// --- Event Listeners para Barra de Herramientas de Anotaciones Unfold ---
+document.getElementById('btn-unfold-tool-select')?.addEventListener('click', () => setUnfoldAnnotationTool('select'));
+document.getElementById('btn-unfold-tool-text')?.addEventListener('click', () => setUnfoldAnnotationTool('text'));
+document.getElementById('btn-unfold-tool-arrow')?.addEventListener('click', () => setUnfoldAnnotationTool('arrow'));
+document.getElementById('btn-unfold-tool-badge')?.addEventListener('click', () => setUnfoldAnnotationTool('badge'));
+document.getElementById('btn-unfold-tool-cut')?.addEventListener('click', () => setUnfoldAnnotationTool('cut'));
+document.getElementById('btn-unfold-tool-glue')?.addEventListener('click', () => setUnfoldAnnotationTool('glue'));
+
+// Botones de anotación en el Sidebar
+document.getElementById('btn-side-ann-text')?.addEventListener('click', () => setUnfoldAnnotationTool('text'));
+document.getElementById('btn-side-ann-arrow')?.addEventListener('click', () => setUnfoldAnnotationTool('arrow'));
+document.getElementById('btn-side-ann-badge')?.addEventListener('click', () => setUnfoldAnnotationTool('badge'));
+document.getElementById('btn-side-ann-cut')?.addEventListener('click', () => setUnfoldAnnotationTool('cut'));
+document.getElementById('btn-side-ann-glue')?.addEventListener('click', () => setUnfoldAnnotationTool('glue'));
+document.getElementById('btn-side-ann-clear')?.addEventListener('click', () => {
+    if (papercraft) {
+        if (confirm('¿Desea borrar todas las anotaciones de las hojas A4?')) {
+            papercraft.clearAnnotations();
+            updateAnnotationUI();
+            renderUnfoldWorkbench();
+        }
+    }
+});
+
+// Controles de la Barra de Propiedades de la Anotación Seleccionada
+document.getElementById('unfold-ann-text')?.addEventListener('input', (e) => {
+    if (papercraft && papercraft.selectedAnnotation) {
+        const val = e.target.value;
+        if (papercraft.selectedAnnotation.type === 'badge') {
+            papercraft.selectedAnnotation.badgeNumber = parseInt(val, 10) || val;
+        } else {
+            papercraft.selectedAnnotation.text = val;
+        }
+        papercraft.notifyChange();
+        renderUnfoldWorkbench();
+    }
+});
+
+document.getElementById('unfold-ann-color')?.addEventListener('input', (e) => {
+    if (papercraft && papercraft.selectedAnnotation) {
+        papercraft.selectedAnnotation.color = e.target.value;
+        papercraft.notifyChange();
+        renderUnfoldWorkbench();
+    }
+});
+
+document.getElementById('unfold-ann-size')?.addEventListener('change', (e) => {
+    if (papercraft && papercraft.selectedAnnotation) {
+        papercraft.selectedAnnotation.fontSize = parseInt(e.target.value, 10) || 9;
+        papercraft.notifyChange();
+        renderUnfoldWorkbench();
+    }
+});
+
+document.getElementById('btn-unfold-ann-rotate')?.addEventListener('click', () => {
+    if (papercraft && papercraft.selectedAnnotation) {
+        papercraft.selectedAnnotation.rotation = ((papercraft.selectedAnnotation.rotation || 0) + 45) % 360;
+        papercraft.notifyChange();
+        renderUnfoldWorkbench();
+    }
+});
+
+document.getElementById('btn-unfold-ann-delete')?.addEventListener('click', () => {
+    if (papercraft && papercraft.selectedAnnotation) {
+        papercraft.removeAnnotation(papercraft.selectedAnnotation.id);
+        papercraft.selectedAnnotation = null;
+        updateAnnotationUI();
         renderUnfoldWorkbench();
     }
 });
@@ -2841,7 +3238,8 @@ function getProjectNSPData() {
                 partsLayout: papercraft.parts.map(p => ({
                     id: p.id,
                     layout: { ...p.layout }
-                }))
+                })),
+                annotations: (papercraft.annotations || []).map(a => ({ ...a }))
             }
         };
     } catch (err) {
@@ -3052,6 +3450,11 @@ async function loadProjectNSP(fileOrData, silent = false) {
                         Object.assign(part.layout, pl.layout);
                     }
                 });
+            }
+
+            if (pp.annotations && Array.isArray(pp.annotations)) {
+                papercraft.annotations = pp.annotations.map(a => ({ ...a }));
+                if (typeof updateAnnotationUI === 'function') updateAnnotationUI();
             }
         }
 
@@ -3584,6 +3987,14 @@ window.addEventListener('keydown', (e) => {
         }
     }
     if (e.key === 'Delete' || e.key === 'Del' || e.key === 'Backspace') {
+        if (papercraft && papercraft.active && papercraft.selectedAnnotation) {
+            e.preventDefault();
+            papercraft.removeAnnotation(papercraft.selectedAnnotation.id);
+            papercraft.selectedAnnotation = null;
+            if (typeof updateAnnotationUI === 'function') updateAnnotationUI();
+            if (typeof renderUnfoldWorkbench === 'function') renderUnfoldWorkbench();
+            return;
+        }
         if (selectionManager.active) {
             selectionManager.deleteContent(layerManager);
             if (painter) {

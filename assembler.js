@@ -898,6 +898,10 @@ export class ModelAssembler {
                         }
                     }
                 }
+                // PASADA 1.5: Dibujar anotaciones de la hoja s
+                if (window.papercraft && typeof window.papercraft.drawAnnotationsOnCanvas === 'function') {
+                    window.papercraft.drawAnnotationsOnCanvas(ctx, s, pageX_px, 0, mmToPx);
+                }
             }
 
             // PASADA 2: Dibujar pieza seleccionada en primer plano con sus cotas de selección
@@ -916,6 +920,18 @@ export class ModelAssembler {
             // PASADA 3: Dibujar medición interactiva de la Regla (si está activa)
             if (window.papercraft && typeof window.papercraft.drawMeasurementOnCanvas === 'function') {
                 window.papercraft.drawMeasurementOnCanvas(ctx, mmToPx);
+            }
+
+            // PASADA 4: Dibujar anotación seleccionada con handles y preview de flecha
+            if (window.papercraft && typeof window.papercraft.drawAnnotationOnCanvas === 'function' && window.papercraft.selectedAnnotation) {
+                const selAnn = window.papercraft.selectedAnnotation;
+                const pageX_px = (selAnn.pageIndex || 0) * pagePitchMm * mmToPx;
+                window.papercraft.drawAnnotationOnCanvas(ctx, selAnn, pageX_px, 0, mmToPx, true);
+            }
+            if (window.papercraft && typeof window.papercraft.drawArrowPreview === 'function' && window.papercraft.drawingArrow) {
+                const p = window.papercraft.drawingArrow.pageIndex || 0;
+                const pageX_px = p * pagePitchMm * mmToPx;
+                window.papercraft.drawArrowPreview(ctx, window.papercraft.drawingArrow, pageX_px, 0, mmToPx);
             }
 
             ctx.restore();

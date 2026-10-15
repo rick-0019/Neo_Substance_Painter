@@ -72,6 +72,14 @@
     "isUser": false
   },
   {
+    "id": "insignias_path2",
+    "name": "Path2",
+    "category": "insignias",
+    "src": "./calcas/insignias/path2.png",
+    "filename": "path2.png",
+    "isUser": false
+  },
+  {
     "id": "avisos_armament",
     "name": "Armament (Bahía de Armas)",
     "category": "avisos",
@@ -168,19 +176,19 @@
     "isUser": false
   },
   {
+    "id": "mecanica_valvula-circulo-2",
+    "name": "Valvula Circulo 2",
+    "category": "mecanica",
+    "src": "./calcas/mecanica/valvula-circulo-2.png",
+    "filename": "valvula-circulo-2.png",
+    "isUser": false
+  },
+  {
     "id": "mecanica_valvula-circulo",
     "name": "Válvula / Tapa Presión",
     "category": "mecanica",
     "src": "./calcas/mecanica/valvula-circulo.png",
     "filename": "valvula-circulo.png",
     "isUser": false
-  },
-  {
-    "id": "mis_calcas_valvula-circulo-2",
-    "name": "Valvula Circulo 2",
-    "category": "mis_calcas",
-    "src": "./calcas/mis_calcas/valvula-circulo-2.png",
-    "filename": "valvula-circulo-2.png",
-    "isUser": true
   }
 ]

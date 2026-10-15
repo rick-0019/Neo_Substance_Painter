@@ -1183,7 +1183,7 @@ export class DecalSystem {
 
         window.addEventListener('keydown', (e) => {
             if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
-            if (this.isActive && this.mode === '2d' && this.selectedDecalId) {
+            if (this.isActive && this.selectedDecalId) {
                 if (e.key === 'Delete' || e.key === 'Backspace') {
                     this.deleteSelectedDecal();
                     e.preventDefault();
@@ -1962,10 +1962,10 @@ export class DecalSystem {
 
         if (preferredMode) {
             this.mode = preferredMode;
-        } else if (decal.mode) {
-            this.mode = decal.mode;
         } else if (this.mode) {
             this.mode = this.mode;
+        } else if (decal.mode) {
+            this.mode = decal.mode;
         } else {
             this.mode = '2d';
         }
@@ -2428,15 +2428,62 @@ export class DecalSystem {
         const cur = activeLayer.getDecal(this.selectedDecalId);
         if (!cur) return;
 
+        // Determinar el modo de trabajo activo (si estamos en vista 2D o la calca es 2D, mantener 2D)
+        const currentMode = (this.mode === '2d' || cur.mode === '2d') ? '2d' : (this.mode || cur.mode || '2d');
+
+        // Clonado profundo e independiente: JAMÁS compartir canvas ni referencias mutables
         const clone = {
             ...cur,
             id: 'decal_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
             name: cur.name + ' (copia)',
             x: cur.x + 25,
-            y: cur.y + 25
+            y: cur.y + 25,
+            mode: currentMode,
+            flipH: !!cur.flipH,
+            flipV: !!cur.flipV,
+            unwrappedCanvas: null,
+            unwrappedCtx: null,
+            shapeOptions: cur.shapeOptions ? JSON.parse(JSON.stringify(cur.shapeOptions)) : null,
+            textOptions: cur.textOptions ? { ...cur.textOptions } : null,
+            projectorPosition: cur.projectorPosition ? cur.projectorPosition.clone() : null,
+            projectorNormal: cur.projectorNormal ? cur.projectorNormal.clone() : null,
+            surfaceTangent: cur.surfaceTangent ? cur.surfaceTangent.clone() : null
         };
+
+        if (currentMode === '3d' && this.mesh && this.canvas) {
+            const u = clone.x / this.canvas.width;
+            const v = 1 - (clone.y / this.canvas.height);
+            const pt3D = this.find3DPointFromUV(u, v);
+            if (pt3D) {
+                clone.projectorPosition = pt3D.point.clone();
+                clone.projectorNormal = pt3D.normal.clone();
+                if (pt3D.tangent) clone.surfaceTangent = pt3D.tangent.clone();
+            }
+        }
+
         activeLayer.addDecal(clone);
-        this.selectDecal(clone);
+        this.selectDecal(clone, currentMode);
+
+        if (currentMode === '3d') {
+            this._doUpdatePreviewTransform();
+            this.update3DUnwrapForDecal(clone, true);
+        } else {
+            this.syncCurrentDecalToObject(true);
+            this.render2DPreview();
+        }
+
+        if (this.layerManager) {
+            this.layerManager.recomposite();
+            this.layerManager.renderUI();
+        }
+        if (this.painter) {
+            this.painter.needsUpdate = true;
+            this.painter.forceUpdate = true;
+            this.painter.uiNeedsUpdate = true;
+        }
+        if (this.texture) {
+            this.texture.needsUpdate = true;
+        }
     }
 
     deleteSelectedDecal() {
@@ -3594,6 +3641,9 @@ export class DecalSystem {
             const isForceMove = e.altKey || e.spaceKey;
             const hit = isForceMove ? 'move' : this.hitTest2D(x, y);
             if (hit) {
+                if (this.mode !== '2d') {
+                    this.setMode('2d');
+                }
                 this.decal2D.isDragging = true;
                 this.decal2D.dragHandle = hit;
                 this.decal2D.dragOffset = { x: x - this.decal2D.x, y: y - this.decal2D.y };
@@ -3611,8 +3661,8 @@ export class DecalSystem {
         // 2. Buscar si se hizo clic sobre una pegatina o contenedor (priorizando la calca superior bajo el cursor)
         const clickedDecal = this.findDecalAt(x, y);
         if (clickedDecal) {
-            if (clickedDecal.id !== this.selectedDecalId) {
-                this.selectDecal(clickedDecal);
+            if (clickedDecal.id !== this.selectedDecalId || this.mode !== '2d') {
+                this.selectDecal(clickedDecal, '2d');
             }
             this.decal2D.isDragging = true;
             this.decal2D.dragHandle = 'move';
@@ -4245,21 +4295,42 @@ export class DecalSystem {
     }
 
     toggleFlipH() {
-        if (!this.isActive) return;
-        if (this.decal2D) {
-            this.decal2D.flipH = !this.decal2D.flipH;
-        }
+        if (!this.isActive || !this.selectedDecalId) return;
         const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-        const decal = (activeLayer && this.selectedDecalId) ? activeLayer.getDecal(this.selectedDecalId) : null;
-        if (decal) {
-            decal.flipH = this.decal2D ? !!this.decal2D.flipH : !decal.flipH;
-            if (decal.mode === '3d') {
-                this.update3DUnwrapForDecal(decal, true);
-            }
+        const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+        if (!decal) return;
+
+        const newFlip = !decal.flipH;
+        decal.flipH = newFlip;
+        if (this.decal2D) {
+            this.decal2D.flipH = newFlip;
         }
+
+        const is2D = (this.mode === '2d' || decal.mode === '2d');
+        if (is2D) {
+            this.mode = '2d';
+            decal.mode = '2d';
+            decal.unwrappedCanvas = null;
+            decal.unwrappedCtx = null;
+            const btnMode3D = document.getElementById('btn-decal-mode-3d');
+            const btnMode2D = document.getElementById('btn-decal-mode-2d');
+            if (btnMode3D) btnMode3D.classList.toggle('active', false);
+            if (btnMode2D) btnMode2D.classList.toggle('active', true);
+        } else {
+            if (decal.projectorPosition) {
+                this.projectorPosition.copy(decal.projectorPosition);
+                if (decal.projectorNormal) this.projectorNormal.copy(decal.projectorNormal);
+                if (decal.surfaceTangent) this.surfaceTangent = decal.surfaceTangent.clone();
+            }
+            this._doUpdatePreviewTransform();
+            this.update3DUnwrapForDecal(decal, true);
+        }
+
         this.syncCurrentDecalToObject(true);
         this.updateFlipUI();
-        this.render2DPreview();
+        if (this.mode === '2d') {
+            this.render2DPreview();
+        }
         if (this.layerManager) {
             this.layerManager.recomposite();
             this.layerManager.renderUI();
@@ -4275,21 +4346,42 @@ export class DecalSystem {
     }
 
     toggleFlipV() {
-        if (!this.isActive) return;
-        if (this.decal2D) {
-            this.decal2D.flipV = !this.decal2D.flipV;
-        }
+        if (!this.isActive || !this.selectedDecalId) return;
         const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-        const decal = (activeLayer && this.selectedDecalId) ? activeLayer.getDecal(this.selectedDecalId) : null;
-        if (decal) {
-            decal.flipV = this.decal2D ? !!this.decal2D.flipV : !decal.flipV;
-            if (decal.mode === '3d') {
-                this.update3DUnwrapForDecal(decal, true);
-            }
+        const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+        if (!decal) return;
+
+        const newFlip = !decal.flipV;
+        decal.flipV = newFlip;
+        if (this.decal2D) {
+            this.decal2D.flipV = newFlip;
         }
+
+        const is2D = (this.mode === '2d' || decal.mode === '2d');
+        if (is2D) {
+            this.mode = '2d';
+            decal.mode = '2d';
+            decal.unwrappedCanvas = null;
+            decal.unwrappedCtx = null;
+            const btnMode3D = document.getElementById('btn-decal-mode-3d');
+            const btnMode2D = document.getElementById('btn-decal-mode-2d');
+            if (btnMode3D) btnMode3D.classList.toggle('active', false);
+            if (btnMode2D) btnMode2D.classList.toggle('active', true);
+        } else {
+            if (decal.projectorPosition) {
+                this.projectorPosition.copy(decal.projectorPosition);
+                if (decal.projectorNormal) this.projectorNormal.copy(decal.projectorNormal);
+                if (decal.surfaceTangent) this.surfaceTangent = decal.surfaceTangent.clone();
+            }
+            this._doUpdatePreviewTransform();
+            this.update3DUnwrapForDecal(decal, true);
+        }
+
         this.syncCurrentDecalToObject(true);
         this.updateFlipUI();
-        this.render2DPreview();
+        if (this.mode === '2d') {
+            this.render2DPreview();
+        }
         if (this.layerManager) {
             this.layerManager.recomposite();
             this.layerManager.renderUI();
