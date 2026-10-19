@@ -218,9 +218,52 @@ window.alert = function(msg) {
     showAppModal({ message: msg, type: 'alert' });
 };
 
+export function resetToBlankSheetMesh() {
+    if (state.mesh) {
+        scene.remove(state.mesh);
+        state.mesh.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                else child.material.dispose();
+            }
+        });
+    }
+
+    // Hoja plana 3D limpia (representa el lienzo/hoja de trabajo en blanco)
+    const sheetGeo = new THREE.PlaneGeometry(2.5, 2.5);
+    const sheetMat = new THREE.MeshBasicMaterial({ 
+        map: state.texture,
+        side: THREE.DoubleSide
+    });
+    const sheetMesh = new THREE.Mesh(sheetGeo, sheetMat);
+
+    // Contorno sutil que enmarca la hoja de trabajo en el espacio 3D
+    const edges = new THREE.EdgesGeometry(sheetGeo);
+    const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x555555, opacity: 0.5, transparent: true }));
+    line.userData = { isWireframeOverlay: true };
+    sheetMesh.add(line);
+
+    sheetMesh.visible = true;
+    state.mesh = sheetMesh;
+    state.rawOBJText = null;
+    scene.add(state.mesh);
+
+    if (window.painter) window.painter.setMesh(state.mesh);
+    if (window.decalSystem) window.decalSystem.setMesh(state.mesh);
+    if (typeof setupSelection3DOverlay === 'function') {
+        setupSelection3DOverlay(state.mesh);
+    }
+
+    if (typeof frameModel === 'function') {
+        frameModel(state.mesh);
+    }
+}
+window.resetToBlankSheetMesh = resetToBlankSheetMesh;
+
 export function createNewProject(promptUser = true) {
     if (promptUser) {
-        showAppConfirm('¿Crear un nuevo archivo? Se descartarán los cambios no guardados y se reiniciarán las 4 capas estándar (Calcas, Panelado, Color Base y Fondo Blanco).', {
+        showAppConfirm('¿Crear un nuevo archivo? Se descartarán los cambios no guardados y se reiniciará el proyecto en una hoja en blanco con las 4 capas estándar.', {
             title: 'Nuevo Proyecto',
             confirmText: 'Crear Nuevo',
             onConfirm: () => doCreateNewProject()
@@ -231,7 +274,7 @@ export function createNewProject(promptUser = true) {
 }
 
 function doCreateNewProject() {
-
+    // 1. Deseleccionar herramientas activas
     if (window.decalSystem) {
         window.decalSystem.deselectDecal();
     }
@@ -249,6 +292,67 @@ function doCreateNewProject() {
         window.painter.updateUndoRedoUI();
     }
 
+    // 2. Desactivar y limpiar el Ensamblador por completo
+    if (window.modelAssembler) {
+        if (window.modelAssembler.is3DMode) {
+            window.modelAssembler.set3DMode(false);
+        }
+        window.modelAssembler.clearAllPieces();
+        window.modelAssembler.activePieceId = null;
+        window.modelAssembler.editorLoadedPieceId = null;
+        window.modelAssembler.updateActivePieceSelectors();
+        window.modelAssembler.renderUI();
+    }
+    const titleBadge = document.getElementById('title-bar-active-piece');
+    if (titleBadge) {
+        titleBadge.textContent = '';
+        titleBadge.style.display = 'none';
+    }
+    const assemblerBadge = document.getElementById('assembler-viewport-badge');
+    if (assemblerBadge) {
+        assemblerBadge.style.display = 'none';
+    }
+    const label2d = document.getElementById('view-2d-label');
+    if (label2d) {
+        label2d.textContent = 'Vista 2D (UV)';
+    }
+
+    // 3. Resetear modo Unfold y motor Papercraft (descartar piezas y marcas viejas)
+    if (typeof window.setUnfoldMode === 'function') {
+        window.setUnfoldMode(false);
+    }
+    if (typeof window.switchSidebarTab === 'function') {
+        window.switchSidebarTab('layers');
+    }
+    if (window.papercraft) {
+        window.papercraft.active = false;
+        window.papercraft.parts = [];
+        window.papercraft.pagesCount = 1;
+        window.papercraft.modelLengthMm = null;
+        window.papercraft.baseModelLengthMm = null;
+        window.papercraft.scalePct = 100.0;
+        window.papercraft.currentScale = '1:1';
+        window.papercraft.raw3dSize = null;
+        window.papercraft.annotations = [];
+        window.papercraft.selectedAnnotation = null;
+        if (typeof window.updatePapercraftUI === 'function') {
+            window.updatePapercraftUI();
+        }
+    }
+
+    // 4. Limpiar almacenamiento en memoria local
+    state.rawOBJText = null;
+    window.currentProjectFileName = 'Sin título';
+    window.currentProjectFileType = 'nsp';
+    try {
+        localStorage.removeItem('nsp_last_model_obj');
+        localStorage.removeItem('nsp_last_project');
+    } catch (e) {}
+
+    // 5. Restablecer la malla 3D a una Hoja en Blanco
+    resetToBlankSheetMesh();
+
+    // 6. Reiniciar capas a las 4 capas estándar con fondo blanco limpio
     layerManager.resetToDefaultLayers();
     layerManager.renderUI();
 
@@ -262,12 +366,11 @@ function doCreateNewProject() {
     if (window.decalSystem && window.decalSystem.texture) {
         window.decalSystem.texture.needsUpdate = true;
     }
-    if (window.papercraft && window.papercraft.active && window.renderUnfoldWorkbench) {
-        window.renderUnfoldWorkbench();
-    }
 
+    // 7. Limpiar UV Wireframe en 2D (hoja totalmente limpia)
     drawUVWireframe();
 
+    // 8. Título de la app
     updateAppTitle('Sin título', 'nsp', false);
 
     const paintFileDropdown = document.getElementById('paint-file-dropdown');
@@ -425,8 +528,8 @@ textureUI.magFilter = THREE.LinearFilter;
 textureUI.generateMipmaps = false;
 state.textureUI = textureUI;
 
-// Material por defecto (Cubo inicial)
-const defaultGeo = new THREE.BoxGeometry(2, 2, 2);
+// Geometría por defecto: Hoja en Blanco limpia
+const defaultGeo = new THREE.PlaneGeometry(2.5, 2.5);
 const defaultMat = new THREE.MeshBasicMaterial({ 
     map: state.texture,
     side: THREE.DoubleSide
@@ -434,7 +537,7 @@ const defaultMat = new THREE.MeshBasicMaterial({
 state.mesh = new THREE.Mesh(defaultGeo, defaultMat);
 
 const edges = new THREE.EdgesGeometry(defaultGeo);
-const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.2, transparent: true }));
+const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x555555, opacity: 0.5, transparent: true }));
 line.userData = { isWireframeOverlay: true };
 state.mesh.add(line);
 scene.add(state.mesh);
@@ -942,15 +1045,7 @@ function loadOBJContents(contents, mtlContents = null) {
             window.currentProjectFileName = 'Modelo 3D';
         }
         updateAppTitle(window.currentProjectFileName, window.currentProjectFileType || 'obj', false);
-        
-        // Comprobar si las coordenadas UV vienen superpuestas en el OBJ original
-        if (papercraft.checkMeshUVOverlaps(state.mesh)) {
-            console.log('[Papercraft] Se detectaron islas UV superpuestas. Empaquetando UVs para evitar encimamiento...');
-            const packRes = papercraft.packMeshUVs(state.mesh, 0.025);
-            if (packRes.success && painter) {
-                painter.buildTrianglesCache();
-            }
-        }
+        // Preservar exactamente el mapeo UV original del modelo (desde Blender) sin alterarlo
         
         // Analizar topología Papercraft (separación de piezas y auto-acomodo en hojas A4)
         papercraft.baseModelLengthMm = null;
@@ -1034,19 +1129,15 @@ function fetchDefaultModel() {
         });
 }
 
-// Cargar modelo al iniciar: si hay un modelo guardado en memoria (ej. Raidar-X), restaurarlo; si no, buscar Raidar-X.obj
+// Cargar modelo al iniciar si hay un modelo guardado en memoria de la sesión
 const lastSavedOBJ = localStorage.getItem('nsp_last_model_obj');
 if (lastSavedOBJ) {
     try {
         loadOBJContents(lastSavedOBJ);
     } catch (e) {
         console.warn('Error al restaurar modelo previo de localStorage:', e);
+        resetToBlankSheetMesh();
     }
-}
-
-if (!state.mesh) {
-    localStorage.removeItem('nsp_last_model_obj');
-    fetchDefaultModel();
 }
 
 // Eventos del Panel Lateral (Tabs: Capas vs Unfold)
@@ -4409,7 +4500,7 @@ function getMeshUVEdges(mesh) {
 // UV Wireframe & Papercraft Draw Logic
 function drawUVWireframe() {
     ctxUV.clearRect(0, 0, canvasUV.width, canvasUV.height);
-    if (!state.mesh) return;
+    if (!state.mesh || !state.rawOBJText) return;
 
     // Si el modo Papercraft está activo, dibujar vista técnica Papercraft (solapas, líneas limpias y A4)
     if (window.papercraft && window.papercraft.active) {

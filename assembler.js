@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { PapercraftEngine } from './papercraft.js?v=7.0';
+import { PapercraftEngine } from './papercraft.js?v=9.1';
 
 export class ModelAssembler {
     constructor() {
@@ -16,6 +16,11 @@ export class ModelAssembler {
         this.is3DMode = false;
         this.includeCover = true;
         this.albumTitle = 'Super VF-1 Valkyrie';
+        
+        // Estado estandarizado de escala global y unidades OBJ (sincronizado con editor principal)
+        this.globalScalePct = 100 / 33; // 3.0303% (Escala estándar 1:33 del proyecto)
+        this.globalScalePreset = '1:33';
+        this.globalObjUnit = 'm'; // Metros estándar desde Blender
         
         this.initDOM();
         this.setupEvents();
@@ -83,14 +88,30 @@ export class ModelAssembler {
                         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px;">
                             <div style="display: flex; align-items: center; gap: 6px; padding: 3px 8px; background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 4px;">
                                 <span style="color: #00e5ff; font-weight: bold; font-size: 11px;">🌐 Escala Global:</span>
-                                <input type="number" id="assembler-global-scale-input" value="100" min="5" max="1000" step="5" style="width: 50px; background: #111; border: 1px solid #555; color: #fff; font-size: 11px; padding: 2px 4px; border-radius: 3px; text-align: center;">
+                                <select id="assembler-scale-preset" style="background: #111; border: 1px solid #555; color: #fff; font-size: 11px; padding: 2px 4px; border-radius: 3px; cursor: pointer;" title="Seleccionar escala estandarizada">
+                                    <option value="1:33" selected>1:33 (Valkyrie)</option>
+                                    <option value="1:24">1:24 (Auto / Gran Escala)</option>
+                                    <option value="1:48">1:48 (Aviación Intermedia)</option>
+                                    <option value="1:72">1:72 (Modelismo Compacto)</option>
+                                    <option value="1:10">1:10 (Gran Formato)</option>
+                                    <option value="1:1">1:1 (Escala Real 100%)</option>
+                                    <option value="custom">Personalizada...</option>
+                                </select>
+                                <input type="number" id="assembler-global-scale-input" value="3.0" min="0.1" max="100000" step="0.1" style="width: 52px; background: #111; border: 1px solid #555; color: #fff; font-size: 11px; padding: 2px 4px; border-radius: 3px; text-align: center;">
                                 <span style="color: #888; font-size: 10px;">%</span>
                                 <button type="button" id="btn-assembler-scale-apply" class="ribbon-btn" style="background: #00838f; border-color: #00e5ff; font-size: 11px; padding: 2px 8px;" title="Aplicar escala a todas las piezas">Aplicar</button>
-                                <div style="display: flex; gap: 2px;">
-                                    <button type="button" class="btn-assembler-quick-scale" data-pct="20" style="background: #222; border: 1px solid #444; color: #ccc; font-size: 10px; padding: 1px 5px; border-radius: 3px; cursor: pointer;">20%</button>
-                                    <button type="button" class="btn-assembler-quick-scale" data-pct="50" style="background: #222; border: 1px solid #444; color: #ccc; font-size: 10px; padding: 1px 5px; border-radius: 3px; cursor: pointer;">50%</button>
-                                    <button type="button" class="btn-assembler-quick-scale" data-pct="75" style="background: #222; border: 1px solid #444; color: #ccc; font-size: 10px; padding: 1px 5px; border-radius: 3px; cursor: pointer;">75%</button>
-                                    <button type="button" class="btn-assembler-quick-scale" data-pct="100" style="background: #222; border: 1px solid #444; color: #00e5ff; font-weight: bold; font-size: 10px; padding: 1px 5px; border-radius: 3px; cursor: pointer;">100%</button>
+                                <span style="color: #555; margin: 0 2px;">|</span>
+                                <span style="color: #aaa; font-size: 10.5px;">Unidad:</span>
+                                <select id="assembler-obj-unit" style="background: #111; border: 1px solid #555; color: #00e5ff; font-size: 11px; padding: 2px 4px; border-radius: 3px; cursor: pointer;" title="Unidad de medida 3D exportada de Blender">
+                                    <option value="m" selected>Metros (m x1000)</option>
+                                    <option value="mm">Milímetros (mm x1)</option>
+                                    <option value="cm">Centímetros (cm x10)</option>
+                                </select>
+                                <div style="display: flex; gap: 2px; margin-left: 4px;">
+                                    <button type="button" class="btn-assembler-quick-scale" data-preset="1:33" data-pct="3.03" style="background: #222; border: 1px solid #00e5ff; color: #00e5ff; font-weight: bold; font-size: 10px; padding: 1px 5px; border-radius: 3px; cursor: pointer;" title="Escala 1:33 (~3.03%)">1:33</button>
+                                    <button type="button" class="btn-assembler-quick-scale" data-preset="custom" data-pct="20" style="background: #222; border: 1px solid #444; color: #ccc; font-size: 10px; padding: 1px 5px; border-radius: 3px; cursor: pointer;">20%</button>
+                                    <button type="button" class="btn-assembler-quick-scale" data-preset="custom" data-pct="50" style="background: #222; border: 1px solid #444; color: #ccc; font-size: 10px; padding: 1px 5px; border-radius: 3px; cursor: pointer;">50%</button>
+                                    <button type="button" class="btn-assembler-quick-scale" data-preset="1:1" data-pct="100" style="background: #222; border: 1px solid #444; color: #ccc; font-size: 10px; padding: 1px 5px; border-radius: 3px; cursor: pointer;" title="Escala Real 1:1 (100%)">100%</button>
                                 </div>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
@@ -255,20 +276,45 @@ export class ModelAssembler {
         const globalScaleInput = document.getElementById('assembler-global-scale-input');
         const applyGlobalScaleBtn = document.getElementById('btn-assembler-scale-apply');
         applyGlobalScaleBtn?.addEventListener('click', () => {
-            const val = parseFloat(globalScaleInput?.value) || 100;
+            const val = parseFloat(globalScaleInput?.value) || (100 / 33);
             this.applyGlobalScale(val);
         });
         globalScaleInput?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
-                const val = parseFloat(globalScaleInput?.value) || 100;
+                const val = parseFloat(globalScaleInput?.value) || (100 / 33);
                 this.applyGlobalScale(val);
             }
         });
+
+        // Selector de Preset en modal
+        document.getElementById('assembler-scale-preset')?.addEventListener('change', (e) => {
+            const preset = e.target.value;
+            if (preset === 'custom') return;
+            let factor = 1.0;
+            if (preset === '1:1') factor = 1.0;
+            else if (preset === '1:10') factor = 1 / 10;
+            else if (preset === '1:33') factor = 1 / 33;
+            else if (preset === '1:24') factor = 1 / 24;
+            else if (preset === '1:48') factor = 1 / 48;
+            else if (preset === '1:72') factor = 1 / 72;
+
+            const newPct = Math.round(factor * 10000) / 100;
+            this.applyGlobalScale(newPct, preset);
+        });
+
+        // Selector de Unidad OBJ en modal
+        document.getElementById('assembler-obj-unit')?.addEventListener('change', (e) => {
+            this.applyGlobalUnit(e.target.value);
+        });
+
+        // Botones de escala rápida
         document.querySelectorAll('.btn-assembler-quick-scale').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                const pct = parseFloat(e.currentTarget.getAttribute('data-pct')) || 100;
-                if (globalScaleInput) globalScaleInput.value = pct;
-                this.applyGlobalScale(pct);
+                const target = e.currentTarget;
+                const preset = target.getAttribute('data-preset');
+                let pct = parseFloat(target.getAttribute('data-pct'));
+                if (preset === '1:33') pct = 100 / 33;
+                this.applyGlobalScale(pct, preset !== 'custom' ? preset : null);
             });
         });
 
@@ -339,10 +385,54 @@ export class ModelAssembler {
         }
     }
 
+    syncModalScaleControls() {
+        const scaleInput = document.getElementById('assembler-global-scale-input');
+        if (scaleInput && this.globalScalePct !== null && this.globalScalePct !== undefined) {
+            scaleInput.value = Math.round(this.globalScalePct * 100) / 100;
+        }
+
+        const presetSel = document.getElementById('assembler-scale-preset');
+        if (presetSel && this.globalScalePreset) {
+            presetSel.value = this.globalScalePreset;
+        }
+
+        const unitSel = document.getElementById('assembler-obj-unit');
+        if (unitSel && this.globalObjUnit) {
+            unitSel.value = this.globalObjUnit;
+        }
+
+        // Resaltar botón de escala rápida activo
+        document.querySelectorAll('.btn-assembler-quick-scale').forEach(b => {
+            const bPct = parseFloat(b.getAttribute('data-pct'));
+            const bPreset = b.getAttribute('data-preset');
+            const isMatch = (bPreset && bPreset !== 'custom' && bPreset === this.globalScalePreset) ||
+                (Math.abs(bPct - (this.globalScalePct || 0)) < 0.1);
+            if (isMatch) {
+                b.style.color = '#00e5ff';
+                b.style.fontWeight = 'bold';
+                b.style.borderColor = '#00e5ff';
+            } else {
+                b.style.color = '#ccc';
+                b.style.fontWeight = 'normal';
+                b.style.borderColor = '#444';
+            }
+        });
+    }
+
     openModal() {
+        // Sincronizar parámetros con el editor si aún no hay escala definida o si no hay piezas
+        if (window.papercraft) {
+            if (this.pieces.length === 0) {
+                if (window.papercraft.objUnit) this.globalObjUnit = window.papercraft.objUnit;
+                if (window.papercraft.scalePct !== undefined) this.globalScalePct = window.papercraft.scalePct;
+                if (window.papercraft.currentScale) this.globalScalePreset = window.papercraft.currentScale;
+            }
+        }
+
         const modal = document.getElementById('modal-assembler');
         if (modal) {
             modal.classList.remove('hidden');
+            this.syncModalScaleControls();
             this.renderUI();
         }
     }
@@ -383,21 +473,18 @@ export class ModelAssembler {
                 if (badgeCount) badgeCount.textContent = this.pieces.filter(p => p.visible).length;
             }
 
-            // Asegurar que cada pieza del ensamble tenga su textura propia
-            this.pieces.forEach(p => {
-                if (p.mesh && p.texture) {
-                    p.mesh.traverse(child => {
-                        if (child.isMesh) {
-                            child.material.map = p.texture;
-                            child.material.needsUpdate = true;
-                        }
-                    });
-                }
-            });
+            // Sincronizar texturas: activa conectada a canvas-2d (state.texture) en vivo, inactivas con p.texture
+            this.updateAssemblyMaterials();
+            this.syncActiveMeshTools();
 
             // Si hay piezas pero ninguna está activa, activar la primera
             if (this.pieces.length > 0 && !this.activePieceId) {
                 this.setActivePiece(this.pieces[0].id, true);
+            }
+
+            // Forzar actualización inmediata de la textura activa
+            if (window.state?.texture) {
+                window.state.texture.needsUpdate = true;
             }
 
             // Encuadrar la cámara en todo el ensamble
@@ -405,9 +492,14 @@ export class ModelAssembler {
                 window.frameModel(this.group);
             }
         } else {
+            // Guardar cambios de la pieza activa a su respaldo
+            this.saveActivePieceToCache();
+
             // Restaurar modelo del editor individual
             if (window.state?.mesh) {
                 window.state.mesh.visible = true;
+                if (window.painter) window.painter.setMesh(window.state.mesh);
+                if (window.decalSystem) window.decalSystem.setMesh(window.state.mesh);
                 if (typeof window.frameModel === 'function') {
                     window.frameModel(window.state.mesh);
                 }
@@ -420,6 +512,45 @@ export class ModelAssembler {
         // Actualizar la mesa de trabajo 2D (Unfold Workbench)
         if (typeof window.renderUnfoldWorkbench === 'function') {
             window.renderUnfoldWorkbench();
+        }
+    }
+
+    /**
+     * Sincroniza los mapas de textura de todas las piezas en el ensamble 3D:
+     * - La pieza ACTIVA se conecta DIRECTAMENTE a window.state.texture (ligada al lienzo en vivo canvas-2d)
+     *   para que TODO cambio en 2D (dibujo, pinceladas, texto, formas, pegatinas/calcas)
+     *   se refleje instantáneamente en el acto en el modelo 3D.
+     * - Las piezas inactivas conservan su propio p.texture independiente para que sus texturas no se mezclen.
+     */
+    updateAssemblyMaterials() {
+        this.pieces.forEach(p => {
+            if (p.mesh) {
+                const isPieceActive = (p.id === this.activePieceId);
+                const targetTex = (isPieceActive && window.state?.texture) 
+                    ? window.state.texture 
+                    : p.texture;
+
+                p.mesh.traverse(child => {
+                    if (child.isMesh && child.material) {
+                        if (child.material.map !== targetTex) {
+                            child.material.map = targetTex;
+                        }
+                        child.material.needsUpdate = true;
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Conecta las herramientas 3D (painter y decalSystem) a la malla de la pieza activa
+     */
+    syncActiveMeshTools() {
+        if (!this.is3DMode) return;
+        const activePiece = this.pieces.find(p => p.id === this.activePieceId);
+        if (activePiece && activePiece.mesh) {
+            if (window.painter) window.painter.setMesh(activePiece.mesh);
+            if (window.decalSystem) window.decalSystem.setMesh(activePiece.mesh);
         }
     }
 
@@ -523,6 +654,10 @@ export class ModelAssembler {
         ctx.clearRect(0, 0, piece.textureCanvas.width, piece.textureCanvas.height);
         ctx.drawImage(canvas2d, 0, 0, piece.textureCanvas.width, piece.textureCanvas.height);
         if (piece.texture) piece.texture.needsUpdate = true;
+        if (window.state?.texture) window.state.texture.needsUpdate = true;
+        if (this.is3DMode) {
+            this.updateAssemblyMaterials();
+        }
     }
 
     /**
@@ -548,37 +683,70 @@ export class ModelAssembler {
             titleBadge.style.display = 'inline-flex';
         }
 
+        this.editorLoadedPieceId = id;
+
         // Cargar en el editor principal silenciosamente (sin alerts ni prompts)
         if (piece.projectData && typeof window.loadProjectNSP === 'function') {
             await window.loadProjectNSP(piece.projectData, true);
         } else if (piece.rawOBJText && typeof window.loadOBJContents === 'function') {
             window.loadOBJContents(piece.rawOBJText);
-            const mainCanvas = document.getElementById('canvas-2d');
-            if (mainCanvas && piece.textureCanvas) {
-                const ctx = mainCanvas.getContext('2d');
-                ctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
-                ctx.drawImage(piece.textureCanvas, 0, 0, mainCanvas.width, mainCanvas.height);
-                if (window.state?.texture) window.state.texture.needsUpdate = true;
+            if (window.layerManager) {
+                window.layerManager.resetToDefaultLayers();
+                if (piece.textureCanvas) {
+                    const bgLayer = window.layerManager.layers.find(l => l.isBackground) || window.layerManager.layers[0];
+                    if (bgLayer && bgLayer.ctx) {
+                        bgLayer.ctx.clearRect(0, 0, bgLayer.width, bgLayer.height);
+                        bgLayer.ctx.drawImage(piece.textureCanvas, 0, 0, bgLayer.width, bgLayer.height);
+                    }
+                }
+                window.layerManager.recomposite();
+                window.layerManager.renderUI();
+            }
+            if (typeof window.getProjectNSPData === 'function') {
+                const initProj = window.getProjectNSPData();
+                if (initProj) {
+                    initProj.modelOBJ = piece.rawOBJText;
+                    piece.projectData = initProj;
+                }
             }
         }
 
-        this.editorLoadedPieceId = id;
+        // Asegurar sincronización del modelo y nombre en la barra superior
+        if (piece.rawOBJText) {
+            window.state.rawOBJText = piece.rawOBJText;
+        }
+        window.currentProjectFileName = piece.name;
+        if (typeof window.updateAppTitle === 'function') {
+            window.updateAppTitle(piece.name, piece.fileType || 'obj', false);
+        }
 
         // Sincronizar parámetros de escala y layout de la pieza activa al motor del editor
         if (piece.papercraft && window.papercraft) {
+            const unit = piece.papercraft.objUnit || this.globalObjUnit || 'm';
+            window.papercraft.objUnit = unit;
+            window.papercraft.unitMultiplier = piece.papercraft.unitMultiplier || (unit === 'm' ? 1000.0 : (unit === 'cm' ? 10.0 : 1.0));
+
             if (piece.papercraft.baseModelLengthMm) window.papercraft.baseModelLengthMm = piece.papercraft.baseModelLengthMm;
             if (piece.papercraft.modelLengthMm) window.papercraft.modelLengthMm = piece.papercraft.modelLengthMm;
             if (piece.papercraft.scalePct !== undefined) window.papercraft.scalePct = piece.papercraft.scalePct;
             if (piece.papercraft.currentScale) window.papercraft.currentScale = piece.papercraft.currentScale;
             if (piece.papercraft.pagesCount) window.papercraft.pagesCount = piece.papercraft.pagesCount;
+            if (piece.papercraft.raw3dSize) window.papercraft.raw3dSize = piece.papercraft.raw3dSize;
 
-            if (piece.papercraft.parts && window.papercraft.parts) {
-                piece.papercraft.parts.forEach(srcPart => {
-                    const destPart = window.papercraft.parts.find(p => p.id === srcPart.id);
-                    if (destPart && srcPart.layout) {
-                        destPart.layout = { ...srcPart.layout };
-                    }
-                });
+            // Reemplazar completamente las piezas despiezadas con las de la pieza activa
+            if (piece.papercraft.parts) {
+                window.papercraft.parts = piece.papercraft.parts;
+            }
+
+            const unitSel = document.getElementById('unfold-obj-unit');
+            if (unitSel) unitSel.value = unit;
+
+            const presetSel = document.getElementById('unfold-scale-preset');
+            if (presetSel && piece.papercraft.currentScale) presetSel.value = piece.papercraft.currentScale;
+
+            const scaleInput = document.getElementById('unfold-scale-pct');
+            if (scaleInput && piece.papercraft.scalePct !== undefined) {
+                scaleInput.value = Math.round(piece.papercraft.scalePct * 10) / 10;
             }
 
             if (typeof window.updatePapercraftUI === 'function') {
@@ -592,23 +760,33 @@ export class ModelAssembler {
             label2d.textContent = `Vista 2D (UV) • Pieza Activa: ${piece.name}`;
         }
 
+        // Redibujar inmediatamente el mapa UV de la pieza activa en la vista 2D
+        if (typeof window.drawUVWireframe === 'function') {
+            window.drawUVWireframe();
+        }
+
         // Si estamos en modo 3D ensamblado, asegurar que state.mesh esté invisible para ver solo el ensamble
         if (this.is3DMode && window.state?.mesh) {
             window.state.mesh.visible = false;
         }
 
-        // En 3D: asegurar que CADA pieza del ensamble conserve su propia textura CanvasTexture independiente
-        // para que ninguna pieza se contamine con la textura de otra pieza.
-        this.pieces.forEach(p => {
-            if (p.mesh && p.texture) {
-                p.mesh.traverse(child => {
-                    if (child.isMesh) {
-                        child.material.map = p.texture;
-                        child.material.needsUpdate = true;
-                    }
-                });
-            }
-        });
+        // Sincronizar materiales en 3D: la pieza ACTIVA se conecta a window.state.texture (en vivo a 60 FPS)
+        // mientras las piezas inactivas mantienen su propio p.texture para no contaminarse.
+        if (this.is3DMode) {
+            this.updateAssemblyMaterials();
+            this.syncActiveMeshTools();
+        } else {
+            this.pieces.forEach(p => {
+                if (p.mesh && p.texture) {
+                    p.mesh.traverse(child => {
+                        if (child.isMesh && child.material) {
+                            child.material.map = p.texture;
+                            child.material.needsUpdate = true;
+                        }
+                    });
+                }
+            });
+        }
 
         // Sincronizar en caliente la textura de la pieza activa recién cargada
         this.syncActivePieceTexture();
@@ -625,21 +803,44 @@ export class ModelAssembler {
 
     /**
      * Aplica un escalado porcentual global sincronizado a TODAS las piezas ensambladas
-     * @param {number} scalePct Porcentaje de escala (ej. 20, 50, 100, 150)
+     * @param {number} scalePct Porcentaje de escala (ej. 3.0303 para 1:33, 100 para 1:1)
+     * @param {string} [presetName] Nombre del preset ('1:33', '1:24', '1:1', 'custom', etc.)
      */
-    applyGlobalScale(scalePct) {
-        const pct = Math.max(5, Math.min(1000, parseFloat(scalePct) || 100));
+    applyGlobalScale(scalePct, presetName = null) {
+        const pct = Math.max(0.1, Math.min(100000, parseFloat(scalePct) || (100 / 33)));
         this.globalScalePct = pct;
+
+        if (presetName) {
+            this.globalScalePreset = presetName;
+        } else {
+            if (Math.abs(pct - (100 / 33)) < 0.1 || Math.abs(pct - 3.03) < 0.1) this.globalScalePreset = '1:33';
+            else if (Math.abs(pct - (100 / 24)) < 0.1 || Math.abs(pct - 4.17) < 0.1) this.globalScalePreset = '1:24';
+            else if (Math.abs(pct - (100 / 48)) < 0.1 || Math.abs(pct - 2.08) < 0.1) this.globalScalePreset = '1:48';
+            else if (Math.abs(pct - (100 / 72)) < 0.1 || Math.abs(pct - 1.39) < 0.1) this.globalScalePreset = '1:72';
+            else if (Math.abs(pct - 10) < 0.1) this.globalScalePreset = '1:10';
+            else if (Math.abs(pct - 100) < 0.1) this.globalScalePreset = '1:1';
+            else this.globalScalePreset = 'custom';
+        }
+
+        const unit = this.globalObjUnit || window.papercraft?.objUnit || 'm';
+        const unitMult = unit === 'm' ? 1000.0 : (unit === 'cm' ? 10.0 : 1.0);
 
         // 1. Sincronizar todas las piezas en el ensamblador
         this.pieces.forEach(piece => {
             if (piece.papercraft) {
-                if (!piece.papercraft.baseModelLengthMm) {
-                    piece.papercraft.baseModelLengthMm = piece.papercraft.modelLengthMm || 200.0;
+                piece.papercraft.objUnit = unit;
+                piece.papercraft.unitMultiplier = unitMult;
+
+                const ref3d = piece.papercraft.raw3dSize?.ref3dLen;
+                if (ref3d && ref3d > 0.0001) {
+                    piece.papercraft.baseModelLengthMm = Math.max(0.1, Math.round(ref3d * unitMult * 10) / 10);
+                } else if (!piece.papercraft.baseModelLengthMm) {
+                    piece.papercraft.baseModelLengthMm = 200.0;
                 }
+
                 piece.papercraft.scalePct = pct;
-                piece.papercraft.currentScale = `${Math.round(pct)}%`;
-                const newLen = Math.max(1, piece.papercraft.baseModelLengthMm * (pct / 100));
+                piece.papercraft.currentScale = this.globalScalePreset !== 'custom' ? this.globalScalePreset : `${Math.round(pct * 10) / 10}%`;
+                const newLen = Math.max(0.1, piece.papercraft.baseModelLengthMm * (pct / 100));
                 piece.papercraft.setModelLength(newLen);
                 piece.papercraft.autoPackA4();
             }
@@ -647,37 +848,47 @@ export class ModelAssembler {
 
         // 2. Sincronizar el motor papercraft global del editor principal
         if (window.papercraft) {
-            if (!window.papercraft.baseModelLengthMm) {
-                window.papercraft.baseModelLengthMm = window.papercraft.modelLengthMm || 200.0;
+            window.papercraft.objUnit = unit;
+            window.papercraft.unitMultiplier = unitMult;
+
+            const ref3d = window.papercraft.raw3dSize?.ref3dLen;
+            if (ref3d && ref3d > 0.0001) {
+                window.papercraft.baseModelLengthMm = Math.max(0.1, Math.round(ref3d * unitMult * 10) / 10);
+            } else if (!window.papercraft.baseModelLengthMm) {
+                window.papercraft.baseModelLengthMm = 200.0;
             }
+
             window.papercraft.scalePct = pct;
-            window.papercraft.currentScale = `${Math.round(pct)}%`;
-            const newLen = Math.max(1, window.papercraft.baseModelLengthMm * (pct / 100));
+            window.papercraft.currentScale = this.globalScalePreset !== 'custom' ? this.globalScalePreset : `${Math.round(pct * 10) / 10}%`;
+            const newLen = Math.max(0.1, window.papercraft.baseModelLengthMm * (pct / 100));
             window.papercraft.setModelLength(newLen);
             window.papercraft.autoPackA4();
         }
 
-        // 3. Sincronizar campo en el modal del ensamblador
-        const globalScaleInput = document.getElementById('assembler-global-scale-input');
-        if (globalScaleInput) globalScaleInput.value = Math.round(pct);
+        // 3. Sincronizar controles en modal
+        this.syncModalScaleControls();
 
-        document.querySelectorAll('.btn-assembler-quick-scale').forEach(b => {
-            const bPct = parseFloat(b.getAttribute('data-pct'));
-            if (bPct === Math.round(pct)) {
-                b.style.color = '#00e5ff';
-                b.style.fontWeight = 'bold';
-                b.style.borderColor = '#00e5ff';
-            } else {
-                b.style.color = '#ccc';
-                b.style.fontWeight = 'normal';
-                b.style.borderColor = '#444';
-            }
-        });
+        // 4. Sincronizar controles en panel lateral Unfold
+        const editorPresetSel = document.getElementById('unfold-scale-preset');
+        if (editorPresetSel) editorPresetSel.value = this.globalScalePreset;
+        const editorScalePctInput = document.getElementById('unfold-scale-pct');
+        if (editorScalePctInput) editorScalePctInput.value = Math.round(pct * 10) / 10;
+        const editorUnitSel = document.getElementById('unfold-obj-unit');
+        if (editorUnitSel) editorUnitSel.value = unit;
 
         if (typeof window.updatePapercraftUI === 'function') window.updatePapercraftUI();
         if (typeof window.drawUVWireframe === 'function') window.drawUVWireframe();
         if (typeof window.renderUnfoldWorkbench === 'function') window.renderUnfoldWorkbench();
         this.renderUI();
+    }
+
+    /**
+     * Aplica una unidad de medida OBJ unificada (m, mm, cm) y recalcula escalas de todas las piezas
+     */
+    applyGlobalUnit(unit) {
+        this.globalObjUnit = unit;
+        const pct = this.globalScalePct || (100 / 33);
+        this.applyGlobalScale(pct, this.globalScalePreset);
     }
 
     /**
@@ -1008,45 +1219,55 @@ export class ModelAssembler {
 
         // 4. Instanciar y configurar su motor Papercraft individual
         const piecePapercraft = new PapercraftEngine();
-        if (project.papercraft) {
-            const pp = project.papercraft;
-            if (pp.baseModelLengthMm) piecePapercraft.baseModelLengthMm = pp.baseModelLengthMm;
-            if (pp.scalePct) piecePapercraft.scalePct = pp.scalePct;
-            if (pp.modelLengthMm) piecePapercraft.modelLengthMm = pp.modelLengthMm;
-            if (pp.scalePreset) piecePapercraft.currentScale = pp.scalePreset;
-            if (pp.showFlaps !== undefined) piecePapercraft.showFlaps = pp.showFlaps;
-            if (pp.tabHeightMm) piecePapercraft.tabHeightMm = pp.tabHeightMm;
-            if (pp.tabAngleDeg) piecePapercraft.tabAngleDeg = pp.tabAngleDeg;
-            if (pp.cutLineColor) piecePapercraft.cutLineColor = pp.cutLineColor;
-            if (pp.cutLineWidthMm) piecePapercraft.cutLineWidthMm = pp.cutLineWidthMm;
-            if (pp.foldLineColor) piecePapercraft.foldLineColor = pp.foldLineColor;
-            if (pp.foldLineWidthMm) piecePapercraft.foldLineWidthMm = pp.foldLineWidthMm;
-            if (pp.hideSmoothLines !== undefined) piecePapercraft.hideSmoothLines = pp.hideSmoothLines;
-            if (pp.showTabNumbers !== undefined) piecePapercraft.showTabNumbers = pp.showTabNumbers;
-            if (pp.numberPlacement) piecePapercraft.numberPlacement = pp.numberPlacement;
-        }
+        const pp = project.papercraft || {};
+        const ppUnit = pp.objUnit || this.globalObjUnit || window.papercraft?.objUnit || 'm';
+        piecePapercraft.objUnit = ppUnit;
+        piecePapercraft.unitMultiplier = ppUnit === 'm' ? 1000.0 : (ppUnit === 'cm' ? 10.0 : 1.0);
+
+        if (pp.baseModelLengthMm) piecePapercraft.baseModelLengthMm = pp.baseModelLengthMm;
+        if (pp.scalePct) piecePapercraft.scalePct = pp.scalePct;
+        if (pp.modelLengthMm) piecePapercraft.modelLengthMm = pp.modelLengthMm;
+        if (pp.scalePreset) piecePapercraft.currentScale = pp.scalePreset;
+        if (pp.showFlaps !== undefined) piecePapercraft.showFlaps = pp.showFlaps;
+        if (pp.tabHeightMm) piecePapercraft.tabHeightMm = pp.tabHeightMm;
+        if (pp.tabAngleDeg) piecePapercraft.tabAngleDeg = pp.tabAngleDeg;
+        if (pp.cutLineColor) piecePapercraft.cutLineColor = pp.cutLineColor;
+        if (pp.cutLineWidthMm) piecePapercraft.cutLineWidthMm = pp.cutLineWidthMm;
+        if (pp.foldLineColor) piecePapercraft.foldLineColor = pp.foldLineColor;
+        if (pp.foldLineWidthMm) piecePapercraft.foldLineWidthMm = pp.foldLineWidthMm;
+        if (pp.hideSmoothLines !== undefined) piecePapercraft.hideSmoothLines = pp.hideSmoothLines;
+        if (pp.showTabNumbers !== undefined) piecePapercraft.showTabNumbers = pp.showTabNumbers;
+        if (pp.numberPlacement) piecePapercraft.numberPlacement = pp.numberPlacement;
 
         piecePapercraft.analyzeMesh(mesh, size);
 
+        if (!piecePapercraft.baseModelLengthMm && piecePapercraft.raw3dSize?.ref3dLen) {
+            piecePapercraft.baseModelLengthMm = Math.max(0.1, Math.round(piecePapercraft.raw3dSize.ref3dLen * piecePapercraft.unitMultiplier * 10) / 10);
+        }
+
         // Si ya hay una escala global establecida en el ensamblador, sincronizar
-        if (this.globalScalePct) {
+        if (this.globalScalePct !== null && this.globalScalePct !== undefined) {
             piecePapercraft.scalePct = this.globalScalePct;
-            piecePapercraft.currentScale = `${Math.round(this.globalScalePct)}%`;
-            const baseLen = piecePapercraft.baseModelLengthMm || piecePapercraft.modelLengthMm || 0.1;
+            piecePapercraft.currentScale = this.globalScalePreset || `${Math.round(this.globalScalePct * 10) / 10}%`;
+            const baseLen = piecePapercraft.baseModelLengthMm || 200.0;
             piecePapercraft.setModelLength(Math.max(0.1, baseLen * (this.globalScalePct / 100)));
             piecePapercraft.autoPackA4();
+        } else if (pp.scalePct) {
+            this.globalScalePct = pp.scalePct;
+            this.globalScalePreset = pp.scalePreset || `${Math.round(pp.scalePct * 10) / 10}%`;
+            this.globalObjUnit = ppUnit;
         }
 
         // Restaurar disposición exacta de piezas si venía guardada y no fue escalada
-        if (!this.globalScalePct && project.papercraft?.partsLayout && Array.isArray(project.papercraft.partsLayout)) {
-            project.papercraft.partsLayout.forEach(pl => {
+        if (!this.globalScalePct && pp.partsLayout && Array.isArray(pp.partsLayout)) {
+            pp.partsLayout.forEach(pl => {
                 const part = piecePapercraft.parts.find(p => p.id === pl.id);
                 if (part && pl.layout) {
                     Object.assign(part.layout, pl.layout);
                 }
             });
-            if (project.papercraft.pagesCount) {
-                piecePapercraft.pagesCount = project.papercraft.pagesCount;
+            if (pp.pagesCount) {
+                piecePapercraft.pagesCount = pp.pagesCount;
             }
         }
 
@@ -1085,39 +1306,90 @@ export class ModelAssembler {
         const mesh = this.buildMeshFromOBJ(objText, texture);
 
         const piecePapercraft = new PapercraftEngine();
-        if (window.papercraft?.objUnit) {
-            piecePapercraft.objUnit = window.papercraft.objUnit;
+
+        // Obtener unidad global estandarizada
+        let unit = this.globalObjUnit || window.papercraft?.objUnit || 'm';
+        piecePapercraft.objUnit = unit;
+        piecePapercraft.unitMultiplier = unit === 'm' ? 1000.0 : (unit === 'cm' ? 10.0 : 1.0);
+
+        // Copiar estilos de líneas y solapas desde referencia o editor
+        const refPapercraft = this.pieces[0]?.papercraft || window.papercraft;
+        if (refPapercraft) {
+            piecePapercraft.showFlaps = refPapercraft.showFlaps;
+            piecePapercraft.tabHeightMm = refPapercraft.tabHeightMm;
+            piecePapercraft.tabAngleDeg = refPapercraft.tabAngleDeg;
+            piecePapercraft.cutLineColor = refPapercraft.cutLineColor;
+            piecePapercraft.cutLineWidthMm = refPapercraft.cutLineWidthMm;
+            piecePapercraft.foldLineColor = refPapercraft.foldLineColor;
+            piecePapercraft.foldLineWidthMm = refPapercraft.foldLineWidthMm;
+            piecePapercraft.hideSmoothLines = refPapercraft.hideSmoothLines;
+            piecePapercraft.lineMode = refPapercraft.lineMode || window.state?.uvWireframeMode || 'clean';
+            piecePapercraft.showTabNumbers = refPapercraft.showTabNumbers;
+            piecePapercraft.numberPlacement = refPapercraft.numberPlacement;
         }
 
-        // Si ya hay piezas en el ensamble, calcular proporción física relativa a la pieza base
-        const refPiece = this.pieces.find(p => p.papercraft && p.papercraft.raw3dSize);
-        if (refPiece && refPiece.papercraft.raw3dSize.ref3dLen > 0.001) {
-            const mmPerUnit = (refPiece.papercraft.baseModelLengthMm || refPiece.papercraft.modelLengthMm) / refPiece.papercraft.raw3dSize.ref3dLen;
+        // Analizar geometría con el unitMultiplier correcto
+        piecePapercraft.analyzeMesh(mesh, size);
+
+        // Auto-detección inteligente: si ref3dLen < 5.0 y estaba en mm, el modelo fue exportado en Metros desde Blender
+        if (piecePapercraft.raw3dSize && piecePapercraft.raw3dSize.ref3dLen < 5.0 && unit === 'mm') {
+            unit = 'm';
+            piecePapercraft.objUnit = 'm';
+            piecePapercraft.unitMultiplier = 1000.0;
+            piecePapercraft.baseModelLengthMm = null;
             piecePapercraft.analyzeMesh(mesh, size);
-            if (piecePapercraft.raw3dSize && piecePapercraft.raw3dSize.ref3dLen > 0.001) {
-                const proportionalBase = Math.max(0.1, Math.round(piecePapercraft.raw3dSize.ref3dLen * mmPerUnit * 10) / 10);
-                piecePapercraft.baseModelLengthMm = proportionalBase;
-                const activePct = this.globalScalePct || refPiece.papercraft.scalePct || 100;
-                piecePapercraft.scalePct = activePct;
-                piecePapercraft.currentScale = `${Math.round(activePct)}%`;
-                piecePapercraft.setModelLength(Math.max(0.1, proportionalBase * (activePct / 100)));
-                piecePapercraft.autoPackA4();
-            }
-        } else {
-            piecePapercraft.analyzeMesh(mesh, size);
-            if (this.globalScalePct) {
-                piecePapercraft.scalePct = this.globalScalePct;
-                piecePapercraft.currentScale = `${Math.round(this.globalScalePct)}%`;
-                piecePapercraft.setModelLength(Math.max(0.1, (piecePapercraft.baseModelLengthMm || 0.1) * (this.globalScalePct / 100)));
-                piecePapercraft.autoPackA4();
-            }
+            this.globalObjUnit = 'm';
         }
+
+        // Calcular baseModelLengthMm nativo real 1:1 en mm
+        if (piecePapercraft.raw3dSize && piecePapercraft.raw3dSize.ref3dLen > 0.0001) {
+            piecePapercraft.baseModelLengthMm = Math.max(0.1, Math.round(piecePapercraft.raw3dSize.ref3dLen * piecePapercraft.unitMultiplier * 10) / 10);
+        }
+
+        // Aplicar la escala global unificada (ej: 1:33 = 3.0303%)
+        const activePct = (this.globalScalePct !== null && this.globalScalePct !== undefined) 
+            ? this.globalScalePct 
+            : (window.papercraft?.scalePct !== undefined ? window.papercraft.scalePct : (100 / 33));
+        const activePreset = this.globalScalePreset || window.papercraft?.currentScale || '1:33';
+
+        piecePapercraft.scalePct = activePct;
+        piecePapercraft.currentScale = activePreset;
+        const targetLen = Math.max(0.1, (piecePapercraft.baseModelLengthMm || 200.0) * (activePct / 100));
+        piecePapercraft.setModelLength(targetLen);
+        piecePapercraft.autoPackA4();
+
+        // Generar projectData independiente con las 4 capas estándar limpias para esta pieza
+        const defaultLayers = [
+            { id: 1, name: 'Fondo Blanco', visible: true, opacity: 1, blendMode: 'source-over', isBackground: true, imageData: textureCanvas.toDataURL(), decals: [] },
+            { id: 2, name: 'Color Base', visible: true, opacity: 1, blendMode: 'source-over', isBackground: false, imageData: null, decals: [] },
+            { id: 3, name: 'Panelado', visible: true, opacity: 1, blendMode: 'source-over', isBackground: false, imageData: null, decals: [] },
+            { id: 4, name: 'Calcas', visible: true, opacity: 1, blendMode: 'source-over', isBackground: false, imageData: null, decals: [] }
+        ];
+
+        const initialProjectData = {
+            format: 'NeoSubstancePainter',
+            version: '2.0',
+            resolution: size,
+            modelOBJ: objText,
+            layers: defaultLayers,
+            papercraft: {
+                objUnit: piecePapercraft.objUnit,
+                unitMultiplier: piecePapercraft.unitMultiplier,
+                baseModelLengthMm: piecePapercraft.baseModelLengthMm,
+                modelLengthMm: piecePapercraft.modelLengthMm,
+                scalePct: piecePapercraft.scalePct,
+                currentScale: piecePapercraft.currentScale,
+                pagesCount: piecePapercraft.pagesCount,
+                partsLayout: piecePapercraft.parts ? piecePapercraft.parts.map(p => ({ id: p.id, layout: { ...p.layout } })) : []
+            }
+        };
+
         const piece = {
             id: 'piece_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
             name: defaultName,
             fileType: 'obj',
             rawOBJText: objText,
-            projectData: null,
+            projectData: initialProjectData,
             mesh: mesh,
             textureCanvas: textureCanvas,
             texture: texture,
@@ -1154,12 +1426,19 @@ export class ModelAssembler {
 
         const mesh = this.buildMeshFromOBJ(window.state.rawOBJText, texture);
 
-        // Clonar configuración actual de Papercraft
+        // Instanciar motor Papercraft individual
         const piecePapercraft = new PapercraftEngine();
-        if (window.papercraft) {
-            const src = window.papercraft;
-            piecePapercraft.modelLengthMm = src.modelLengthMm;
-            piecePapercraft.currentScale = src.currentScale;
+        const src = window.papercraft;
+
+        // Determinar unidad y escala del editor
+        const activeUnit = src?.objUnit || this.globalObjUnit || 'm';
+        const activeScalePct = src?.scalePct !== undefined ? src.scalePct : (this.globalScalePct || (100 / 33));
+        const activePreset = src?.currentScale || this.globalScalePreset || '1:33';
+
+        piecePapercraft.objUnit = activeUnit;
+        piecePapercraft.unitMultiplier = activeUnit === 'm' ? 1000.0 : (activeUnit === 'cm' ? 10.0 : 1.0);
+
+        if (src) {
             piecePapercraft.showFlaps = src.showFlaps;
             piecePapercraft.tabHeightMm = src.tabHeightMm;
             piecePapercraft.tabAngleDeg = src.tabAngleDeg;
@@ -1173,22 +1452,45 @@ export class ModelAssembler {
             piecePapercraft.numberPlacement = src.numberPlacement;
         }
 
+        // Si el editor ya tenía un baseModelLengthMm verificado, preservarlo
+        if (src?.baseModelLengthMm && src.baseModelLengthMm > 0.1) {
+            piecePapercraft.baseModelLengthMm = src.baseModelLengthMm;
+        }
+
+        // Analizar geometría
         piecePapercraft.analyzeMesh(mesh, size);
 
-        // Copiar posiciones de piezas acomodadas si existen
-        if (window.papercraft?.parts && window.papercraft.parts.length > 0) {
-            window.papercraft.parts.forEach(srcPart => {
+        // Si baseModelLengthMm no estaba definido, analyzeMesh lo calculó con unitMultiplier correcto
+        if (!piecePapercraft.baseModelLengthMm && piecePapercraft.raw3dSize?.ref3dLen) {
+            piecePapercraft.baseModelLengthMm = Math.max(0.1, Math.round(piecePapercraft.raw3dSize.ref3dLen * piecePapercraft.unitMultiplier * 10) / 10);
+        }
+
+        // Aplicar la escala exacta
+        piecePapercraft.scalePct = activeScalePct;
+        piecePapercraft.currentScale = activePreset;
+        const targetLen = Math.max(0.1, piecePapercraft.baseModelLengthMm * (activeScalePct / 100));
+        piecePapercraft.setModelLength(targetLen);
+        piecePapercraft.autoPackA4();
+
+        // Actualizar parámetros globales del ensamblador
+        this.globalObjUnit = activeUnit;
+        this.globalScalePct = activeScalePct;
+        this.globalScalePreset = activePreset;
+
+        // Copiar posiciones de piezas acomodadas si existen en el editor
+        if (src?.parts && src.parts.length > 0) {
+            src.parts.forEach(srcPart => {
                 const targetPart = piecePapercraft.parts.find(p => p.id === srcPart.id);
                 if (targetPart && srcPart.layout) {
                     targetPart.layout = { ...srcPart.layout };
                 }
             });
-            piecePapercraft.pagesCount = window.papercraft.pagesCount;
+            piecePapercraft.pagesCount = src.pagesCount;
         }
 
         const currentProj = typeof window.getProjectNSPData === 'function' ? window.getProjectNSPData() : null;
-
         const defaultName = window.currentProjectFileName || `Pieza Editor (${this.pieces.length + 1})`;
+
         const piece = {
             id: 'piece_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
             name: defaultName,
@@ -1205,7 +1507,13 @@ export class ModelAssembler {
         this.addPiece(piece);
         this.activePieceId = piece.id;
         this.editorLoadedPieceId = piece.id;
+        this.syncModalScaleControls();
         this.updateActivePieceSelectors();
+        this.renderUI();
+        if (this.is3DMode) {
+            this.updateAssemblyMaterials();
+            this.syncActiveMeshTools();
+        }
         return piece;
     }
 
@@ -1670,7 +1978,9 @@ export class ModelAssembler {
             type: 'neo_substance_assembler_project',
             createdAt: new Date().toISOString(),
             albumTitle: this.albumTitle || 'Proyecto Ensamblado',
-            globalScalePct: this.globalScalePct || 100,
+            globalScalePct: this.globalScalePct || (100 / 33),
+            globalScalePreset: this.globalScalePreset || '1:33',
+            globalObjUnit: this.globalObjUnit || 'm',
             includeCover: this.includeCover !== false,
             totalSheets: totalSheets,
             activePieceId: this.activePieceId,
@@ -1694,6 +2004,8 @@ export class ModelAssembler {
                     papercraftState: piece.papercraft ? {
                         modelLengthMm: piece.papercraft.modelLengthMm,
                         baseModelLengthMm: piece.papercraft.baseModelLengthMm,
+                        objUnit: piece.papercraft.objUnit,
+                        unitMultiplier: piece.papercraft.unitMultiplier,
                         scalePct: piece.papercraft.scalePct,
                         currentScale: piece.papercraft.currentScale,
                         pagesCount: piece.papercraft.pagesCount,
@@ -1759,8 +2071,12 @@ export class ModelAssembler {
             }
             if (project.globalScalePct) {
                 this.globalScalePct = project.globalScalePct;
-                const scaleInput = document.getElementById('assembler-global-scale-input');
-                if (scaleInput) scaleInput.value = project.globalScalePct;
+            }
+            if (project.globalScalePreset) {
+                this.globalScalePreset = project.globalScalePreset;
+            }
+            if (project.globalObjUnit) {
+                this.globalObjUnit = project.globalObjUnit;
             }
             if (project.includeCover !== undefined) {
                 this.includeCover = project.includeCover;
@@ -1803,6 +2119,10 @@ export class ModelAssembler {
 
                 const piecePapercraft = new PapercraftEngine();
                 const ps = pData.papercraftState;
+                const unit = ps?.objUnit || project.globalObjUnit || this.globalObjUnit || 'm';
+                piecePapercraft.objUnit = unit;
+                piecePapercraft.unitMultiplier = ps?.unitMultiplier || (unit === 'm' ? 1000.0 : (unit === 'cm' ? 10.0 : 1.0));
+
                 if (ps) {
                     if (ps.baseModelLengthMm) piecePapercraft.baseModelLengthMm = ps.baseModelLengthMm;
                     if (ps.modelLengthMm) piecePapercraft.modelLengthMm = ps.modelLengthMm;
@@ -1822,6 +2142,13 @@ export class ModelAssembler {
                 }
 
                 piecePapercraft.analyzeMesh(mesh, size);
+
+                if (ps) {
+                    if (ps.baseModelLengthMm) piecePapercraft.baseModelLengthMm = ps.baseModelLengthMm;
+                    if (ps.scalePct !== undefined) piecePapercraft.scalePct = ps.scalePct;
+                    if (ps.currentScale) piecePapercraft.currentScale = ps.currentScale;
+                    if (ps.modelLengthMm) piecePapercraft.modelLengthMm = ps.modelLengthMm;
+                }
 
                 if (ps && Array.isArray(ps.partsLayout)) {
                     ps.partsLayout.forEach(savedPart => {
@@ -1857,6 +2184,7 @@ export class ModelAssembler {
 
             this.updateActivePieceSelectors();
             this.updateStatsBadge();
+            this.syncModalScaleControls();
             this.renderUI();
 
             if (this.is3DMode && this.group && typeof window.frameModel === 'function') {
@@ -1953,12 +2281,14 @@ export class ModelAssembler {
                             ${isActive ? '<span style="background: #8e24aa; color: #fff; font-size: 9px; font-weight: bold; padding: 1px 6px; border-radius: 10px; box-shadow: 0 0 6px #ab47bc;">⭐ ACTIVA EN 2D</span>' : ''}
                             <input type="text" class="piece-name-input" value="${piece.name}" onclick="event.stopPropagation();" style="background: transparent; border: 1px solid transparent; color: #fff; font-size: 13px; font-weight: bold; width: 100%; max-width: 280px; border-radius: 3px; padding: 2px 4px;" title="Haz clic para renombrar la pieza">
                         </div>
-                        <div style="display: flex; align-items: center; gap: 10px; font-size: 11px; color: #999;">
+                        <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: #999;">
                             <span>📄 <b>${piece.papercraft?.pagesCount || 1}</b> hoja(s) A4</span>
                             <span>•</span>
-                            <span>Escala: ${piece.papercraft?.currentScale || '1:33'}</span>
+                            <span>Escala: <b style="color: #00e5ff;">${piece.papercraft?.currentScale || '1:33'}</b> (${Math.round((piece.papercraft?.scalePct || 100) * 10) / 10}%)</span>
                             <span>•</span>
-                            <span>Longitud: ${Math.round(piece.papercraft?.modelLengthMm || 200)} mm</span>
+                            <span>Largo: <b>${Math.round((piece.papercraft?.modelLengthMm || 200) * 10) / 10} mm</b></span>
+                            <span>•</span>
+                            <span style="color: #80cbc4;">Unidad: ${piece.papercraft?.objUnit === 'm' ? 'Metros' : (piece.papercraft?.objUnit === 'cm' ? 'cm' : 'mm')}</span>
                         </div>
                     </div>
                 </div>
