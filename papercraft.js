@@ -757,15 +757,15 @@ export class PapercraftEngine {
                 const endY = (ann.endY !== undefined ? ann.endY : ann.y + 20);
                 
                 // Comprobar nodo de la punta
-                if (Math.hypot(pageMmX - endX, pageMmY - endY) <= 5.0) {
+                if (Math.hypot(pageMmX - endX, pageMmY - endY) <= 6.5) {
                     return { annotation: ann, handle: 'end' };
                 }
                 // Comprobar nodo de origen
-                if (Math.hypot(pageMmX - ann.x, pageMmY - ann.y) <= 5.0) {
+                if (Math.hypot(pageMmX - ann.x, pageMmY - ann.y) <= 6.5) {
                     return { annotation: ann, handle: 'start' };
                 }
                 // Comprobar cuerpo de la flecha
-                if (this._distToSegment(pageMmX, pageMmY, ann.x, ann.y, endX, endY) <= 4.0) {
+                if (this._distToSegment(pageMmX, pageMmY, ann.x, ann.y, endX, endY) <= 5.5) {
                     return { annotation: ann, handle: 'body' };
                 }
             } else {
@@ -782,10 +782,12 @@ export class PapercraftEngine {
                     w = Math.max(16, txtLen * (ann.fontSize || 9) * 0.32 + 6);
                     h = Math.max(8, (ann.fontSize || 9) * 0.45 + 4);
                 } else if (ann.type === 'cut') {
-                    w = 26; h = 10;
+                    if (lx >= -1.5 && lx <= 27 && ly >= -4 && ly <= 4) {
+                        return { annotation: ann, handle: 'body' };
+                    }
+                    continue;
                 } else if (ann.type === 'glue') {
-                    w = 24; h = 9;
-                    if (lx >= -w / 2 - 3 && lx <= w / 2 + 3 && ly >= -h / 2 - 3 && ly <= h / 2 + 3) {
+                    if (lx >= -5 && lx <= 5 && ly >= -5 && ly <= 5) {
                         return { annotation: ann, handle: 'body' };
                     }
                     continue;
@@ -932,26 +934,59 @@ export class PapercraftEngine {
             ctx.translate(xPx, yPx);
             ctx.rotate(rotRad);
 
-            const lineLenPx = 22 * mmToPx;
-            ctx.strokeStyle = isSelected ? '#00e5ff' : (ann.color || '#333333');
-            ctx.lineWidth = 1.5;
+            const scissorColor = isSelected ? '#00e5ff' : '#222222';
+            const cutLineColor = isSelected ? '#00e5ff' : (ann.color || '#d32f2f');
+
+            // A) Línea punteada de incisión / corte (desde punta de tijera x=6.6mm hasta x=26mm)
+            ctx.save();
+            ctx.strokeStyle = cutLineColor;
+            ctx.lineWidth = 1.6;
             ctx.setLineDash([6, 4]);
             ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(lineLenPx, 0);
+            ctx.moveTo(6.6 * mmToPx, 0);
+            ctx.lineTo(26.0 * mmToPx, 0);
             ctx.stroke();
-            ctx.setLineDash([]);
+            ctx.restore();
 
-            ctx.font = `bold ${Math.round(10 * mmToPx * 0.35)}px sans-serif`;
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'bottom';
-            ctx.fillStyle = ann.color || '#333333';
-            ctx.fillText(`✂ ${ann.text || 'Corte'}`, 4, -2);
+            // B) Icono Vectorial Tijera ✂ (100% nativa sin fuentes)
+            ctx.save();
+            ctx.strokeStyle = scissorColor;
+            ctx.lineWidth = 1.4;
+
+            // 1. Aros de sujeción (mangos)
+            ctx.beginPath();
+            ctx.arc(0.7 * mmToPx, -1.6 * mmToPx, 1.15 * mmToPx, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(0.7 * mmToPx, 1.6 * mmToPx, 1.15 * mmToPx, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 2. Hojas de corte cruzadas desde los mangos a las puntas
+            ctx.beginPath();
+            ctx.moveTo(0.7 * mmToPx, 1.6 * mmToPx);
+            ctx.lineTo(2.4 * mmToPx, 0);
+            ctx.lineTo(6.4 * mmToPx, -1.3 * mmToPx);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(0.7 * mmToPx, -1.6 * mmToPx);
+            ctx.lineTo(2.4 * mmToPx, 0);
+            ctx.lineTo(6.4 * mmToPx, 1.3 * mmToPx);
+            ctx.stroke();
+
+            // 3. Remache / pivote central
+            ctx.fillStyle = scissorColor;
+            ctx.beginPath();
+            ctx.arc(2.4 * mmToPx, 0, 0.45 * mmToPx, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
 
             if (isSelected) {
                 ctx.strokeStyle = '#00e5ff';
+                ctx.lineWidth = 1;
                 ctx.setLineDash([3, 3]);
-                ctx.strokeRect(-2, -14, lineLenPx + 4, 18);
+                ctx.strokeRect(-0.8 * mmToPx, -3.2 * mmToPx, 27.6 * mmToPx, 6.4 * mmToPx);
                 ctx.setLineDash([]);
             }
 
@@ -959,30 +994,51 @@ export class PapercraftEngine {
             ctx.translate(xPx, yPx);
             ctx.rotate(rotRad);
 
-            const boxWPx = 22 * mmToPx;
-            const boxHPx = 6.5 * mmToPx;
-            ctx.fillStyle = 'rgba(255, 249, 196, 0.94)';
-            ctx.strokeStyle = isSelected ? '#00e5ff' : '#f57f17';
-            ctx.lineWidth = isSelected ? 2 : 1;
+            const badgeSizePx = 8.0 * mmToPx;
+            const rCornerPx = 2.0 * mmToPx;
+
+            // A) Badge / placa redondeada (alta legibilidad y contraste)
+            ctx.fillStyle = 'rgba(255, 250, 205, 0.96)';
+            ctx.strokeStyle = isSelected ? '#00e5ff' : '#e68200';
+            ctx.lineWidth = isSelected ? 2 : 1.2;
             ctx.beginPath();
             if (typeof ctx.roundRect === 'function') {
-                ctx.roundRect(-boxWPx / 2, -boxHPx / 2, boxWPx, boxHPx, 3);
+                ctx.roundRect(-badgeSizePx / 2, -badgeSizePx / 2, badgeSizePx, badgeSizePx, rCornerPx);
             } else {
-                ctx.rect(-boxWPx / 2, -boxHPx / 2, boxWPx, boxHPx);
+                ctx.rect(-badgeSizePx / 2, -badgeSizePx / 2, badgeSizePx, badgeSizePx);
             }
             ctx.fill();
             ctx.stroke();
 
-            ctx.font = `bold ${Math.round(7.5 * mmToPx * 0.35)}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = '#b78103';
-            ctx.fillText(`💧 ${ann.text || 'Pegar acá'}`, 0, 0);
+            // B) Gota de pegamento vectorial 💧 (sin texto)
+            const cyPx = 0.25 * mmToPx;
+            const dropColor = ann.color || '#0288d1';
+            ctx.fillStyle = dropColor;
+
+            // 1. Vientre redondeado inferior
+            ctx.beginPath();
+            ctx.arc(0, cyPx + 0.4 * mmToPx, 1.45 * mmToPx, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 2. Punta cónica superior
+            ctx.beginPath();
+            ctx.moveTo(0, cyPx - 2.4 * mmToPx);
+            ctx.lineTo(-1.4 * mmToPx, cyPx + 0.35 * mmToPx);
+            ctx.lineTo(1.4 * mmToPx, cyPx + 0.35 * mmToPx);
+            ctx.closePath();
+            ctx.fill();
+
+            // 3. Brillo de volumen / reflejo blanco
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.beginPath();
+            ctx.arc(-0.5 * mmToPx, cyPx - 0.25 * mmToPx, 0.42 * mmToPx, 0, Math.PI * 2);
+            ctx.fill();
 
             if (isSelected) {
                 ctx.strokeStyle = '#00e5ff';
+                ctx.lineWidth = 1;
                 ctx.setLineDash([3, 3]);
-                ctx.strokeRect(-boxWPx / 2 - 2, -boxHPx / 2 - 2, boxWPx + 4, boxHPx + 4);
+                ctx.strokeRect(-badgeSizePx / 2 - 2, -badgeSizePx / 2 - 2, badgeSizePx + 4, badgeSizePx + 4);
                 ctx.setLineDash([]);
             }
         }
@@ -1858,41 +1914,67 @@ export class PapercraftEngine {
                     doc.text(badgeStr, ann.x, ann.y + 0.9, { align: 'center', baseline: 'middle' });
 
                 } else if (ann.type === 'cut') {
-                    doc.setDrawColor(rgb.r, rgb.g, rgb.b);
-                    doc.setLineWidth(0.2);
-                    if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([2, 1.5], 0);
-                    else if (typeof doc.setLineDash === 'function') doc.setLineDash([2, 1.5], 0);
-
-                    const lenMm = 20.0;
                     const rad = ((ann.rotation || 0) * Math.PI) / 180;
-                    const dx = Math.cos(rad) * lenMm;
-                    const dy = Math.sin(rad) * lenMm;
-                    doc.line(ann.x, ann.y, ann.x + dx, ann.y + dy);
+                    const cos = Math.cos(rad);
+                    const sin = Math.sin(rad);
+                    const rX = (lx, ly) => ann.x + lx * cos - ly * sin;
+                    const rY = (lx, ly) => ann.y + lx * sin + ly * cos;
+
+                    // 1. Línea discontinua de corte desde punta de tijera (6.6mm a 26mm)
+                    doc.setDrawColor(rgb.r, rgb.g, rgb.b);
+                    doc.setLineWidth(0.25);
+                    if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([1.8, 1.2], 0);
+                    else if (typeof doc.setLineDash === 'function') doc.setLineDash([1.8, 1.2], 0);
+
+                    doc.line(rX(6.6, 0), rY(6.6, 0), rX(26.0, 0), rY(26.0, 0));
 
                     if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([], 0);
                     else if (typeof doc.setLineDash === 'function') doc.setLineDash([], 0);
 
-                    doc.setFont('helvetica', 'bold');
-                    doc.setFontSize(7);
-                    doc.setTextColor(rgb.r, rgb.g, rgb.b);
-                    doc.text(`[CORTE] ${ann.text || ''}`, ann.x + 1, ann.y - 1);
+                    // 2. Tijera Vectorial ✂ en jsPDF (100% nativa sin fuentes de texto)
+                    doc.setDrawColor(30, 30, 30);
+                    doc.setFillColor(30, 30, 30);
+                    doc.setLineWidth(0.35);
+
+                    // Aros de agarre
+                    doc.circle(rX(0.7, -1.6), rY(0.7, -1.6), 1.15, 'D');
+                    doc.circle(rX(0.7, 1.6), rY(0.7, 1.6), 1.15, 'D');
+
+                    // Hojas cruzadas
+                    doc.line(rX(0.7, 1.6), rY(0.7, 1.6), rX(6.4, -1.3), rY(6.4, -1.3));
+                    doc.line(rX(0.7, -1.6), rY(0.7, -1.6), rX(6.4, 1.3), rY(6.4, 1.3));
+
+                    // Remache central
+                    doc.circle(rX(2.4, 0), rY(2.4, 0), 0.45, 'F');
 
                 } else if (ann.type === 'glue') {
-                    const boxW = 20.0;
-                    const boxH = 5.5;
-                    doc.setDrawColor(218, 165, 32);
+                    const badgeSize = 8.0;
+                    const half = badgeSize / 2;
+
+                    // 1. Placa / badge redondeada (amarillo suave con borde ámbar)
+                    doc.setDrawColor(230, 130, 0);
                     doc.setFillColor(255, 250, 205);
                     doc.setLineWidth(0.3);
                     if (typeof doc.roundedRect === 'function') {
-                        doc.roundedRect(ann.x - boxW / 2, ann.y - boxH / 2, boxW, boxH, 1, 1, 'FD');
+                        doc.roundedRect(ann.x - half, ann.y - half, badgeSize, badgeSize, 1.8, 1.8, 'FD');
                     } else {
-                        doc.rect(ann.x - boxW / 2, ann.y - boxH / 2, boxW, boxH, 'FD');
+                        doc.rect(ann.x - half, ann.y - half, badgeSize, badgeSize, 'FD');
                     }
 
-                    doc.setFont('helvetica', 'bold');
-                    doc.setFontSize(6.5);
-                    doc.setTextColor(180, 100, 0);
-                    doc.text(ann.text || 'PEGAR ACÁ', ann.x, ann.y + 0.8, { align: 'center', baseline: 'middle' });
+                    // 2. Gota Vectorial 💧 de pegamento (100% nativa sin fuentes de texto)
+                    const dropRgb = hexToRgb(ann.color || '#0288d1');
+                    doc.setFillColor(dropRgb.r, dropRgb.g, dropRgb.b);
+                    doc.setDrawColor(dropRgb.r, dropRgb.g, dropRgb.b);
+
+                    const cy = ann.y + 0.25;
+                    // Vientre redondeado inferior
+                    doc.circle(ann.x, cy + 0.4, 1.45, 'F');
+                    // Punta cónica superior
+                    doc.triangle(ann.x, cy - 2.4, ann.x - 1.4, cy + 0.35, ann.x + 1.4, cy + 0.35, 'F');
+
+                    // Reflejo blanco de brillo
+                    doc.setFillColor(255, 255, 255);
+                    doc.circle(ann.x - 0.5, cy - 0.25, 0.42, 'F');
                 }
 
                 doc.restoreGraphicsState();

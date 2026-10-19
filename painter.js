@@ -1900,17 +1900,19 @@ export class Painter {
         if (!s) return null;
 
         if (s.type === 'curve') {
+            const rect = this.canvas.getBoundingClientRect();
+            const screenToCanvas = (rect && rect.width > 0) ? (this.canvas.width / rect.width) : 1;
             const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
             const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
             const cpX = s.cpX !== undefined ? s.cpX : midX;
             const cpY = s.cpY !== undefined ? s.cpY : midY;
 
             // 1. Tirador central de curvatura (midX, midY)
-            if (Math.hypot(x - midX, y - midY) <= 18) return 'curve';
+            if (Math.hypot(x - midX, y - midY) <= Math.max(18, 22 * screenToCanvas)) return 'curve';
 
             // 2. Tiradores en extremos (x1, y1) y (x2, y2)
-            if (Math.hypot(x - s.x1, y - s.y1) <= 16) return 'p1';
-            if (Math.hypot(x - s.x2, y - s.y2) <= 16) return 'p2';
+            if (Math.hypot(x - s.x1, y - s.y1) <= Math.max(16, 20 * screenToCanvas)) return 'p1';
+            if (Math.hypot(x - s.x2, y - s.y2) <= Math.max(16, 20 * screenToCanvas)) return 'p2';
 
             // 3. Toque sobre la línea de la curva para mover
             for (let t = 0.05; t <= 0.95; t += 0.05) {
@@ -2979,8 +2981,14 @@ export class Painter {
         const startB = data[startPos+2];
         const startA = data[startPos+3];
 
-        const tol = 60;
-        const matchStartColor = (pos) => {
+        const tol = 45;
+        const hasSelection = !!(this.selectionManager && this.selectionManager.active);
+        const checkMask = (px, py) => {
+            if (!hasSelection) return true;
+            return this.selectionManager.isPointSelected(px, py, activeCtx);
+        };
+        const matchStartColor = (pos, px, py) => {
+            if (hasSelection && !checkMask(px, py)) return false;
             return Math.abs(data[pos] - startR) <= tol &&
                    Math.abs(data[pos+1] - startG) <= tol &&
                    Math.abs(data[pos+2] - startB) <= tol &&
@@ -2994,70 +3002,47 @@ export class Painter {
         const maskImg = mctx.createImageData(w, h);
         const maskData = maskImg.data;
 
-        const stack = [[startX, startY]];
         const visited = new Uint8Array(w * h);
+        const stack = [startX, startY];
 
         while (stack.length > 0) {
-            const [curX, curY] = stack.pop();
-            let y = curY;
-            let pos = (y * w + curX) * 4;
+            const cy = stack.pop();
+            const cx = stack.pop();
 
-            while (y >= 0 && matchStartColor(pos)) {
-                y--;
-                pos -= w * 4;
+            if (visited[cy * w + cx]) continue;
+
+            let left = cx;
+            while (left > 0 && !visited[cy * w + (left - 1)] && matchStartColor((cy * w + (left - 1)) * 4, left - 1, cy)) {
+                left--;
             }
-            // DILATACIÓN: borde superior
-            if (y >= 0) {
-                maskData[pos] = 255; maskData[pos+1] = 255; maskData[pos+2] = 255; maskData[pos+3] = 255;
+
+            let right = cx;
+            while (right < w - 1 && !visited[cy * w + (right + 1)] && matchStartColor((cy * w + (right + 1)) * 4, right + 1, cy)) {
+                right++;
             }
-            y++;
-            pos += w * 4;
 
-            let reachLeft = false;
-            let reachRight = false;
+            for (let x = left; x <= right; x++) {
+                visited[cy * w + x] = 1;
+                const p = (cy * w + x) * 4;
+                maskData[p] = 255;
+                maskData[p+1] = 255;
+                maskData[p+2] = 255;
+                maskData[p+3] = 255;
+            }
 
-            while (y < h && matchStartColor(pos)) {
-                const pixelIdx = y * w + curX;
-                if (visited[pixelIdx]) break;
-                visited[pixelIdx] = 1;
-
-                maskData[pos] = 255;
-                maskData[pos+1] = 255;
-                maskData[pos+2] = 255;
-                maskData[pos+3] = 255;
-
-                if (curX > 0) {
-                    if (matchStartColor(pos - 4)) {
-                        if (!reachLeft) {
-                            stack.push([curX - 1, y]);
-                            reachLeft = true;
+            for (const ny of [cy - 1, cy + 1]) {
+                if (ny < 0 || ny >= h) continue;
+                let inSpan = false;
+                for (let x = left; x <= right; x++) {
+                    if (!visited[ny * w + x] && matchStartColor((ny * w + x) * 4, x, ny)) {
+                        if (!inSpan) {
+                            stack.push(x, ny);
+                            inSpan = true;
                         }
                     } else {
-                        if (reachLeft) reachLeft = false;
-                        // DILATACIÓN: borde izquierdo
-                        maskData[pos - 4] = 255; maskData[pos - 3] = 255; maskData[pos - 2] = 255; maskData[pos - 1] = 255;
+                        inSpan = false;
                     }
                 }
-
-                if (curX < w - 1) {
-                    if (matchStartColor(pos + 4)) {
-                        if (!reachRight) {
-                            stack.push([curX + 1, y]);
-                            reachRight = true;
-                        }
-                    } else {
-                        if (reachRight) reachRight = false;
-                        // DILATACIÓN: borde derecho
-                        maskData[pos + 4] = 255; maskData[pos + 5] = 255; maskData[pos + 6] = 255; maskData[pos + 7] = 255;
-                    }
-                }
-
-                y++;
-                pos += w * 4;
-            }
-            // DILATACIÓN: borde inferior
-            if (y < h) {
-                maskData[pos] = 255; maskData[pos+1] = 255; maskData[pos+2] = 255; maskData[pos+3] = 255;
             }
         }
 
@@ -3769,97 +3754,80 @@ export class Painter {
         const startB = data[startPos+2];
         const startA = data[startPos+3];
         
-        const hex = fillColorHex.replace('#', '');
-        const fillR = parseInt(hex.substring(0, 2), 16);
-        const fillG = parseInt(hex.substring(2, 4), 16);
-        const fillB = parseInt(hex.substring(4, 6), 16);
+        const hex = (fillColorHex || '#000000').replace('#', '');
+        const fillR = parseInt(hex.substring(0, 2), 16) || 0;
+        const fillG = parseInt(hex.substring(2, 4), 16) || 0;
+        const fillB = parseInt(hex.substring(4, 6), 16) || 0;
         const fillA = 255;
         
-        // Tolerancia estricta para abortar (mismo color exacto)
-        if (Math.abs(fillR - startR) < 5 && Math.abs(fillG - startG) < 5 && Math.abs(fillB - startB) < 5) return;
+        // Tolerancia estricta para abortar si se hace clic exactamente sobre el mismo color
+        if (Math.abs(fillR - startR) < 2 && Math.abs(fillG - startG) < 2 && Math.abs(fillB - startB) < 2 && Math.abs(fillA - startA) < 2) {
+            return;
+        }
         
-        // Tolerancia moderada para absorber el degradado anti-aliasing
-        const tol = 60; 
+        // Tolerancia calibrada para absorber anti-aliasing de bordes
+        const tol = 45; 
         
+        const hasSelection = !!(this.selectionManager && this.selectionManager.active);
         const checkMask = (px, py) => {
-            if (!this.selectionManager || !this.selectionManager.active) return true;
+            if (!hasSelection) return true;
             return this.selectionManager.isPointSelected(px, py, activeCtx);
         };
         
         const matchStartColor = (pos, px, py) => {
-            if (!checkMask(px, py)) return false;
+            if (hasSelection && !checkMask(px, py)) return false;
             return Math.abs(data[pos] - startR) <= tol &&
                    Math.abs(data[pos+1] - startG) <= tol &&
                    Math.abs(data[pos+2] - startB) <= tol &&
                    Math.abs(data[pos+3] - startA) <= tol;
         };
         
-        const colorPixel = (pos, px, py) => {
-            if (!checkMask(px, py)) return;
-            data[pos] = fillR;
-            data[pos+1] = fillG;
-            data[pos+2] = fillB;
-            data[pos+3] = fillA;
-        };
+        // Matriz Uint8Array que garantiza que NINGÚN píxel se visite más de una vez (previene cuelgues 100%)
+        const visited = new Uint8Array(w * h);
+        const stack = [startX, startY];
         
-        const stack = [[startX, startY]];
-        
-        // Fast scanline flood fill con Dilatación de Borde
+        // Scanline flood fill horizontal de alto rendimiento
         while (stack.length > 0) {
-            const [cx, cy] = stack.pop();
-            let x = cx;
-            let y = cy;
+            const cy = stack.pop();
+            const cx = stack.pop();
             
-            let pos = (y * w + x) * 4;
+            if (visited[cy * w + cx]) continue;
             
-            // Subir hasta encontrar el límite
-            while (y >= 0 && matchStartColor(pos, x, y)) {
-                y--;
-                pos -= w * 4;
+            let left = cx;
+            while (left > 0 && !visited[cy * w + (left - 1)] && matchStartColor((cy * w + (left - 1)) * 4, left - 1, cy)) {
+                left--;
             }
             
-            // DILATACIÓN: Pintamos 1 píxel extra sobre el borde para tapar el halo blanco
-            if (y >= 0) colorPixel(pos, x, y);
-            
-            y++;
-            pos += w * 4;
-            
-            let reachLeft = false;
-            let reachRight = false;
-            
-            while (y < h && matchStartColor(pos, x, y)) {
-                colorPixel(pos, x, y);
-                
-                if (x > 0) {
-                    if (matchStartColor(pos - 4, x - 1, y)) {
-                        if (!reachLeft) {
-                            stack.push([x - 1, y]);
-                            reachLeft = true;
-                        }
-                    } else {
-                        if (reachLeft) reachLeft = false;
-                        colorPixel(pos - 4, x - 1, y); // DILATACIÓN: Borde izquierdo
-                    }
-                }
-                
-                if (x < w - 1) {
-                    if (matchStartColor(pos + 4, x + 1, y)) {
-                        if (!reachRight) {
-                            stack.push([x + 1, y]);
-                            reachRight = true;
-                        }
-                    } else {
-                        if (reachRight) reachRight = false;
-                        colorPixel(pos + 4, x + 1, y); // DILATACIÓN: Borde derecho
-                    }
-                }
-                
-                y++;
-                pos += w * 4;
+            let right = cx;
+            while (right < w - 1 && !visited[cy * w + (right + 1)] && matchStartColor((cy * w + (right + 1)) * 4, right + 1, cy)) {
+                right++;
             }
             
-            // DILATACIÓN: Pintamos 1 píxel extra en el borde inferior
-            if (y < h) colorPixel(pos, x, y);
+            // Rellenar el segmento horizontal
+            for (let x = left; x <= right; x++) {
+                visited[cy * w + x] = 1;
+                const p = (cy * w + x) * 4;
+                data[p] = fillR;
+                data[p+1] = fillG;
+                data[p+2] = fillB;
+                data[p+3] = fillA;
+            }
+            
+            // Inspeccionar las líneas superior e inferior
+            for (const ny of [cy - 1, cy + 1]) {
+                if (ny < 0 || ny >= h) continue;
+                let inSpan = false;
+                for (let x = left; x <= right; x++) {
+                    if (!visited[ny * w + x] && matchStartColor((ny * w + x) * 4, x, ny)) {
+                        if (!inSpan) {
+                            stack.push(x, ny);
+                            inSpan = true;
+                        }
+                    } else {
+                        inSpan = false;
+                    }
+                }
+            }
         }
         
         activeCtx.putImageData(imgData, 0, 0);
@@ -3868,6 +3836,7 @@ export class Painter {
         }
         this.needsUpdate = true;
         this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
     }
 
     fillFaceByIndex(meshObj, a, b, c, mode = 'fill_face') {

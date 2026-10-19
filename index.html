@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neo Substance Painter - Pepakura Edition</title>
     <link rel="icon" type="image/x-icon" href="app_icon.ico">
-    <link rel="stylesheet" href="style.css?v=8.3">
+    <link rel="stylesheet" href="style.css?v=8.4">
     <script>
         window.currentShapeStrokeDash = 'solid';
         window.updateShapeStrokeDash = function(dashStyle) {
@@ -30,6 +30,25 @@
 </head>
 <body>
     <div id="app">
+        <!-- Barra de Título Superior (Estilo Blender / Desktop Application) -->
+        <div id="app-title-bar">
+            <div class="title-bar-left">
+                <img src="app_icon.ico" class="title-bar-icon" alt="NSP" title="Neo Substance Painter">
+                <span class="title-bar-app-name">NSP</span>
+                <span class="title-bar-sep">|</span>
+                <span class="title-bar-file-label" id="title-bar-filename" title="Doble clic para renombrar proyecto">Sin título</span>
+                <span class="title-bar-badge badge-nsp" id="title-bar-badge">NSP</span>
+                <span class="title-bar-status" id="title-bar-status">Guardado</span>
+            </div>
+            <div class="title-bar-center" id="title-bar-full" title="Ruta y nombre del archivo activo">
+                Sin título [Proyecto NSP] - Neo Substance Painter - Pepakura Edition
+            </div>
+            <div class="title-bar-right">
+                <span class="title-bar-piece-badge" id="title-bar-active-piece" style="display: none;">🧩 Pieza Activa</span>
+                <span class="title-bar-res" id="title-bar-res" title="Resolución de Textura">2048 × 2048 px</span>
+            </div>
+        </div>
+
         <!-- Top Ribbon Toolbar (Estilo MS Paint) -->
         <header id="ribbon">
             
@@ -1159,51 +1178,67 @@
                 <!-- Banco de Trabajo Interactivo A4 (Modo Unfold) -->
                 <div id="unfold-workbench" style="display: none; position: absolute; inset: 0; z-index: 5; background: #1a1a1a; overflow: hidden;">
                     <canvas id="canvas-unfold" style="position: absolute; top: 0; left: 0;"></canvas>
-                    <div id="unfold-floating-toolbar" style="position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 6px; z-index: 20; background: rgba(25, 25, 25, 0.95); padding: 5px 10px; border-radius: 6px; border: 1px solid #444; box-shadow: 0 4px 14px rgba(0,0,0,0.6);">
-                        <button type="button" id="btn-unfold-back-to-2d" class="ribbon-btn" style="background: #5e35b1; border-color: #4527a0; min-width: 120px; font-weight: bold; padding: 0 10px; font-size: 0.85em;" title="Salir de la Mesa A4 y volver al lienzo de pintura Vista 2D (UV)">🎨 Volver a Vista 2D</button>
-                        <span style="display: flex; align-items: center; gap: 4px; color: #ff9800; font-weight: bold; font-size: 11px; padding: 2px 6px; background: rgba(0,0,0,0.4); border-radius: 4px; border: 1px solid rgba(255,152,0,0.3);">✂️ Mesa A4</span>
-                        <button type="button" id="btn-unfold-autopack" class="ribbon-btn" style="background: #0288d1; min-width: 100px; font-weight: bold;" title="Organizar automáticamente todas las piezas en hojas A4 con espacio para solapas">🧩 Auto-Acomodar</button>
-                        <button type="button" id="btn-unfold-rotate" class="size-step-btn" style="width: auto; padding: 0 7px; font-size: 0.85em; font-weight: bold;" title="Girar pieza seleccionada 45° (o usa clic derecho)">↻ 45°</button>
-                        <button type="button" id="btn-unfold-add-page" class="size-step-btn" style="width: auto; padding: 0 7px; font-size: 0.85em;" title="Añadir una nueva hoja A4 vacía">📄 + Hoja</button>
-                        <button type="button" id="btn-unfold-clean-pages" class="size-step-btn" style="width: auto; padding: 0 7px; font-size: 0.85em; color: #ffab91;" title="Eliminar y compactar hojas vacías que no contienen piezas">🗑️ Limpiar</button>
-                        <button type="button" id="btn-unfold-measure" class="size-step-btn" style="width: auto; padding: 0 7px; font-size: 0.85em; color: #ffecb3;" title="Regla interactiva: haz clic y arrastra en el lienzo para medir distancias exactas en mm">📏 Medir</button>
-                        
-                        <div style="width: 1px; height: 20px; background: #555; margin: 0 2px;"></div>
-                        <div id="unfold-annotation-tools" style="display: flex; align-items: center; gap: 4px;">
-                            <button type="button" id="btn-unfold-tool-select" class="size-step-btn active" style="width: auto; padding: 0 7px; font-size: 0.85em; font-weight: bold;" title="Modo Mover: Seleccionar y mover piezas o anotaciones">👆 Mover</button>
-                            <button type="button" id="btn-unfold-tool-text" class="size-step-btn" style="width: auto; padding: 0 7px; font-size: 0.85em;" title="Añadir Nota de Texto: Haz clic en la hoja para escribir">🏷️ Texto</button>
-                            <button type="button" id="btn-unfold-tool-arrow" class="size-step-btn" style="width: auto; padding: 0 7px; font-size: 0.85em;" title="Flecha Indicativa: Haz clic y arrastra hacia la solapa o arista a señalar">↗️ Flecha</button>
-                            <button type="button" id="btn-unfold-tool-badge" class="size-step-btn" style="width: auto; padding: 0 7px; font-size: 0.85em;" title="Paso Numerado (①, ②, ③...): Haz clic en la hoja para colocar círculos de ensamble">🔢 Número</button>
-                            <button type="button" id="btn-unfold-tool-cut" class="size-step-btn" style="width: auto; padding: 0 7px; font-size: 0.85em;" title="Guía de Corte: Haz clic para colocar línea asistida de corte">✂️ Corte</button>
-                            <button type="button" id="btn-unfold-tool-glue" class="size-step-btn" style="width: auto; padding: 0 7px; font-size: 0.85em;" title="Guía de Pegado: Haz clic para señalar zona de pegamento">💧 Pegar</button>
+                    <!-- Contenedor HUD Superior Adaptativo (evita desbordamiento sobre Vista 3D) -->
+                    <div id="unfold-header-hud">
+                        <div id="unfold-floating-toolbar">
+                            <!-- Grupo 1: Salir & Modo -->
+                            <div class="unfold-tool-group">
+                                <button type="button" id="btn-unfold-back-to-2d" class="ribbon-btn" style="background: #5e35b1; border-color: #4527a0; padding: 2px 8px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Salir de la Mesa A4 y volver al lienzo de pintura Vista 2D (UV)">🎨 2D (UV)</button>
+                                <span style="display: inline-flex; align-items: center; gap: 3px; color: #ff9800; font-weight: bold; font-size: 11px; padding: 2px 6px; background: rgba(0,0,0,0.5); border-radius: 4px; border: 1px solid rgba(255,152,0,0.3); white-space: nowrap;">✂️ Mesa A4</span>
+                            </div>
+
+                            <div style="width: 1px; height: 18px; background: #555; margin: 0 1px;"></div>
+
+                            <!-- Grupo 2: Acciones de Mesa -->
+                            <div class="unfold-tool-group">
+                                <button type="button" id="btn-unfold-autopack" class="ribbon-btn" style="background: #0288d1; padding: 2px 7px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Organizar automáticamente todas las piezas en hojas A4 con espacio para solapas">🧩 Auto</button>
+                                <button type="button" id="btn-unfold-rotate" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Girar pieza seleccionada 45° (o usa clic derecho)">↻ 45°</button>
+                                <button type="button" id="btn-unfold-add-page" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Añadir una nueva hoja A4 vacía">📄 +Hoja</button>
+                                <button type="button" id="btn-unfold-clean-pages" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; color: #ffab91; white-space: nowrap;" title="Eliminar y compactar hojas vacías que no contienen piezas">🗑️ Limpiar</button>
+                                <button type="button" id="btn-unfold-measure" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; color: #ffecb3; white-space: nowrap;" title="Regla interactiva: haz clic y arrastra en el lienzo para medir distancias exactas en mm">📏 Medir</button>
+                            </div>
+
+                            <div style="width: 1px; height: 18px; background: #555; margin: 0 1px;"></div>
+
+                            <!-- Grupo 3: Herramientas de Anotación y Montaje -->
+                            <div id="unfold-annotation-tools" class="unfold-tool-group">
+                                <button type="button" id="btn-unfold-tool-select" class="size-step-btn active" style="width: auto; padding: 0 6px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Modo Mover: Seleccionar y mover piezas o anotaciones">👆 Mover</button>
+                                <button type="button" id="btn-unfold-tool-text" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Añadir Nota de Texto">🏷️ Texto</button>
+                                <button type="button" id="btn-unfold-tool-arrow" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Flecha Indicativa">↗️ Flecha</button>
+                                <button type="button" id="btn-unfold-tool-badge" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Paso Numerado (①, ②, ③...)">🔢 Nº</button>
+                                <button type="button" id="btn-unfold-tool-cut" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Guía de Corte: Tijera vectorial">✂️ Corte</button>
+                                <button type="button" id="btn-unfold-tool-glue" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Guía de Pegado: Gota vectorial">💧 Pegar</button>
+                            </div>
+
+                            <div style="width: 1px; height: 18px; background: #555; margin: 0 1px;"></div>
+
+                            <!-- Grupo 4: Exportación PDF -->
+                            <button type="button" id="btn-unfold-canvas-export-pdf" class="ribbon-btn" style="background: #2e7d32; border-color: #1b5e20; padding: 2px 8px; font-size: 0.82em; font-weight: bold; display: flex; align-items: center; gap: 4px; white-space: nowrap;" title="Exportar PDF A4 vectorial a escala 1:1 exacta con calibración">📄 PDF</button>
                         </div>
 
-                        <div style="width: 1px; height: 20px; background: #555; margin: 0 2px;"></div>
-                        <button type="button" id="btn-unfold-canvas-export-pdf" class="ribbon-btn" style="background: #2e7d32; border-color: #1b5e20; min-width: 95px; font-weight: bold; padding: 0 8px; font-size: 0.85em; display: flex; align-items: center; gap: 4px;" title="Exportar PDF A4 vectorial a escala 1:1 exacta con calibración">📄 PDF</button>
-                    </div>
-
-                    <!-- Barra Flotante de Propiedades de Anotación Seleccionada -->
-                    <div id="unfold-annotation-propbar" style="display: none; position: absolute; top: 52px; left: 10px; z-index: 21; background: rgba(22, 22, 22, 0.95); padding: 4px 10px; border-radius: 6px; border: 1px solid #00e5ff; box-shadow: 0 4px 14px rgba(0,0,0,0.7); align-items: center; gap: 8px;">
-                        <span style="font-size: 11px; color: #00e5ff; font-weight: bold;">✏️ Anotación:</span>
-                        <input type="text" id="unfold-ann-text" class="unfold-input" style="width: 150px; font-size: 11px; padding: 2px 6px;" placeholder="Texto...">
-                        <div style="display: flex; align-items: center; gap: 3px;">
-                            <label style="font-size: 10px; color: #bbb;">Color:</label>
-                            <input type="color" id="unfold-ann-color" value="#d32f2f" style="width: 22px; height: 22px; padding: 0; border: none; cursor: pointer; background: transparent; border-radius: 3px;">
+                        <!-- Barra Flotante de Propiedades de Anotación Seleccionada (ubicada limpiamente debajo de las herramientas) -->
+                        <div id="unfold-annotation-propbar" style="display: none; padding: 4px 10px; border-radius: 6px; border: 1px solid #00e5ff; box-shadow: 0 4px 14px rgba(0,0,0,0.7); align-items: center; gap: 8px;">
+                            <span style="font-size: 11px; color: #00e5ff; font-weight: bold; white-space: nowrap;">✏️ Anotación:</span>
+                            <input type="text" id="unfold-ann-text" class="unfold-input" style="width: 140px; font-size: 11px; padding: 2px 6px;" placeholder="Texto...">
+                            <div style="display: flex; align-items: center; gap: 3px;">
+                                <label style="font-size: 10px; color: #bbb;">Color:</label>
+                                <input type="color" id="unfold-ann-color" value="#d32f2f" style="width: 22px; height: 22px; padding: 0; border: none; cursor: pointer; background: transparent; border-radius: 3px;">
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 3px;">
+                                <label style="font-size: 10px; color: #bbb;">Tamaño:</label>
+                                <select id="unfold-ann-size" class="ribbon-select" style="width: 65px; font-size: 11px;">
+                                    <option value="6">6 pt</option>
+                                    <option value="7">7 pt</option>
+                                    <option value="8">8 pt</option>
+                                    <option value="9" selected>9 pt</option>
+                                    <option value="11">11 pt</option>
+                                    <option value="14">14 pt</option>
+                                    <option value="18">18 pt</option>
+                                </select>
+                            </div>
+                            <button type="button" id="btn-unfold-ann-rotate" class="size-step-btn" style="width: auto; padding: 1px 7px; font-size: 11px;" title="Girar anotación 45°">↻ 45°</button>
+                            <button type="button" id="btn-unfold-ann-delete" class="size-step-btn" style="width: auto; padding: 1px 7px; font-size: 11px; color: #ff5252; border-color: #ff5252;" title="Eliminar anotación (o presiona Supr)">🗑️ Borrar</button>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 3px;">
-                            <label style="font-size: 10px; color: #bbb;">Tamaño:</label>
-                            <select id="unfold-ann-size" class="ribbon-select" style="width: 65px; font-size: 11px;">
-                                <option value="6">6 pt</option>
-                                <option value="7">7 pt</option>
-                                <option value="8">8 pt</option>
-                                <option value="9" selected>9 pt</option>
-                                <option value="11">11 pt</option>
-                                <option value="14">14 pt</option>
-                                <option value="18">18 pt</option>
-                            </select>
-                        </div>
-                        <button type="button" id="btn-unfold-ann-rotate" class="size-step-btn" style="width: auto; padding: 1px 7px; font-size: 11px;" title="Girar anotación 45°">↻ 45°</button>
-                        <button type="button" id="btn-unfold-ann-delete" class="size-step-btn" style="width: auto; padding: 1px 7px; font-size: 11px; color: #ff5252; border-color: #ff5252;" title="Eliminar anotación (o presiona Supr)">🗑️ Borrar</button>
                     </div>
                 </div>
 
@@ -1544,7 +1579,7 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=8.9"></script>
-    <script type="module" src="assembler.js?v=8.9"></script>
+    <script type="module" src="main.js?v=9.1"></script>
+    <script type="module" src="assembler.js?v=9.0"></script>
 </body>
 </html>

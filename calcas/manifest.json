@@ -190,5 +190,21 @@
     "src": "./calcas/mecanica/valvula-circulo.png",
     "filename": "valvula-circulo.png",
     "isUser": false
+  },
+  {
+    "id": "mis_calcas_pantalla-misa_hayase",
+    "name": "Pantalla Misa Hayase",
+    "category": "mis_calcas",
+    "src": "./calcas/mis_calcas/Pantalla-Misa%20Hayase.png",
+    "filename": "Pantalla-Misa Hayase.png",
+    "isUser": true
+  },
+  {
+    "id": "mis_calcas_botones_panel",
+    "name": "Botones Panel",
+    "category": "mis_calcas",
+    "src": "./calcas/mis_calcas/botones%20panel.png",
+    "filename": "botones panel.png",
+    "isUser": true
   }
 ]

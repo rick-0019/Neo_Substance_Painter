@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=8.2';
+import { Painter } from './painter.js?v=9.0';
 import { DecalSystem } from './decals.js?v=8.9';
 import { LayerManager } from './layers.js?v=8.6';
 import { PapercraftEngine } from './papercraft.js?v=8.6';
@@ -45,10 +45,192 @@ canvasUV.width = TEX_SIZE;
 canvasUV.height = TEX_SIZE;
 const ctxUV = canvasUV.getContext('2d');
 
+// ========================================================
+// SISTEMA DE TÍTULO Y CONTROL DE ARCHIVO ACTIVO (Estilo Blender)
+// ========================================================
+window.currentProjectFileName = 'Sin título';
+window.currentProjectFileType = 'nsp';
+window.currentProjectIsDirty = false;
+
+function updateAppTitle(fileName, fileType = 'nsp', isDirty = false) {
+    if (!fileName || fileName.trim() === '') {
+        fileName = 'Sin título';
+    }
+    window.currentProjectFileName = fileName;
+    window.currentProjectFileType = fileType;
+    window.currentProjectIsDirty = isDirty;
+    
+    const ext = fileType === 'obj' ? '.obj' : (fileType === 'nspp' ? '.nspp' : '.nsp');
+    const displayExt = fileName.toLowerCase().endsWith(ext) ? '' : ext;
+    const fullFileName = `${fileName}${displayExt}`;
+    const typeLabel = fileType === 'obj' ? 'Modelo 3D OBJ' : (fileType === 'nspp' ? 'Proyecto Ensamblador' : 'Proyecto NSP');
+    const dirtyMark = isDirty ? ' ●' : '';
+    
+    const fullTitle = `${fullFileName}${dirtyMark} [${typeLabel}] - Neo Substance Painter - Pepakura Edition`;
+    document.title = fullTitle;
+    
+    const elName = document.getElementById('title-bar-filename');
+    if (elName) elName.textContent = fileName + dirtyMark;
+    
+    const elBadge = document.getElementById('title-bar-badge');
+    if (elBadge) {
+        elBadge.textContent = fileType.toUpperCase();
+        elBadge.className = `title-bar-badge badge-${fileType}`;
+    }
+    
+    const elStatus = document.getElementById('title-bar-status');
+    if (elStatus) {
+        elStatus.textContent = isDirty ? 'Modificado' : 'Guardado';
+        elStatus.className = `title-bar-status ${isDirty ? 'dirty' : ''}`;
+    }
+    
+    const elFull = document.getElementById('title-bar-full');
+    if (elFull) elFull.textContent = `${fullFileName}${dirtyMark} [${typeLabel}] - Neo Substance Painter`;
+    
+    const elRes = document.getElementById('title-bar-res');
+    if (elRes && typeof TEX_SIZE !== 'undefined') {
+        elRes.textContent = `${TEX_SIZE} × ${TEX_SIZE} px`;
+    }
+}
+window.updateAppTitle = updateAppTitle;
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('title-bar-filename')?.addEventListener('dblclick', () => {
+        const current = window.currentProjectFileName || 'Mi_Modelo';
+        const newName = prompt('Renombrar proyecto / archivo:', current);
+        if (newName && newName.trim()) {
+            updateAppTitle(newName.trim(), window.currentProjectFileType || 'nsp', true);
+        }
+    });
+});
+
+// ========================================================
+// SISTEMA DE CARTELES Y DIÁLOGOS MODALES ESTILIZADOS
+// ========================================================
+function escapeHtml(str) {
+    if (typeof str !== 'string') return String(str || '');
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function showAppModal({
+    title = null,
+    message = '',
+    icon = null,
+    type = 'alert', // 'alert' | 'confirm'
+    confirmText = 'Aceptar',
+    cancelText = 'Cancelar',
+    onConfirm = null,
+    onCancel = null
+} = {}) {
+    return new Promise((resolve) => {
+        let accentClass = 'accent-info';
+        let defaultIcon = 'ℹ️';
+        let defaultTitle = 'Aviso';
+
+        const lowerMsg = String(message || '').toLowerCase();
+        if (lowerMsg.includes('éxito') || lowerMsg.includes('exitosamente') || lowerMsg.includes('guardado')) {
+            accentClass = 'accent-success';
+            defaultIcon = '✅';
+            defaultTitle = '¡Operación Exitosa!';
+        } else if (lowerMsg.includes('error') || lowerMsg.includes('no se pudo') || lowerMsg.includes('falló') || lowerMsg.includes('no compatible')) {
+            accentClass = 'accent-error';
+            defaultIcon = '⚠️';
+            defaultTitle = 'Atención';
+        } else if (type === 'confirm' || lowerMsg.includes('deseas') || lowerMsg.includes('desea') || lowerMsg.includes('seguro') || lowerMsg.includes('reiniciará')) {
+            accentClass = 'accent-warning';
+            defaultIcon = '❓';
+            defaultTitle = 'Confirmación';
+        }
+
+        const finalTitle = title || defaultTitle;
+        const finalIcon = icon || defaultIcon;
+
+        const existing = document.getElementById('app-modal-backdrop');
+        if (existing) existing.remove();
+
+        const backdrop = document.createElement('div');
+        backdrop.id = 'app-modal-backdrop';
+        backdrop.className = 'app-modal-backdrop';
+
+        backdrop.innerHTML = `
+            <div class="app-modal-card ${accentClass}" role="dialog" aria-modal="true">
+                <div class="app-modal-header">
+                    <span class="app-modal-icon">${finalIcon}</span>
+                    <span class="app-modal-title">${escapeHtml(finalTitle)}</span>
+                    <button type="button" class="app-modal-close-btn" id="app-modal-close" title="Cerrar (Esc)">✕</button>
+                </div>
+                <div class="app-modal-body">${escapeHtml(message).replace(/\n/g, '<br>')}</div>
+                <div class="app-modal-actions">
+                    ${type === 'confirm' ? `<button type="button" class="app-modal-btn app-modal-btn-cancel" id="app-modal-cancel">${escapeHtml(cancelText)}</button>` : ''}
+                    <button type="button" class="app-modal-btn app-modal-btn-confirm" id="app-modal-confirm">${escapeHtml(confirmText)}</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(backdrop);
+
+        const btnConfirm = backdrop.querySelector('#app-modal-confirm');
+        const btnCancel = backdrop.querySelector('#app-modal-cancel');
+        const btnClose = backdrop.querySelector('#app-modal-close');
+
+        const cleanup = (confirmed) => {
+            document.removeEventListener('keydown', handleKeyDown);
+            backdrop.remove();
+            if (confirmed) {
+                if (typeof onConfirm === 'function') onConfirm();
+                resolve(true);
+            } else {
+                if (typeof onCancel === 'function') onCancel();
+                resolve(false);
+            }
+        };
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                cleanup(false);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                cleanup(true);
+            }
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+
+        btnConfirm?.addEventListener('click', () => cleanup(true));
+        btnCancel?.addEventListener('click', () => cleanup(false));
+        btnClose?.addEventListener('click', () => cleanup(false));
+
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) cleanup(false);
+        });
+
+        setTimeout(() => {
+            btnConfirm?.focus();
+        }, 30);
+    });
+}
+window.showAppModal = showAppModal;
+window.showAppConfirm = (message, options = {}) => showAppModal({ message, type: 'confirm', ...options });
+
+// Reemplazar window.alert para que todos los carteles del navegador se vuelvan estilizados y oscuros
+window.alert = function(msg) {
+    showAppModal({ message: msg, type: 'alert' });
+};
+
 export function createNewProject(promptUser = true) {
-    if (promptUser && !confirm('¿Crear un nuevo archivo? Se descartarán los cambios no guardados y se reiniciarán las 4 capas estándar (Calcas, Panelado, Color Base y Fondo Blanco).')) {
+    if (promptUser) {
+        showAppConfirm('¿Crear un nuevo archivo? Se descartarán los cambios no guardados y se reiniciarán las 4 capas estándar (Calcas, Panelado, Color Base y Fondo Blanco).', {
+            title: 'Nuevo Proyecto',
+            confirmText: 'Crear Nuevo',
+            onConfirm: () => doCreateNewProject()
+        });
         return;
     }
+    doCreateNewProject();
+}
+
+function doCreateNewProject() {
 
     if (window.decalSystem) {
         window.decalSystem.deselectDecal();
@@ -86,6 +268,8 @@ export function createNewProject(promptUser = true) {
 
     drawUVWireframe();
 
+    updateAppTitle('Sin título', 'nsp', false);
+
     const paintFileDropdown = document.getElementById('paint-file-dropdown');
     if (paintFileDropdown) paintFileDropdown.style.display = 'none';
 }
@@ -96,21 +280,26 @@ document.getElementById('btn-new-project')?.addEventListener('click', () => {
 });
 
 document.getElementById('btn-apply-res')?.addEventListener('click', () => {
-    if(!confirm('Cambiar la resolución redimensionará el lienzo y reiniciará el proyecto. ¿Continuar?')) return;
-    TEX_SIZE = parseInt(document.getElementById('doc-resolution').value, 10);
-    
-    layerManager.resize(TEX_SIZE, TEX_SIZE);
-    selectionManager.resize(TEX_SIZE, TEX_SIZE);
-    
-    canvasUV.width = TEX_SIZE;
-    canvasUV.height = TEX_SIZE;
-    const canvasUI = document.getElementById('canvas-ui');
-    if (canvasUI) {
-        canvasUI.width = TEX_SIZE;
-        canvasUI.height = TEX_SIZE;
-    }
-    
-    createNewProject(false);
+    showAppConfirm('Cambiar la resolución redimensionará el lienzo y reiniciará el proyecto. ¿Continuar?', {
+        title: 'Cambiar Resolución',
+        confirmText: 'Continuar',
+        onConfirm: () => {
+            TEX_SIZE = parseInt(document.getElementById('doc-resolution').value, 10);
+            
+            layerManager.resize(TEX_SIZE, TEX_SIZE);
+            selectionManager.resize(TEX_SIZE, TEX_SIZE);
+            
+            canvasUV.width = TEX_SIZE;
+            canvasUV.height = TEX_SIZE;
+            const canvasUI = document.getElementById('canvas-ui');
+            if (canvasUI) {
+                canvasUI.width = TEX_SIZE;
+                canvasUI.height = TEX_SIZE;
+            }
+            
+            createNewProject(false);
+        }
+    });
 });
 
 // Create Three.js Texture from Canvas
@@ -749,6 +938,11 @@ function loadOBJContents(contents, mtlContents = null) {
         decalSystem.setMesh(state.mesh);
         setupSelection3DOverlay(state.mesh);
         
+        if (!window.currentProjectFileName || window.currentProjectFileName === 'Sin título') {
+            window.currentProjectFileName = 'Modelo 3D';
+        }
+        updateAppTitle(window.currentProjectFileName, window.currentProjectFileType || 'obj', false);
+        
         // Comprobar si las coordenadas UV vienen superpuestas en el OBJ original
         if (papercraft.checkMeshUVOverlaps(state.mesh)) {
             console.log('[Papercraft] Se detectaron islas UV superpuestas. Empaquetando UVs para evitar encimamiento...');
@@ -1004,6 +1198,7 @@ document.getElementById('input-obj')?.addEventListener('change', (e) => {
     const mtlFile = files.find(f => f.name.toLowerCase().endsWith('.mtl'));
 
     window.currentProjectFileName = objFile.name.replace(/\.[^/.]+$/, '');
+    updateAppTitle(window.currentProjectFileName, 'obj', false);
     const reader = new FileReader();
     reader.onload = (event) => {
         const objText = event.target.result;
@@ -1153,6 +1348,8 @@ window.addEventListener('drop', (e) => {
         };
         reader.readAsText(nsppFile);
     } else if (nspFile && typeof window.loadProjectNSP === 'function') {
+        window.currentProjectFileName = nspFile.name.replace(/\.[^/.]+$/, '');
+        updateAppTitle(window.currentProjectFileName, 'nsp', false);
         const reader = new FileReader();
         reader.onload = (ev) => {
             try {
@@ -1165,6 +1362,7 @@ window.addEventListener('drop', (e) => {
         reader.readAsText(nspFile);
     } else if (objFile) {
         window.currentProjectFileName = objFile.name.replace(/\.[^/.]+$/, '');
+        updateAppTitle(window.currentProjectFileName, 'obj', false);
         const reader = new FileReader();
         reader.onload = (ev) => {
             const objText = ev.target.result;
@@ -1337,14 +1535,6 @@ function updateAnnotationUI() {
             textInput.style.display = 'inline-block';
             textInput.placeholder = 'Número...';
             textInput.value = sel.badgeNumber !== undefined ? String(sel.badgeNumber) : '';
-        } else if (sel.type === 'cut') {
-            textInput.style.display = 'inline-block';
-            textInput.placeholder = 'Texto corte...';
-            textInput.value = sel.text || 'Corte';
-        } else if (sel.type === 'glue') {
-            textInput.style.display = 'inline-block';
-            textInput.placeholder = 'Texto pegado...';
-            textInput.value = sel.text || 'Pegar aquí';
         } else {
             textInput.style.display = 'none';
         }
@@ -1353,8 +1543,77 @@ function updateAnnotationUI() {
     if (colorInput && sel.color) {
         colorInput.value = sel.color;
     }
-    if (sizeSelect && sel.fontSize) {
-        sizeSelect.value = String(sel.fontSize);
+    if (sizeSelect) {
+        if (sel.type === 'text' || sel.type === 'badge') {
+            sizeSelect.style.display = 'inline-block';
+            if (sel.fontSize) sizeSelect.value = String(sel.fontSize);
+        } else {
+            sizeSelect.style.display = 'none';
+        }
+    }
+
+    // Renderizar lista interactiva en la tarjeta del Sidebar
+    const listEl = document.getElementById('unfold-ann-list-placeholder');
+    if (listEl) {
+        if (!papercraft.annotations || papercraft.annotations.length === 0) {
+            listEl.innerHTML = `<div style="font-size: 0.74em; color: #888; padding: 4px 0;">💡 <i>Usa los botones arriba o en la barra flotante para colocar notas, flechas y pasos de montaje en las hojas.</i></div>`;
+        } else {
+            let html = `<div style="display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; padding: 2px 0;">`;
+            papercraft.annotations.forEach((ann, idx) => {
+                let icon = '🏷️';
+                let label = ann.text || `Nota ${idx + 1}`;
+                if (ann.type === 'arrow') {
+                    icon = '↗️';
+                    label = `Flecha ${idx + 1}`;
+                } else if (ann.type === 'badge') {
+                    icon = '🔢';
+                    label = `Paso ${ann.badgeNumber || idx + 1}`;
+                } else if (ann.type === 'cut') {
+                    icon = '✂️';
+                    label = 'Guía de Corte';
+                } else if (ann.type === 'glue') {
+                    icon = '💧';
+                    label = 'Guía de Pegado';
+                }
+                const isSel = papercraft.selectedAnnotation && papercraft.selectedAnnotation.id === ann.id;
+                html += `
+                    <div class="ann-item-row" data-id="${ann.id}" style="display: flex; align-items: center; justify-content: space-between; padding: 4px 6px; background: ${isSel ? 'rgba(0, 229, 255, 0.22)' : 'rgba(255,255,255,0.06)'}; border: 1px solid ${isSel ? '#00e5ff' : '#333'}; border-radius: 4px; font-size: 11px; cursor: pointer;">
+                        <span style="display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            <span>${icon}</span>
+                            <span style="color: ${ann.color || '#fff'}; font-weight: bold;">${escapeHtml(label)}</span>
+                            <span style="font-size: 9px; color: #888;">(Hoja ${(ann.pageIndex || 0) + 1})</span>
+                        </span>
+                        <button type="button" class="ann-del-btn" data-id="${ann.id}" style="background: rgba(255,82,82,0.15); border: 1px solid rgba(255,82,82,0.4); color: #ff5252; cursor: pointer; padding: 1px 5px; font-size: 11px; border-radius: 3px;" title="Borrar esta anotación">🗑️</button>
+                    </div>
+                `;
+            });
+            html += `</div>`;
+            listEl.innerHTML = html;
+
+            listEl.querySelectorAll('.ann-item-row').forEach(row => {
+                row.addEventListener('click', (e) => {
+                    if (e.target.closest('.ann-del-btn')) return;
+                    const id = row.getAttribute('data-id');
+                    const target = papercraft.annotations.find(a => a.id === id);
+                    if (target) {
+                        papercraft.selectedAnnotation = target;
+                        updateAnnotationUI();
+                        renderUnfoldWorkbench();
+                    }
+                });
+            });
+
+            listEl.querySelectorAll('.ann-del-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const id = btn.getAttribute('data-id');
+                    papercraft.removeAnnotation(id);
+                    papercraft.selectedAnnotation = null;
+                    updateAnnotationUI();
+                    renderUnfoldWorkbench();
+                });
+            });
+        }
     }
 }
 window.updateAnnotationUI = updateAnnotationUI;
@@ -1441,15 +1700,15 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
             return;
         }
 
-        // 3. Herramienta Corte (✂️ Línea de corte asistida)
+        // 3. Herramienta Corte (✂️ Tijera vectorial y línea punteada)
         if (activeTool === 'cut') {
+            const chosenColor = document.getElementById('unfold-ann-color')?.value || '#d32f2f';
             const newAnn = papercraft.addAnnotation({
                 type: 'cut',
                 pageIndex,
-                x: Math.round(Math.max(5, Math.min(papercraft.A4_W - 20, pageMmX))),
+                x: Math.round(Math.max(5, Math.min(papercraft.A4_W - 27, pageMmX))),
                 y: Math.round(Math.max(5, Math.min(papercraft.A4_H - 10, mmY))),
-                text: 'Corte',
-                color: '#e53935'
+                color: chosenColor
             });
             papercraft.selectedAnnotation = newAnn;
             setUnfoldAnnotationTool('select');
@@ -1458,15 +1717,15 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
             return;
         }
 
-        // 4. Herramienta Pegar (💧 Guía de pegamento)
+        // 4. Herramienta Pegar (💧 Badge con gota vectorial)
         if (activeTool === 'glue') {
+            const chosenColor = document.getElementById('unfold-ann-color')?.value || '#0288d1';
             const newAnn = papercraft.addAnnotation({
                 type: 'glue',
                 pageIndex,
-                x: Math.round(Math.max(5, Math.min(papercraft.A4_W - 20, pageMmX))),
+                x: Math.round(Math.max(5, Math.min(papercraft.A4_W - 10, pageMmX))),
                 y: Math.round(Math.max(5, Math.min(papercraft.A4_H - 10, mmY))),
-                text: 'Pegar aquí',
-                color: '#1976d2'
+                color: chosenColor
             });
             papercraft.selectedAnnotation = newAnn;
             setUnfoldAnnotationTool('select');
@@ -1918,11 +2177,15 @@ document.getElementById('btn-side-ann-cut')?.addEventListener('click', () => set
 document.getElementById('btn-side-ann-glue')?.addEventListener('click', () => setUnfoldAnnotationTool('glue'));
 document.getElementById('btn-side-ann-clear')?.addEventListener('click', () => {
     if (papercraft) {
-        if (confirm('¿Desea borrar todas las anotaciones de las hojas A4?')) {
-            papercraft.clearAnnotations();
-            updateAnnotationUI();
-            renderUnfoldWorkbench();
-        }
+        showAppConfirm('¿Desea borrar todas las anotaciones de las hojas A4?', {
+            title: 'Limpiar Anotaciones',
+            confirmText: 'Borrar Todo',
+            onConfirm: () => {
+                papercraft.clearAnnotations();
+                updateAnnotationUI();
+                renderUnfoldWorkbench();
+            }
+        });
     }
 });
 
@@ -3259,9 +3522,14 @@ async function saveProjectNSP() {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = 'proyecto_substance.nsp';
+        const currentName = (window.currentProjectFileName && window.currentProjectFileName !== 'Sin título') 
+            ? window.currentProjectFileName 
+            : 'proyecto_substance';
+        link.download = `${currentName}.nsp`;
         link.click();
         URL.revokeObjectURL(url);
+
+        updateAppTitle(currentName, 'nsp', false);
     } catch (err) {
         console.error('Error guardando proyecto .nsp:', err);
         alert('Error al guardar el proyecto: ' + err.message);
@@ -3288,9 +3556,11 @@ async function loadProjectNSP(fileOrData, silent = false) {
         }
 
         if (!silent && (!project.format || project.format !== 'NeoSubstancePainter')) {
-            if (!confirm('El archivo no parece ser un proyecto .nsp válido. ¿Deseas intentar cargarlo de todos modos?')) {
-                return;
-            }
+            const ok = await showAppConfirm('El archivo no parece ser un proyecto .nsp válido. ¿Deseas intentar cargarlo de todos modos?', {
+                title: 'Formato no reconocido',
+                confirmText: 'Intentar Cargar'
+            });
+            if (!ok) return;
         }
 
         // 0. Si el proyecto incluye su propio modelo 3D (OBJ), cargarlo primero
@@ -3485,6 +3755,7 @@ document.getElementById('input-project')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
         window.currentProjectFileName = file.name.replace(/\.[^/.]+$/, '');
+        updateAppTitle(window.currentProjectFileName, 'nsp', false);
         loadProjectNSP(file);
     }
     e.target.value = '';

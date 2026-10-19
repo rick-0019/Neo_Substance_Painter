@@ -218,9 +218,16 @@ export class ModelAssembler {
         // Botón Vaciar
         document.getElementById('btn-assembler-clear')?.addEventListener('click', () => {
             if (this.pieces.length === 0) return;
-            if (confirm('¿Vaciar la lista de piezas del ensamblador?')) {
-                this.clearAllPieces();
-            }
+            const askConfirm = typeof window.showAppConfirm === 'function' ? window.showAppConfirm : (m, opt) => {
+                if (confirm(m)) opt?.onConfirm?.();
+            };
+            askConfirm('¿Vaciar la lista de piezas del ensamblador?', {
+                title: 'Vaciar Ensamblador',
+                confirmText: 'Vaciar',
+                onConfirm: () => {
+                    this.clearAllPieces();
+                }
+            });
         });
 
         // Botón Ver Ensamblado 3D
@@ -534,6 +541,12 @@ export class ModelAssembler {
         if (!piece) return;
 
         this.activePieceId = id;
+
+        const titleBadge = document.getElementById('title-bar-active-piece');
+        if (titleBadge) {
+            titleBadge.textContent = `🧩 ${piece.name}`;
+            titleBadge.style.display = 'inline-flex';
+        }
 
         // Cargar en el editor principal silenciosamente (sin alerts ni prompts)
         if (piece.projectData && typeof window.loadProjectNSP === 'function') {

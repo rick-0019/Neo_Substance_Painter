@@ -3384,8 +3384,8 @@ export class DecalSystem {
             handleRadius = 5.5;
         }
 
-        // Solo mostrar los 4 nodos intermedios (n, s, w, e) si la calca es grande (>= 70px)
-        const showEdgeHandles = d.width >= 70 && d.height >= 70;
+        // Solo mostrar los 4 nodos intermedios (n, s, w, e) si la calca es grande (>= 70px) y NO es curva Bézier
+        const showEdgeHandles = d.type !== 'curve' && d.width >= 70 && d.height >= 70;
 
         const drawHandle = (hx, hy, isRotate = false) => {
             if (isRotate) {
@@ -3417,7 +3417,7 @@ export class DecalSystem {
         drawHandle(-halfW,  halfH);
         drawHandle( halfW,  halfH);
 
-        // Bordes (ajuste de anchura o altura, solo cuando el tamaño es suficiente)
+        // Bordes (ajuste de anchura o altura, solo cuando el tamaño es suficiente y no es curva)
         if (showEdgeHandles) {
             drawHandle(0, -halfH);
             drawHandle(0,  halfH);
@@ -3436,26 +3436,28 @@ export class DecalSystem {
 
         drawHandle(0, -halfH - stemLength, true);
 
-        // Diana / Cruz central de movimiento para manipulación directa y ágil (especialmente en calcas pequeñas)
-        const crossSize = Math.max(3.5, Math.min(7, Math.round(minDim * 0.16)));
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(-crossSize, 0); ctx.lineTo(crossSize, 0);
-        ctx.moveTo(0, -crossSize); ctx.lineTo(0, crossSize);
-        ctx.stroke();
+        // Diana / Cruz central de movimiento (solo en calcas o figuras normales, NUNCA en curvas Bézier para no solapar el nodo central de arqueado)
+        if (d.type !== 'curve') {
+            const crossSize = Math.max(3.5, Math.min(7, Math.round(minDim * 0.16)));
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(-crossSize, 0); ctx.lineTo(crossSize, 0);
+            ctx.moveTo(0, -crossSize); ctx.lineTo(0, crossSize);
+            ctx.stroke();
 
-        ctx.strokeStyle = '#0078d7';
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(-crossSize, 0); ctx.lineTo(crossSize, 0);
-        ctx.moveTo(0, -crossSize); ctx.lineTo(0, crossSize);
-        ctx.stroke();
+            ctx.strokeStyle = '#0078d7';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(-crossSize, 0); ctx.lineTo(crossSize, 0);
+            ctx.moveTo(0, -crossSize); ctx.lineTo(0, crossSize);
+            ctx.stroke();
 
-        ctx.beginPath();
-        ctx.arc(0, 0, 1.8, 0, Math.PI * 2);
-        ctx.fillStyle = '#00f3ff';
-        ctx.fill();
+            ctx.beginPath();
+            ctx.arc(0, 0, 1.8, 0, Math.PI * 2);
+            ctx.fillStyle = '#00f3ff';
+            ctx.fill();
+        }
 
         // Nodos interactivos Bézier en la curva
         if (d.type === 'curve' && d.shapeOptions) {
@@ -3465,9 +3467,9 @@ export class DecalSystem {
             const mid = { x: s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2, y: s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2 };
 
             // Línea guía tenue discontinua cyan entre nodos
-            ctx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
+            ctx.strokeStyle = 'rgba(0, 229, 255, 0.55)';
             ctx.setLineDash([4, 4]);
-            ctx.lineWidth = 1.2;
+            ctx.lineWidth = 1.5;
             ctx.beginPath();
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(mid.x, mid.y);
@@ -3479,16 +3481,16 @@ export class DecalSystem {
             ctx.fillStyle = '#ffffff';
             ctx.strokeStyle = '#0078d7';
             ctx.lineWidth = 2;
-            ctx.fillRect(p1.x - 5, p1.y - 5, 10, 10);
-            ctx.strokeRect(p1.x - 5, p1.y - 5, 10, 10);
+            ctx.fillRect(p1.x - 6, p1.y - 6, 12, 12);
+            ctx.strokeRect(p1.x - 6, p1.y - 6, 12, 12);
 
             // Tirador Extremo 2 (P2)
-            ctx.fillRect(p2.x - 5, p2.y - 5, 10, 10);
-            ctx.strokeRect(p2.x - 5, p2.y - 5, 10, 10);
+            ctx.fillRect(p2.x - 6, p2.y - 6, 12, 12);
+            ctx.strokeRect(p2.x - 6, p2.y - 6, 12, 12);
 
-            // Tirador Curvatura (Mid)
+            // Tirador Curvatura (Mid) - Círculo destacado para arquear la curva
             ctx.beginPath();
-            ctx.arc(mid.x, mid.y, 8, 0, Math.PI * 2);
+            ctx.arc(mid.x, mid.y, 9, 0, Math.PI * 2);
             ctx.fillStyle = '#00e5ff';
             ctx.fill();
             ctx.strokeStyle = '#ffffff';
@@ -3497,9 +3499,9 @@ export class DecalSystem {
 
             // Anillo exterior cyan brillante
             ctx.beginPath();
-            ctx.arc(mid.x, mid.y, 11, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(0, 229, 255, 0.7)';
-            ctx.lineWidth = 1.2;
+            ctx.arc(mid.x, mid.y, 13, 0, Math.PI * 2);
+            ctx.strokeStyle = '#00e5ff';
+            ctx.lineWidth = 1.5;
             ctx.stroke();
         }
 
@@ -3560,40 +3562,45 @@ export class DecalSystem {
         const minDim = Math.min(d.width, d.height);
         const stemLength = Math.max(22, Math.min(36, Math.round(minDim * 0.22 + 14)));
 
-        // 1. ZONA SEGURA CENTRAL DE MOVIMIENTO (Solución profesional para calcas pequeñas):
-        // Garantiza que el centro de la calca NUNCA sea bloqueado por la tolerancia de los nodos.
-        const centerSafeRadius = Math.max(10, Math.min(26, minDim * 0.45));
-        if (Math.hypot(lx, ly) <= centerSafeRadius) {
-            return 'move';
-        }
+        const canvasRect = this.canvas.getBoundingClientRect();
+        const screenToCanvas = (canvasRect && canvasRect.width > 0) ? (this.canvas.width / canvasRect.width) : 1;
 
-        // 2. Tolerancia adaptativa: si la calca es pequeña, la tolerancia se reduce proporcionalmente
-        // para que las esquinas no canibalicen el espacio interior de la calca
-        const handleHitTol = Math.max(4, Math.min(13, minDim * 0.28));
-
-        // 3. Círculo de rotación superior
-        if (Math.hypot(lx, ly - (-halfH - stemLength)) <= Math.max(8, handleHitTol + 2)) {
-            return 'rotate';
-        }
-
-        // 4. Nodos de vértices individuales de Contenedor Vectorial
-        if (d.type === 'vector_container' && d.shapeOptions && d.shapeOptions.points) {
-            const pts = d.shapeOptions.points;
-            for (let i = 0; i < pts.length; i++) {
-                if (Math.hypot(lx - pts[i].x, ly - pts[i].y) <= handleHitTol + 3) {
-                    return 'vnode_' + i;
-                }
-            }
-        }
-
-        // 5. Nodos interactivos Bézier en la curva
+        // 1. PRIORIDAD MÁXIMA: Nodos interactivos Bézier si es curva (tolerancia generosa de 24px en pantalla)
         if (d.type === 'curve' && d.shapeOptions) {
             const s = d.shapeOptions;
             const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
             const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
-            if (Math.hypot(lx - midX, ly - midY) <= handleHitTol + 3) return 'curve_mid';
-            if (Math.hypot(lx - s.x1, ly - s.y1) <= handleHitTol + 3) return 'curve_p1';
-            if (Math.hypot(lx - s.x2, ly - s.y2) <= handleHitTol + 3) return 'curve_p2';
+            const curveNodeTol = Math.max(16, 24 * screenToCanvas);
+            if (Math.hypot(lx - midX, ly - midY) <= curveNodeTol) return 'curve_mid';
+            if (Math.hypot(lx - s.x1, ly - s.y1) <= curveNodeTol) return 'curve_p1';
+            if (Math.hypot(lx - s.x2, ly - s.y2) <= curveNodeTol) return 'curve_p2';
+        }
+
+        // 2. Zona segura central de movimiento (solo para figuras y calcas estándar; NUNCA en curvas para evitar conflicto)
+        if (d.type !== 'curve') {
+            const centerSafeRadius = Math.max(10, Math.min(26 * screenToCanvas, minDim * 0.45));
+            if (Math.hypot(lx, ly) <= centerSafeRadius) {
+                return 'move';
+            }
+        }
+
+        // 3. Tolerancia adaptativa escalada a píxeles de pantalla (para resoluciones 2K, 4K y zoom)
+        const handleHitTol = Math.max(12, 16 * screenToCanvas);
+
+        // 4. Círculo de rotación superior
+        if (Math.hypot(lx, ly - (-halfH - stemLength)) <= Math.max(8, handleHitTol + 2)) {
+            return 'rotate';
+        }
+
+        // 5. Nodos de vértices individuales de Contenedor Vectorial
+        if (d.type === 'vector_container' && d.shapeOptions && d.shapeOptions.points) {
+            const pts = d.shapeOptions.points;
+            const vnodeTol = Math.max(14, 20 * screenToCanvas);
+            for (let i = 0; i < pts.length; i++) {
+                if (Math.hypot(lx - pts[i].x, ly - pts[i].y) <= vnodeTol) {
+                    return 'vnode_' + i;
+                }
+            }
         }
 
         // 6. Esquinas (nw, ne, sw, se) - Escala proporcional
@@ -3602,8 +3609,8 @@ export class DecalSystem {
         if (Math.hypot(lx - (-halfW), ly - ( halfH)) <= handleHitTol) return 'sw';
         if (Math.hypot(lx - ( halfW), ly - ( halfH)) <= handleHitTol) return 'se';
 
-        // 7. Nodos del medio (n, s, w, e) - Solo si la calca es amplia (>= 70px)
-        if (d.width >= 70 && d.height >= 70) {
+        // 7. Nodos del medio (n, s, w, e) - Solo si la calca es amplia y NO es curva
+        if (d.type !== 'curve' && d.width >= 70 && d.height >= 70) {
             if (Math.hypot(lx, ly - (-halfH)) <= handleHitTol) return 'n';
             if (Math.hypot(lx, ly - ( halfH)) <= handleHitTol) return 's';
             if (Math.hypot(lx - (-halfW), ly) <= handleHitTol) return 'w';
@@ -3649,9 +3656,35 @@ export class DecalSystem {
                 this.decal2D.dragOffset = { x: x - this.decal2D.x, y: y - this.decal2D.y };
                 this.decal2D.initialDecal = {
                     ...this.decal2D,
-                    points: this.decal2D.shapeOptions?.points ? JSON.parse(JSON.stringify(this.decal2D.shapeOptions.points)) : null
+                    points: this.decal2D.shapeOptions?.points ? JSON.parse(JSON.stringify(this.decal2D.shapeOptions.points)) : null,
+                    shapeOptions: this.decal2D.shapeOptions ? JSON.parse(JSON.stringify(this.decal2D.shapeOptions)) : null
                 };
                 this.decal2D.dragStart = { x, y };
+
+                if (['curve_mid', 'curve_p1', 'curve_p2'].includes(hit) && this.decal2D.shapeOptions) {
+                    const s = this.decal2D.shapeOptions;
+                    const cos = Math.cos(this.decal2D.rotation);
+                    const sin = Math.sin(this.decal2D.rotation);
+                    const midX = s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2;
+                    const midY = s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2;
+                    this.decal2D.curveDrag = {
+                        worldP1: {
+                            x: this.decal2D.x + s.x1 * cos - s.y1 * sin,
+                            y: this.decal2D.y + s.x1 * sin + s.y1 * cos
+                        },
+                        worldP2: {
+                            x: this.decal2D.x + s.x2 * cos - s.y2 * sin,
+                            y: this.decal2D.y + s.x2 * sin + s.y2 * cos
+                        },
+                        worldMid: {
+                            x: this.decal2D.x + midX * cos - midY * sin,
+                            y: this.decal2D.y + midX * sin + midY * cos
+                        }
+                    };
+                } else {
+                    this.decal2D.curveDrag = null;
+                }
+
                 e.stopPropagation();
                 e.stopImmediatePropagation();
                 return;
@@ -3712,46 +3745,60 @@ export class DecalSystem {
 
         if (['curve_mid', 'curve_p1', 'curve_p2'].includes(h)) {
             const s = d.shapeOptions;
-            if (!s) return;
-            const dx = x - d.x;
-            const dy = y - d.y;
-            const cos = Math.cos(-d.rotation);
-            const sin = Math.sin(-d.rotation);
-            const lx = dx * cos - dy * sin;
-            const ly = dx * sin + dy * cos;
+            if (!s || !d.curveDrag) return;
 
+            // Actualizar el punto correspondiente en espacio global (mundo)
             if (h === 'curve_mid') {
-                s.midX = lx;
-                s.midY = ly;
+                d.curveDrag.worldMid = { x, y };
             } else if (h === 'curve_p1') {
-                s.x1 = lx;
-                s.y1 = ly;
+                d.curveDrag.worldP1 = { x, y };
             } else if (h === 'curve_p2') {
-                s.x2 = lx;
-                s.y2 = ly;
+                d.curveDrag.worldP2 = { x, y };
             }
 
-            s.cpX = 2 * (s.midX !== undefined ? s.midX : (s.x1 + s.x2) / 2) - (s.x1 + s.x2) / 2;
-            s.cpY = 2 * (s.midY !== undefined ? s.midY : (s.y1 + s.y2) / 2) - (s.y1 + s.y2) / 2;
+            const p1 = d.curveDrag.worldP1;
+            const p2 = d.curveDrag.worldP2;
+            const mid = d.curveDrag.worldMid;
 
-            // Recalcular nuevo centro geométrico y re-centrar coordenadas locales
-            const curMinX = Math.min(s.x1, s.x2, s.midX, s.cpX);
-            const curMaxX = Math.max(s.x1, s.x2, s.midX, s.cpX);
-            const curMinY = Math.min(s.y1, s.y2, s.midY, s.cpY);
-            const curMaxY = Math.max(s.y1, s.y2, s.midY, s.cpY);
-            const curCx = (curMinX + curMaxX) / 2;
-            const curCy = (curMinY + curMaxY) / 2;
+            // En una curva Bézier cuadrática, el punto en t=0.5 es:
+            // B(0.5) = 0.25*p1 + 0.5*cp + 0.25*p2 = mid  =>  cp = 2*mid - (p1+p2)/2
+            const cp = {
+                x: 2 * mid.x - (p1.x + p2.x) / 2,
+                y: 2 * mid.y - (p1.y + p2.y) / 2
+            };
 
-            s.x1 -= curCx; s.y1 -= curCy;
-            s.x2 -= curCx; s.y2 -= curCy;
-            s.midX -= curCx; s.midY -= curCy;
-            s.cpX -= curCx; s.cpY -= curCy;
+            // Nuevo centro geométrico de la curva en coordenadas globales (mundo)
+            const minX = Math.min(p1.x, p2.x, mid.x, cp.x);
+            const maxX = Math.max(p1.x, p2.x, mid.x, cp.x);
+            const minY = Math.min(p1.y, p2.y, mid.y, cp.y);
+            const maxY = Math.max(p1.y, p2.y, mid.y, cp.y);
+            const newCx = (minX + maxX) / 2;
+            const newCy = (minY + maxY) / 2;
 
-            // Desplazar d.x, d.y según la rotación
-            const worldShiftX = curCx * Math.cos(d.rotation) - curCy * Math.sin(d.rotation);
-            const worldShiftY = curCx * Math.sin(d.rotation) + curCy * Math.cos(d.rotation);
-            d.x += worldShiftX;
-            d.y += worldShiftY;
+            d.x = newCx;
+            d.y = newCy;
+
+            // Proyectar de vuelta a coordenadas locales de la calcomanía respecto a (d.x, d.y) y rotación
+            const invCos = Math.cos(-d.rotation);
+            const invSin = Math.sin(-d.rotation);
+            const toLocal = (pt) => {
+                const rx = pt.x - d.x;
+                const ry = pt.y - d.y;
+                return {
+                    x: rx * invCos - ry * invSin,
+                    y: rx * invSin + ry * invCos
+                };
+            };
+
+            const locP1 = toLocal(p1);
+            const locP2 = toLocal(p2);
+            const locMid = toLocal(mid);
+            const locCp = toLocal(cp);
+
+            s.x1 = locP1.x; s.y1 = locP1.y;
+            s.x2 = locP2.x; s.y2 = locP2.y;
+            s.midX = locMid.x; s.midY = locMid.y;
+            s.cpX = locCp.x; s.cpY = locCp.y;
 
             if (window.painter && window.painter.createShapeCanvas) {
                 const newCanvas = window.painter.createShapeCanvas(s);
@@ -3901,6 +3948,20 @@ export class DecalSystem {
                         this.currentDecalImage = newCanvas;
                     }
                 }
+            } else if (d.shapeOptions && d.shapeOptions.type !== 'curve' && d.type !== 'text') {
+                // Figuras estándar (rect, circle, triangle, etc.): re-renderizar vectorialmente para máxima nitidez a 4096
+                const s = d.shapeOptions;
+                s.width = d.width;
+                s.height = d.height;
+                s.x1 = 0; s.y1 = 0;
+                s.x2 = d.width; s.y2 = d.height;
+                if (window.painter && window.painter.createShapeCanvas) {
+                    const newCanvas = window.painter.createShapeCanvas(s);
+                    if (newCanvas) {
+                        d.img = newCanvas;
+                        this.currentDecalImage = newCanvas;
+                    }
+                }
             }
 
             const scalePct = Math.round((d.width / d.baseWidth) * 100);
@@ -3938,6 +3999,19 @@ export class DecalSystem {
                         this.currentDecalImage = newCanvas;
                     }
                 }
+            } else if (d.shapeOptions && d.shapeOptions.type !== 'curve' && d.type !== 'text') {
+                const s = d.shapeOptions;
+                s.width = d.width;
+                s.height = d.height;
+                s.x1 = 0; s.y1 = 0;
+                s.x2 = d.width; s.y2 = d.height;
+                if (window.painter && window.painter.createShapeCanvas) {
+                    const newCanvas = window.painter.createShapeCanvas(s);
+                    if (newCanvas) {
+                        d.img = newCanvas;
+                        this.currentDecalImage = newCanvas;
+                    }
+                }
             }
         } else if (['e', 'w'].includes(h)) {
             const dx = x - init.x;
@@ -3955,6 +4029,19 @@ export class DecalSystem {
                     x: Math.round(p.x * sx),
                     y: p.y
                 }));
+                if (window.painter && window.painter.createShapeCanvas) {
+                    const newCanvas = window.painter.createShapeCanvas(s);
+                    if (newCanvas) {
+                        d.img = newCanvas;
+                        this.currentDecalImage = newCanvas;
+                    }
+                }
+            } else if (d.shapeOptions && d.shapeOptions.type !== 'curve' && d.type !== 'text') {
+                const s = d.shapeOptions;
+                s.width = d.width;
+                s.height = d.height;
+                s.x1 = 0; s.y1 = 0;
+                s.x2 = d.width; s.y2 = d.height;
                 if (window.painter && window.painter.createShapeCanvas) {
                     const newCanvas = window.painter.createShapeCanvas(s);
                     if (newCanvas) {
@@ -3987,6 +4074,7 @@ export class DecalSystem {
             }
             this.decal2D.isDragging = false;
             this.decal2D.dragHandle = null;
+            this.decal2D.curveDrag = null;
             this.syncCurrentDecalToObject(true);
             this.render2DPreview();
             if (this.layerManager) this.layerManager.renderUI();
