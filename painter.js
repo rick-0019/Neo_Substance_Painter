@@ -898,6 +898,16 @@ export class Painter {
                     if (this.layerManager) {
                         this.layerManager.renderUI();
                     }
+                    if (window.papercraft) {
+                        if (typeof window.papercraft.invalidateBleedCache === 'function') {
+                            window.papercraft.invalidateBleedCache();
+                        }
+                        if (window.papercraft.active && typeof window.scheduleUnfoldWorkbenchRender === 'function') {
+                            window.scheduleUnfoldWorkbenchRender();
+                        } else if (window.papercraft.active && typeof window.renderUnfoldWorkbench === 'function') {
+                            window.renderUnfoldWorkbench();
+                        }
+                    }
                 }
                 if (this.isPaintingShape3D) {
                     this.isPaintingShape3D = false;
@@ -3068,6 +3078,7 @@ export class Painter {
         this.needsUpdate = true;
         this.forceUpdate = true;
         if (this.texture) this.texture.needsUpdate = true;
+        if (window.state?.texture) window.state.texture.needsUpdate = true;
     }
 
 
@@ -3505,6 +3516,10 @@ export class Painter {
         this.drawAtUV(u, v, this.lastU === null);
         this.lastU = u;
         this.lastV = v;
+        this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
+        if (window.state?.texture) window.state.texture.needsUpdate = true;
     }
 
     drawAtUV(u, v, isNewStroke = false) {
@@ -3524,6 +3539,9 @@ export class Painter {
             this.layerManager.recomposite();
         }
         this.needsUpdate = true;
+        this.forceUpdate = true;
+        if (this.texture) this.texture.needsUpdate = true;
+        if (window.state?.texture) window.state.texture.needsUpdate = true;
     }
 
     setupBrushCursor() {
@@ -3837,6 +3855,7 @@ export class Painter {
         this.needsUpdate = true;
         this.forceUpdate = true;
         if (this.texture) this.texture.needsUpdate = true;
+        if (window.state?.texture) window.state.texture.needsUpdate = true;
     }
 
     fillFaceByIndex(meshObj, a, b, c, mode = 'fill_face') {

@@ -11,16 +11,34 @@ export class PapercraftEngine {
         this.tabHeightMm = 5.0;
         this.tabAngleDeg = 45.0;
         this.showTabNumbers = false; // Desactivado por defecto para que las piezas se impriman 100% limpias
-        this.numberPlacement = 'none'; // 'none' (limpio), 'flaps' (solo en solapas ocultas), 'outside' (fuera en descarte)
+        this.numberPlacement = 'flaps'; // 'flaps' (solo en solapas ocultas bajo pegamento), 'outside' (fuera en descarte), 'none' (limpio)
         this.hideSmoothLines = true;
         this.creaseThresholdDeg = 25.0;
         this.lineMode = 'clean'; // 'clean' (pliegues vivos), 'outlines' (solo contornos), 'full' (malla), 'none' (ocultar)
+
+        // Fase 2: Gestión de Costuras y Solapas Dinámicas (Flip Flap + Edge Matching)
+        this.seams = [];
+        this.seamByNumber = new Map();
+        this.seamByEdgeKey = new Map();
+        this.seamOverrides = new Map();
+        this.junctions = new Map();
+        this.junctionOverrides = new Map();
+        this.hoveredSeamNumber = null;
+        this.hoveredJunctionKey = null;
+
+        // Fase 3: Rastreo Interactivo 3D <-> 2D (Hover Tracker)
+        this.hoveredPart = null;
+        this.hoveredSource = null; // '3d' o '2d'
+        this.faceToPart = new Map();
 
         // Configuración de líneas de corte y pliegue profesionales (Hairline fino / tono tenue)
         this.cutLineWidthMm = 0.10; // Hairline 0.10 mm para corte limpio sin bordes negros gruesos
         this.cutLineColor = '#666666'; // Gris tenue profesional
         this.foldLineWidthMm = 0.08;
         this.foldLineColor = '#999999';
+
+        // Acabado de Museo: Sangrado de Color Perimetral (Texture Bleed / Padding)
+        this.bleedMm = 1.5; // 1.5 mm de dilatación hacia los márgenes y solapas para evitar bordes blancos al cortar
         
         // Dimensiones físicas del modelo armado (por defecto 1:1 nativo con el OBJ)
         this.modelLengthMm = null;
@@ -95,20 +113,25 @@ export class PapercraftEngine {
         const positions = [];
         const uvs = [];
         const faces = [];
+        let globalFaceOffset = 0;
 
         mesh.traverse(child => {
-            if (child.isMesh && !child.userData?.isSelectionOverlay && child.geometry && child.geometry.attributes.position && child.geometry.attributes.uv) {
+            if (child.isMesh && !child.userData?.isSelectionOverlay && !child.userData?.isWireframeOverlay && child.geometry && child.geometry.attributes.position && child.geometry.attributes.uv) {
                 const geo = child.geometry;
                 const posAttr = geo.attributes.position;
                 const uvAttr = geo.attributes.uv;
                 const index = geo.index;
                 const baseV = positions.length;
 
+                // Correlación exacta con el raycaster 3D de Three.js (soporte multi-malla / multi-material)
+                child.userData._papercraftBaseFaceIdx = globalFaceOffset;
+
                 for (let i = 0; i < posAttr.count; i++) {
                     positions.push([posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)]);
                     uvs.push([uvAttr.getX(i), uvAttr.getY(i)]);
                 }
 
+                const numFaces = index ? index.count / 3 : posAttr.count / 3;
                 if (index) {
                     for (let i = 0; i < index.count; i += 3) {
                         faces.push([baseV + index.getX(i), baseV + index.getX(i + 1), baseV + index.getX(i + 2)]);
@@ -118,6 +141,7 @@ export class PapercraftEngine {
                         faces.push([baseV + i, baseV + i + 1, baseV + i + 2]);
                     }
                 }
+                globalFaceOffset += numFaces;
             }
         });
 
@@ -236,7 +260,7 @@ export class PapercraftEngine {
             }
         }
 
-        // 4. Emparejamiento de costuras 3D
+        // 4. Emparejamiento de costuras 3D y registro de costuras maestras
         const uvHalfEdges = new Map();
         const allHalfEdges = [];
 
@@ -265,27 +289,87 @@ export class PapercraftEngine {
             }
         });
 
+        const faceToIsland = new Int32Array(faces.length);
+        rawIslands.forEach((comp, islandIdx) => {
+            comp.forEach(fIdx => { faceToIsland[fIdx] = islandIdx; });
+        });
+
         const boundaryEdges = allHalfEdges.filter(e => !uvHalfEdges.has(e.uvTwinKey));
+        boundaryEdges.forEach(b => {
+            b.islandIdx = faceToIsland[b.faceIdx];
+        });
+
         const seamGroups = new Map();
         for (const b of boundaryEdges) {
             if (!seamGroups.has(b.pos3dKey)) seamGroups.set(b.pos3dKey, []);
             seamGroups.get(b.pos3dKey).push(b);
         }
 
-        const tabEdges = new Map();
-        const targetEdges = new Map();
-        let seamCounter = 1;
+        this.seams = [];
+        this.seamByNumber = new Map();
+        this.seamByEdgeKey = new Map();
+        this.junctions = new Map(); // junctionKey -> { key, islandA, islandB, activeSide, seams: [] }
+        if (!this.junctionOverrides) {
+            this.junctionOverrides = new Map();
+        }
+        if (!this.seamOverrides) {
+            this.seamOverrides = new Map();
+        }
 
+        let seamCounter = 1;
         for (const [key, pair] of seamGroups.entries()) {
             if (pair.length === 2) {
-                tabEdges.set(pair[0].uvEdgeKey, { seamNumber: seamCounter, edge: pair[0] });
-                targetEdges.set(pair[1].uvEdgeKey, seamCounter);
+                // Ordenar consistentemente pair[0] y pair[1] según islandIdx para que TODAS las aristas
+                // de la unión entre la Pieza A y la Pieza B queden en la misma pieza (sin alternar)
+                const is0 = pair[0].islandIdx;
+                const is1 = pair[1].islandIdx;
+                if (is0 > is1 || (is0 === is1 && pair[0].faceIdx > pair[1].faceIdx)) {
+                    const tmp = pair[0];
+                    pair[0] = pair[1];
+                    pair[1] = tmp;
+                }
+
+                const minIs = pair[0].islandIdx;
+                const maxIs = pair[1].islandIdx;
+                const junctionKey = (minIs !== maxIs)
+                    ? `j_${minIs}_${maxIs}`
+                    : `j_self_${minIs}_${key}`;
+
+                if (!this.junctions.has(junctionKey)) {
+                    const jOverride = this.junctionOverrides.get(junctionKey);
+                    this.junctions.set(junctionKey, {
+                        key: junctionKey,
+                        islandA: minIs,
+                        islandB: maxIs,
+                        activeSide: jOverride !== undefined ? jOverride : 'A',
+                        seams: []
+                    });
+                }
+                const junction = this.junctions.get(junctionKey);
+
+                const sOverride = this.seamOverrides.get(key);
+                const activeSide = sOverride !== undefined ? sOverride : junction.activeSide;
+
+                const seam = {
+                    seamNumber: seamCounter,
+                    pos3dKey: key,
+                    junctionKey: junctionKey,
+                    edgeA: pair[0],
+                    edgeB: pair[1],
+                    activeSide: activeSide,
+                    defaultSide: 'A'
+                };
+                junction.seams.push(seam);
+
+                this.seams.push(seam);
+                this.seamByNumber.set(seamCounter, seam);
+                this.seamByEdgeKey.set(pair[0].uvEdgeKey, { seam, side: 'A' });
+                this.seamByEdgeKey.set(pair[1].uvEdgeKey, { seam, side: 'B' });
                 seamCounter++;
             }
         }
 
         // 5. Construir objetos completos para cada pieza independiente (Part)
-        const tabHeightMm = this.tabHeightMm;
         this.parts = rawIslands.map((faceIndices, islandIdx) => {
             let minU = Infinity, maxU = -Infinity;
             let minV = Infinity, maxV = -Infinity;
@@ -330,7 +414,6 @@ export class PapercraftEngine {
 
             const islandBoundaryEdges = [];
             const islandInternalEdges = [];
-            const islandTabs = [];
 
             faceIndices.forEach(fIdx => {
                 for (let i = 0; i < 3; i++) {
@@ -347,8 +430,10 @@ export class PapercraftEngine {
                     const pOpp = toLocalMm(uvOpp);
 
                     if (!uvHalfEdges.has(twinKey)) {
-                        const isTarget = targetEdges.has(edgeKey);
-                        const seamNum = isTarget ? targetEdges.get(edgeKey) : null;
+                        const seamInfo = this.seamByEdgeKey.get(edgeKey);
+                        const seamNum = seamInfo ? seamInfo.seam.seamNumber : null;
+                        const side = seamInfo ? seamInfo.side : null;
+
                         const dx = p2.x - p1.x;
                         const dy = p2.y - p1.y;
                         const len = Math.hypot(dx, dy);
@@ -359,9 +444,30 @@ export class PapercraftEngine {
                             nx = -nx; ny = -ny;
                         }
 
+                        // Verificación geométrica definitiva: Si mid + n * 0.15mm cae dentro de los triángulos de la pieza,
+                        // la normal estaba apuntando hacia el interior. Invertir para que apunte estrictamente hacia afuera.
+                        const testX = mid.x + nx * 0.15;
+                        const testY = mid.y + ny * 0.15;
+                        let isInside = false;
+                        for (let t = 0; t < localTriangles.length; t++) {
+                            const tri = localTriangles[t];
+                            if (tri && tri.length >= 3 && this._isPointInTriangle(testX, testY, tri[0], tri[1], tri[2])) {
+                                isInside = true;
+                                break;
+                            }
+                        }
+                        if (isInside) {
+                            nx = -nx;
+                            ny = -ny;
+                        }
+
                         islandBoundaryEdges.push({
-                            p1, p2, isTarget, seamNumber: seamNum,
-                            len, mid, nx, ny, edgeKey
+                            p1, p2, len, mid, nx, ny, edgeKey,
+                            seamNumber: seamNum,
+                            junctionKey: seamInfo ? seamInfo.seam.junctionKey : null,
+                            side,
+                            hasTab: false,
+                            isTarget: false
                         });
                     } else {
                         const twin = uvHalfEdges.get(twinKey);
@@ -376,113 +482,11 @@ export class PapercraftEngine {
                 }
             });
 
-            // 4.1 Construir solapas con prevención de colisiones en esquinas agudas y hendiduras (darts / V-notches)
-            const defaultAlphaRad = ((90 - (this.tabAngleDeg || 45)) * Math.PI) / 180;
-            islandBoundaryEdges.forEach((bEdge) => {
-                if (!tabEdges.has(bEdge.edgeKey)) return;
-                const tabInfo = tabEdges.get(bEdge.edgeKey);
-                const len = bEdge.len;
-                if (len <= 0.5) return;
-
-                const p1 = bEdge.p1;
-                const p2 = bEdge.p2;
-                const ux = (p2.x - p1.x) / len;
-                const uy = (p2.y - p1.y) / len;
-                const nx = bEdge.nx;
-                const ny = bEdge.ny;
-
-                // Buscar arista boundary anterior que termine en p1 (con tolerancia)
-                const prevEdge = islandBoundaryEdges.find(e => e !== bEdge && Math.hypot(e.p2.x - p1.x, e.p2.y - p1.y) < 0.08);
-                // Buscar arista boundary posterior que comience en p2 (con tolerancia)
-                const nextEdge = islandBoundaryEdges.find(e => e !== bEdge && Math.hypot(e.p1.x - p2.x, e.p1.y - p2.y) < 0.08);
-
-                // Ajuste inteligente en esquina p1
-                let alpha1 = defaultAlphaRad;
-                let maxH1 = tabHeightMm;
-                if (prevEdge) {
-                    const v0x = prevEdge.p1.x - p1.x;
-                    const v0y = prevEdge.p1.y - p1.y;
-                    const Lprev = Math.hypot(v0x, v0y);
-                    const vu = v0x * ux + v0y * uy;
-                    const vn = v0x * nx + v0y * ny;
-                    if (vn > 0.001) {
-                        const theta1 = Math.atan2(vn, vu); // ángulo de la hendidura exterior
-                        const prevHasTab = tabEdges.has(prevEdge.edgeKey);
-                        // Si la arista adyacente también tiene solapa, bisectriz; si no, hasta el borde opuesto sin montarse
-                        const maxAllowed = prevHasTab ? (theta1 / 2) : Math.min(theta1 - 0.02, defaultAlphaRad);
-                        alpha1 = Math.min(defaultAlphaRad, Math.max(0.08, maxAllowed));
-                        maxH1 = Math.min(maxH1, Lprev * Math.sin(theta1) * 0.95);
-                    }
-                }
-
-                // Ajuste inteligente en esquina p2
-                let alpha2 = defaultAlphaRad;
-                let maxH2 = tabHeightMm;
-                if (nextEdge) {
-                    const v3x = nextEdge.p2.x - p2.x;
-                    const v3y = nextEdge.p2.y - p2.y;
-                    const Lnext = Math.hypot(v3x, v3y);
-                    const vu = v3x * (-ux) + v3y * (-uy);
-                    const vn = v3x * nx + v3y * ny;
-                    if (vn > 0.001) {
-                        const theta2 = Math.atan2(vn, vu);
-                        const nextHasTab = tabEdges.has(nextEdge.edgeKey);
-                        const maxAllowed = nextHasTab ? (theta2 / 2) : Math.min(theta2 - 0.02, defaultAlphaRad);
-                        alpha2 = Math.min(defaultAlphaRad, Math.max(0.08, maxAllowed));
-                        maxH2 = Math.min(maxH2, Lnext * Math.sin(theta2) * 0.95);
-                    }
-                }
-
-                let tabH1 = Math.min(len * 0.7, maxH1);
-                let tabH2 = Math.min(len * 0.7, maxH2);
-
-                let inset1 = tabH1 / Math.tan(alpha1);
-                let inset2 = tabH2 / Math.tan(alpha2);
-
-                if (inset1 > len * 0.4) {
-                    inset1 = len * 0.4;
-                    tabH1 = inset1 * Math.tan(alpha1);
-                }
-                if (inset2 > len * 0.4) {
-                    inset2 = len * 0.4;
-                    tabH2 = inset2 * Math.tan(alpha2);
-                }
-
-                const tabP1 = {
-                    x: p1.x + ux * inset1 + nx * tabH1,
-                    y: p1.y + uy * inset1 + ny * tabH1
-                };
-                const tabP2 = {
-                    x: p2.x - ux * inset2 + nx * tabH2,
-                    y: p2.y - uy * inset2 + ny * tabH2
-                };
-                const tabCenter = {
-                    x: (p1.x + p2.x + tabP1.x + tabP2.x) / 4,
-                    y: (p1.y + p2.y + tabP1.y + tabP2.y) / 4
-                };
-
-                islandTabs.push({
-                    baseP1: p1,
-                    baseP2: p2,
-                    tabP1,
-                    tabP2,
-                    tabCenter,
-                    baseLen: len,
-                    seamNumber: tabInfo.seamNumber
-                });
-            });
-
-            // Bounding box en mm incluyendo solapas
+            // Bounding box inicial en mm
             let bMinX = Infinity, bMaxX = -Infinity;
             let bMinY = Infinity, bMaxY = -Infinity;
             localTriangles.forEach(tri => {
                 tri.forEach(p => {
-                    bMinX = Math.min(bMinX, p.x); bMaxX = Math.max(bMaxX, p.x);
-                    bMinY = Math.min(bMinY, p.y); bMaxY = Math.max(bMaxY, p.y);
-                });
-            });
-            islandTabs.forEach(tab => {
-                [tab.tabP1, tab.tabP2].forEach(p => {
                     bMinX = Math.min(bMinX, p.x); bMaxX = Math.max(bMaxX, p.x);
                     bMinY = Math.min(bMinY, p.y); bMaxY = Math.max(bMaxY, p.y);
                 });
@@ -500,7 +504,7 @@ export class PapercraftEngine {
                 localTriangles,
                 boundaryEdges: islandBoundaryEdges,
                 internalEdges: islandInternalEdges,
-                tabs: islandTabs,
+                tabs: [],
                 bounds: { minX: bMinX, maxX: bMaxX, minY: bMinY, maxY: bMaxY },
                 wMm,
                 hMm,
@@ -508,7 +512,47 @@ export class PapercraftEngine {
             };
         });
 
-        // 6. Auto-acomodar automáticamente en hojas A4 respetando márgenes
+        // 5.5 Construir geometría 3D directa, mapa O(1) de cara a pieza y límites UV para Rastreo 3D <-> 2D
+        this.faceToPart = new Map();
+        for (const part of this.parts) {
+            const partIndices = [];
+            const part3DCoords = [];
+            let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+
+            for (let f = 0; f < part.faceIndices.length; f++) {
+                const fIdx = part.faceIndices[f];
+                this.faceToPart.set(fIdx, part);
+                const tri = faces[fIdx];
+                if (tri) {
+                    partIndices.push(tri[0], tri[1], tri[2]);
+                    const p0 = positions[tri[0]];
+                    const p1 = positions[tri[1]];
+                    const p2 = positions[tri[2]];
+                    if (p0 && p1 && p2) {
+                        part3DCoords.push(
+                            p0[0], p0[1], p0[2],
+                            p1[0], p1[1], p1[2],
+                            p2[0], p2[1], p2[2]
+                        );
+                    }
+                    for (let vi = 0; vi < 3; vi++) {
+                        const uv = uvs[tri[vi]];
+                        if (uv) {
+                            minU = Math.min(minU, uv[0]); maxU = Math.max(maxU, uv[0]);
+                            minV = Math.min(minV, uv[1]); maxV = Math.max(maxV, uv[1]);
+                        }
+                    }
+                }
+            }
+            part.trackerIndices = (positions.length > 65535) ? new Uint32Array(partIndices) : new Uint16Array(partIndices);
+            part.tracker3DPositions = new Float32Array(part3DCoords);
+            part.uvBounds = { minU, maxU, minV, maxV };
+        }
+
+        // 6. Construir solapas considerando las costuras y overrides
+        this.rebuildAllTabs();
+
+        // 7. Auto-acomodar automáticamente en hojas A4 respetando márgenes
         this.autoPackA4();
         this.notifyChange();
     }
@@ -629,6 +673,562 @@ export class PapercraftEngine {
     }
 
     /**
+     * Reconstruye instantáneamente (<1ms) las solapas de todas las piezas respetando
+     * las costuras y los estados asignados (A, B o none) sin recalcular la malla 3D.
+     */
+    rebuildAllTabs() {
+        if (!this.parts || this.parts.length === 0) return;
+
+        const defaultAlphaRad = ((90 - (this.tabAngleDeg || 45)) * Math.PI) / 180;
+        const tabHeightMm = this.tabHeightMm;
+
+        for (const part of this.parts) {
+            // 1. Actualizar banderas en cada boundaryEdge según activeSide de su junction o costura
+            for (const bEdge of part.boundaryEdges) {
+                if (bEdge.seamNumber) {
+                    const seam = this.seamByNumber.get(bEdge.seamNumber);
+                    if (seam) {
+                        const jKey = seam.junctionKey;
+                        const junction = jKey ? this.junctions.get(jKey) : null;
+                        const jActive = junction ? junction.activeSide : null;
+                        const sOverride = this.seamOverrides.get(seam.pos3dKey);
+                        const effectiveSide = sOverride !== undefined ? sOverride : (jActive !== null ? jActive : seam.activeSide);
+                        seam.activeSide = effectiveSide;
+
+                        bEdge.hasTab = (effectiveSide === bEdge.side);
+                        bEdge.isTarget = (effectiveSide !== 'none' && effectiveSide !== bEdge.side);
+                    }
+                }
+            }
+
+            // 2. Construir solapas profesionales:
+            // A lo largo de curvas suaves continuas, las solapas mantienen la altura completa deseada (tabHeightMm),
+            // con ranuras radiales (slits) para flexión entre facetas adyacentes, y bisel a 45° solo en los extremos.
+            const islandTabs = [];
+            const targetH = Math.max(3.0, tabHeightMm);
+
+            part.boundaryEdges.forEach((bEdge) => {
+                if (!bEdge.hasTab) return;
+                const len = bEdge.len;
+                if (len <= 0.3) return;
+
+                const p1 = bEdge.p1;
+                const p2 = bEdge.p2;
+                const mid = bEdge.mid || { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5 };
+                const ux = (p2.x - p1.x) / len;
+                const uy = (p2.y - p1.y) / len;
+                const nx = bEdge.nx;
+                const ny = bEdge.ny;
+
+                // Buscar aristas adyacentes en el perímetro de la misma pieza
+                const prevEdge = part.boundaryEdges.find(e => e !== bEdge && Math.hypot(e.p2.x - p1.x, e.p2.y - p1.y) < 0.1);
+                const nextEdge = part.boundaryEdges.find(e => e !== bEdge && Math.hypot(e.p1.x - p2.x, e.p1.y - p2.y) < 0.1);
+
+                const prevHasTab = !!(prevEdge && prevEdge.hasTab);
+                const nextHasTab = !!(nextEdge && nextEdge.hasTab);
+
+                let tabH = targetH;
+
+                // --- Cálculo de Biseles e Insets Anticolisión (Prevención de Solapamiento entre Solapas) ---
+                let inset1 = 0;
+                let isConcave1 = false;
+                let tanMiter1 = 1.0;
+                let slitHalfAngle1 = 0.05;
+
+                if (prevHasTab && prevEdge) {
+                    const dotN1 = Math.max(-1, Math.min(1, prevEdge.nx * nx + prevEdge.ny * ny));
+                    // Esquina cóncava (hacia adentro en el exterior: las normales convergen hacia el espacio de la otra solapa)
+                    isConcave1 = (prevEdge.nx * ux + prevEdge.ny * uy) > 0.001;
+
+                    if (isConcave1) {
+                        // Esquina interior cóncava: biselado estricto a lo largo de la bisectriz del ángulo
+                        // para que las dos solapas adyacentes jamás choquen ni se tapen entre sí
+                        const phi1 = Math.acos(dotN1); // Ángulo entre normales (p.ej. 90° = 1.57 rad)
+                        const miterAngle1 = phi1 / 2;
+                        const alphaCut1 = Math.min(1.45, miterAngle1 + 0.035); // Bisectriz + 2° de holgura
+                        tanMiter1 = Math.tan(alphaCut1);
+
+                        // Si la solapa es muy alta para el ancho de la arista, reducir la altura de la solapa
+                        // para que el corte a 45°/bisectriz no sobrepase la mitad de la arista
+                        const maxH1 = (len * 0.45) / Math.max(0.1, tanMiter1);
+                        if (targetH > maxH1) {
+                            tabH = Math.min(tabH, maxH1);
+                        }
+                        inset1 = tabH * tanMiter1;
+                    } else {
+                        // Curva convexa o faceteado exterior: ranura radial fina de alivio (slits)
+                        const turnAngle1 = Math.acos(dotN1);
+                        slitHalfAngle1 = Math.max(0.04, Math.min(0.20, turnAngle1 / 2 + 0.02));
+                        inset1 = targetH * Math.tan(slitHalfAngle1);
+                    }
+                } else {
+                    // Extremo libre de la cadena de solapas: bisel clásico a 45°
+                    inset1 = targetH / Math.tan(defaultAlphaRad);
+                }
+
+                // --- Vértice Final (p2) ---
+                let inset2 = 0;
+                let isConcave2 = false;
+                let tanMiter2 = 1.0;
+                let slitHalfAngle2 = 0.05;
+
+                if (nextHasTab && nextEdge) {
+                    const nextUx = (nextEdge.p2.x - nextEdge.p1.x) / (nextEdge.len || 1);
+                    const nextUy = (nextEdge.p2.y - nextEdge.p1.y) / (nextEdge.len || 1);
+                    const dotN2 = Math.max(-1, Math.min(1, nx * nextEdge.nx + ny * nextEdge.ny));
+                    isConcave2 = (nx * nextUx + ny * nextUy) > 0.001;
+
+                    if (isConcave2) {
+                        const phi2 = Math.acos(dotN2);
+                        const miterAngle2 = phi2 / 2;
+                        const alphaCut2 = Math.min(1.45, miterAngle2 + 0.035);
+                        tanMiter2 = Math.tan(alphaCut2);
+
+                        const maxH2 = (len * 0.45) / Math.max(0.1, tanMiter2);
+                        if (targetH > maxH2) {
+                            tabH = Math.min(tabH, maxH2);
+                        }
+                        inset2 = tabH * tanMiter2;
+                    } else {
+                        const turnAngle2 = Math.acos(dotN2);
+                        slitHalfAngle2 = Math.max(0.04, Math.min(0.20, turnAngle2 / 2 + 0.02));
+                        inset2 = targetH * Math.tan(slitHalfAngle2);
+                    }
+                } else {
+                    // Extremo libre de la cadena de solapas: bisel clásico a 45°
+                    inset2 = targetH / Math.tan(defaultAlphaRad);
+                }
+
+                // Sincronizar ambos insets a la altura tabH actual
+                if (prevHasTab && prevEdge) {
+                    inset1 = isConcave1 ? tabH * tanMiter1 : tabH * Math.tan(slitHalfAngle1);
+                } else {
+                    inset1 = tabH / Math.tan(defaultAlphaRad);
+                }
+                if (nextHasTab && nextEdge) {
+                    inset2 = isConcave2 ? tabH * tanMiter2 : tabH * Math.tan(slitHalfAngle2);
+                } else {
+                    inset2 = tabH / Math.tan(defaultAlphaRad);
+                }
+
+                // En los extremos libres o biseles, acotar para no sobrepasar el 45% del segmento
+                const maxAllowedInset = len * 0.45;
+                if (inset1 > maxAllowedInset) inset1 = maxAllowedInset;
+                if (inset2 > maxAllowedInset) inset2 = maxAllowedInset;
+
+                // 1. Detección de colisión contra otras aristas de la pieza (concavidades, hendiduras y vanos internos)
+                // Se proyecta un rayo desde el punto medio a lo largo de la normal para comprobar si choca contra otra arista de la pieza
+                let minObstacleDist = Infinity;
+                let obstacleHasTab = false;
+                for (let oe = 0; oe < part.boundaryEdges.length; oe++) {
+                    const other = part.boundaryEdges[oe];
+                    if (other === bEdge) continue;
+                    if (Math.hypot(other.p1.x - p1.x, other.p1.y - p1.y) < 0.1 ||
+                        Math.hypot(other.p2.x - p1.x, other.p2.y - p1.y) < 0.1 ||
+                        Math.hypot(other.p1.x - p2.x, other.p1.y - p2.y) < 0.1 ||
+                        Math.hypot(other.p2.x - p2.x, other.p2.y - p2.y) < 0.1) {
+                        continue;
+                    }
+                    const hitDist = this._raySegmentIntersect(mid.x, mid.y, nx, ny, other.p1.x, other.p1.y, other.p2.x, other.p2.y);
+                    if (hitDist !== null && hitDist > 0.05 && hitDist < minObstacleDist) {
+                        minObstacleDist = hitDist;
+                        obstacleHasTab = !!other.hasTab;
+                    }
+                }
+
+                if (minObstacleDist < Infinity) {
+                    // Si la arista opuesta también tiene solapa, se reparten el espacio disponible (42% cada una)
+                    // para que jamás se toquen ni se monten frente a frente
+                    const maxRatio = obstacleHasTab ? 0.42 : 0.75;
+                    const maxAllowedH = Math.max(0, minObstacleDist * maxRatio - 0.2);
+                    if (maxAllowedH < 1.0) {
+                        // El vano o corte interior es demasiado estrecho: no colocar solapa aquí para no invadir la pieza
+                        return;
+                    }
+                    if (tabH > maxAllowedH) {
+                        tabH = maxAllowedH;
+                        if (prevHasTab && prevEdge) {
+                            inset1 = isConcave1 ? tabH * tanMiter1 : tabH * Math.tan(slitHalfAngle1);
+                        } else {
+                            inset1 = tabH / Math.tan(defaultAlphaRad);
+                        }
+                        if (nextHasTab && nextEdge) {
+                            inset2 = isConcave2 ? tabH * tanMiter2 : tabH * Math.tan(slitHalfAngle2);
+                        } else {
+                            inset2 = tabH / Math.tan(defaultAlphaRad);
+                        }
+                        if (inset1 > maxAllowedInset) inset1 = maxAllowedInset;
+                        if (inset2 > maxAllowedInset) inset2 = maxAllowedInset;
+                    }
+                }
+
+                // Asegurar que el ancho superior de la solapa mantenga al menos un 15% de la base
+                if (inset1 + inset2 > len * 0.85) {
+                    const scale = (len * 0.85) / (inset1 + inset2);
+                    inset1 *= scale;
+                    inset2 *= scale;
+                }
+
+                // 2. Verificación estricta: asegurar que los vértices jamás penetren la pieza NI solapen otra solapa ya creada
+                let attempts = 0;
+                let valid = false;
+                let tabP1 = null, tabP2 = null, tabCenter = null;
+
+                while (attempts < 5) {
+                    tabP1 = {
+                        x: p1.x + ux * inset1 + nx * tabH,
+                        y: p1.y + uy * inset1 + ny * tabH
+                    };
+                    tabP2 = {
+                        x: p2.x - ux * inset2 + nx * tabH,
+                        y: p2.y - uy * inset2 + ny * tabH
+                    };
+                    tabCenter = {
+                        x: (p1.x + p2.x + tabP1.x + tabP2.x) / 4,
+                        y: (p1.y + p2.y + tabP1.y + tabP2.y) / 4
+                    };
+
+                    let insidePiece = false;
+                    for (let t = 0; t < part.localTriangles.length; t++) {
+                        const tri = part.localTriangles[t];
+                        if (tri && tri.length >= 3) {
+                            if (this._isPointInTriangle(tabP1.x, tabP1.y, tri[0], tri[1], tri[2]) ||
+                                this._isPointInTriangle(tabP2.x, tabP2.y, tri[0], tri[1], tri[2]) ||
+                                this._isPointInTriangle(tabCenter.x, tabCenter.y, tri[0], tri[1], tri[2])) {
+                                insidePiece = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    let overlapsOtherTab = false;
+                    for (let ot = 0; ot < islandTabs.length; ot++) {
+                        const otherTab = islandTabs[ot];
+                        // Comprobar si el borde superior de esta solapa cruza el borde superior de otra solapa
+                        if (this._segmentsIntersect(tabP1.x, tabP1.y, tabP2.x, tabP2.y, otherTab.tabP1.x, otherTab.tabP1.y, otherTab.tabP2.x, otherTab.tabP2.y)) {
+                            overlapsOtherTab = true;
+                            break;
+                        }
+                        // Comprobar cruce de bordes con solapas no adyacentes
+                        const isAdjacent = (Math.hypot(otherTab.baseP1.x - p2.x, otherTab.baseP1.y - p2.y) < 0.1 ||
+                                            Math.hypot(otherTab.baseP2.x - p1.x, otherTab.baseP2.y - p1.y) < 0.1);
+                        if (!isAdjacent) {
+                            if (this._segmentsIntersect(p1.x, p1.y, tabP1.x, tabP1.y, otherTab.tabP1.x, otherTab.tabP1.y, otherTab.tabP2.x, otherTab.tabP2.y) ||
+                                this._segmentsIntersect(p2.x, p2.y, tabP2.x, tabP2.y, otherTab.tabP1.x, otherTab.tabP1.y, otherTab.tabP2.x, otherTab.tabP2.y) ||
+                                this._segmentsIntersect(tabP1.x, tabP1.y, tabP2.x, tabP2.y, otherTab.baseP1.x, otherTab.baseP1.y, otherTab.tabP1.x, otherTab.tabP1.y) ||
+                                this._segmentsIntersect(tabP1.x, tabP1.y, tabP2.x, tabP2.y, otherTab.baseP2.x, otherTab.baseP2.y, otherTab.tabP2.x, otherTab.tabP2.y)) {
+                                overlapsOtherTab = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!insidePiece && !overlapsOtherTab) {
+                        valid = true;
+                        break;
+                    }
+
+                    // Si invade la pieza o solapa a otra solapa, reducir altura progresivamente
+                    tabH *= 0.65;
+                    if (prevHasTab && prevEdge) {
+                        inset1 = isConcave1 ? tabH * tanMiter1 : tabH * Math.tan(slitHalfAngle1);
+                    } else {
+                        inset1 = tabH / Math.tan(defaultAlphaRad);
+                    }
+                    if (nextHasTab && nextEdge) {
+                        inset2 = isConcave2 ? tabH * tanMiter2 : tabH * Math.tan(slitHalfAngle2);
+                    } else {
+                        inset2 = tabH / Math.tan(defaultAlphaRad);
+                    }
+                    if (inset1 > maxAllowedInset) inset1 = maxAllowedInset;
+                    if (inset2 > maxAllowedInset) inset2 = maxAllowedInset;
+                    attempts++;
+                }
+
+                if (!valid || tabH < 0.8) {
+                    // Si aún reduciendo la altura la solapa invade la pieza o solapa a otra solapa, se descarta para proteger el modelo
+                    return;
+                }
+
+                islandTabs.push({
+                    baseP1: p1,
+                    baseP2: p2,
+                    tabP1,
+                    tabP2,
+                    tabCenter,
+                    baseLen: len,
+                    seamNumber: bEdge.seamNumber,
+                    junctionKey: bEdge.junctionKey,
+                    edgeKey: bEdge.edgeKey,
+                    side: bEdge.side
+                });
+            });
+
+            part.tabs = islandTabs;
+
+            // 3. Recalcular bounding box en mm incluyendo solapas
+            let bMinX = Infinity, bMaxX = -Infinity;
+            let bMinY = Infinity, bMaxY = -Infinity;
+            part.localTriangles.forEach(tri => {
+                tri.forEach(p => {
+                    bMinX = Math.min(bMinX, p.x); bMaxX = Math.max(bMaxX, p.x);
+                    bMinY = Math.min(bMinY, p.y); bMaxY = Math.max(bMaxY, p.y);
+                });
+            });
+            part.tabs.forEach(tab => {
+                [tab.tabP1, tab.tabP2].forEach(p => {
+                    bMinX = Math.min(bMinX, p.x); bMaxX = Math.max(bMaxX, p.x);
+                    bMinY = Math.min(bMinY, p.y); bMaxY = Math.max(bMaxY, p.y);
+                });
+            });
+
+            part.bounds = { minX: bMinX, maxX: bMaxX, minY: bMinY, maxY: bMaxY };
+            part.wMm = Math.max(1, bMaxX - bMinX);
+            part.hMm = Math.max(1, bMaxY - bMinY);
+        }
+
+        this.invalidateBleedCache();
+        this.notifyChange();
+    }
+
+    /**
+     * Invierte la solapa al borde gemelo de la costura (A <-> B)
+     * Si la costura pertenece a una unión completa (junction), invierte toda la unión
+     */
+    flipSeam(seamNumber) {
+        const seam = this.seamByNumber.get(seamNumber);
+        if (!seam) return false;
+        if (seam.junctionKey && this.junctions && this.junctions.has(seam.junctionKey)) {
+            return this.flipJunction(seam.junctionKey);
+        }
+        seam.activeSide = (seam.activeSide === 'A') ? 'B' : 'A';
+        this.seamOverrides.set(seam.pos3dKey, seam.activeSide);
+        this.rebuildAllTabs();
+        return true;
+    }
+
+    /**
+     * Oculta o restaura la solapa en la costura especificada (none <-> activa)
+     * Si pertenece a una unión completa, oculta o restaura toda la unión
+     */
+    toggleSeam(seamNumber) {
+        const seam = this.seamByNumber.get(seamNumber);
+        if (!seam) return false;
+        if (seam.junctionKey && this.junctions && this.junctions.has(seam.junctionKey)) {
+            return this.toggleJunction(seam.junctionKey);
+        }
+        seam.activeSide = (seam.activeSide === 'none') ? 'A' : 'none';
+        this.seamOverrides.set(seam.pos3dKey, seam.activeSide);
+        this.rebuildAllTabs();
+        return seam.activeSide !== 'none';
+    }
+
+    /**
+     * Invierte todas las solapas de una unión continua entre dos piezas
+     */
+    flipJunction(junctionKey) {
+        const j = this.junctions.get(junctionKey);
+        if (!j) return false;
+        j.activeSide = (j.activeSide === 'A') ? 'B' : 'A';
+        this.junctionOverrides.set(junctionKey, j.activeSide);
+        for (const s of j.seams) {
+            s.activeSide = j.activeSide;
+            this.seamOverrides.set(s.pos3dKey, s.activeSide);
+        }
+        this.rebuildAllTabs();
+        return true;
+    }
+
+    /**
+     * Oculta o restaura todas las solapas de una unión continua entre dos piezas
+     */
+    toggleJunction(junctionKey) {
+        const j = this.junctions.get(junctionKey);
+        if (!j) return false;
+        j.activeSide = (j.activeSide === 'none') ? 'A' : 'none';
+        this.junctionOverrides.set(junctionKey, j.activeSide);
+        for (const s of j.seams) {
+            s.activeSide = j.activeSide;
+            this.seamOverrides.set(s.pos3dKey, s.activeSide);
+        }
+        this.rebuildAllTabs();
+        return j.activeSide !== 'none';
+    }
+
+    /**
+     * Asigna la solapa a una arista específica de la costura o unión
+     */
+    setSeamActiveEdge(edge) {
+        if (!edge || !edge.seamNumber) return false;
+        const seam = this.seamByNumber.get(edge.seamNumber);
+        if (!seam) return false;
+        const side = edge.side || 'A';
+        if (edge.junctionKey && this.junctions && this.junctions.has(edge.junctionKey)) {
+            const j = this.junctions.get(edge.junctionKey);
+            j.activeSide = side;
+            this.junctionOverrides.set(edge.junctionKey, side);
+            for (const s of j.seams) {
+                s.activeSide = side;
+                this.seamOverrides.set(s.pos3dKey, side);
+            }
+        } else {
+            seam.activeSide = side;
+            this.seamOverrides.set(seam.pos3dKey, side);
+        }
+        this.rebuildAllTabs();
+        return true;
+    }
+
+    _isPointInPolygon(px, py, vertices) {
+        if (!vertices || vertices.length < 3) return false;
+        let inside = false;
+        for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+            const xi = vertices[i].x, yi = vertices[i].y;
+            const xj = vertices[j].x, yj = vertices[j].y;
+            const intersect = ((yi > py) !== (yj > py)) &&
+                (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    _isPointInTriangle(px, py, t0, t1, t2) {
+        if (!t0 || !t1 || !t2) return false;
+        const dX = px - t2.x;
+        const dY = py - t2.y;
+        const dX21 = t2.x - t1.x;
+        const dY12 = t1.y - t2.y;
+        const D = dY12 * (t0.x - t2.x) + dX21 * (t0.y - t2.y);
+        const s = dY12 * dX + dX21 * dY;
+        const t = (t2.y - t0.y) * dX + (t0.x - t2.x) * dY;
+        if (D > 0) return s >= 0 && t >= 0 && s + t <= D;
+        return s <= 0 && t <= 0 && s + t >= D;
+    }
+
+    _raySegmentIntersect(ox, oy, dx, dy, x1, y1, x2, y2) {
+        const v1x = ox - x1;
+        const v1y = oy - y1;
+        const v2x = x2 - x1;
+        const v2y = y2 - y1;
+        const v3x = -dy;
+        const v3y = dx;
+
+        const dot = v2x * v3x + v2y * v3y;
+        if (Math.abs(dot) < 1e-6) return null;
+
+        const t1 = (v2x * v1y - v2y * v1x) / dot;
+        const t2 = (v1x * v3x + v1y * v3y) / dot;
+
+        if (t1 >= 0 && t2 >= 0 && t2 <= 1) {
+            return t1;
+        }
+        return null;
+    }
+
+    _segmentsIntersect(p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) {
+        const ccw = (ax, ay, bx, by, cx, cy) => (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
+        return (ccw(p1x, p1y, p3x, p3y, p4x, p4y) !== ccw(p2x, p2y, p3x, p3y, p4x, p4y)) &&
+               (ccw(p1x, p1y, p2x, p2y, p3x, p3y) !== ccw(p1x, p1y, p2x, p2y, p4x, p4y));
+    }
+
+    /**
+     * Detecta si el cursor está sobre una solapa o sobre una arista perimetral con costura
+     */
+    getTabOrEdgeAt(canvasX, canvasY, viewScale = 4.0) {
+        if (!this.parts || this.parts.length === 0) return null;
+
+        const sheetGapMm = 20.0;
+        const pagePitchMm = this.A4_W + sheetGapMm;
+        const mouseMmX = (canvasX - this.panX) / (this.zoom * viewScale);
+        const mouseMmY = (canvasY - this.panY) / (this.zoom * viewScale);
+
+        const searchOrder = [...this.parts];
+        if (this.selectedPart) {
+            const idx = searchOrder.indexOf(this.selectedPart);
+            if (idx > -1) {
+                searchOrder.splice(idx, 1);
+                searchOrder.push(this.selectedPart);
+            }
+        }
+
+        // 1. Prioridad: Verificar si se tocó directamente una solapa
+        for (let i = searchOrder.length - 1; i >= 0; i--) {
+            const part = searchOrder[i];
+            const p = part.layout.pageIndex;
+            const pageOffsetMmX = p * pagePitchMm;
+            const pageMmX = mouseMmX - pageOffsetMmX;
+            const pageMmY = mouseMmY;
+
+            const dx = pageMmX - part.layout.x;
+            const dy = pageMmY - part.layout.y;
+            const rad = (-part.layout.rotation * Math.PI) / 180;
+            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+            const b = part.bounds;
+            if (lx < b.minX - 6 || lx > b.maxX + 6 || ly < b.minY - 6 || ly > b.maxY + 6) continue;
+
+            if (this.showFlaps && part.tabs) {
+                for (const tab of part.tabs) {
+                    const quad = [tab.baseP1, tab.tabP1, tab.tabP2, tab.baseP2];
+                    const distToCenter = Math.hypot(lx - tab.tabCenter.x, ly - tab.tabCenter.y);
+                    if (this._isPointInPolygon(lx, ly, quad) || distToCenter <= 3.0) {
+                        return {
+                            type: 'tab',
+                            tab,
+                            part,
+                            pageIndex: p,
+                            seamNumber: tab.seamNumber,
+                            junctionKey: tab.junctionKey,
+                            side: tab.side,
+                            seam: this.seamByNumber.get(tab.seamNumber),
+                            junction: tab.junctionKey ? this.junctions?.get(tab.junctionKey) : null
+                        };
+                    }
+                }
+            }
+        }
+
+        // 2. Segunda pasada: Verificar si se tocó una arista con costura (borde receptor o solapa oculta)
+        for (let i = searchOrder.length - 1; i >= 0; i--) {
+            const part = searchOrder[i];
+            const p = part.layout.pageIndex;
+            const pageOffsetMmX = p * pagePitchMm;
+            const pageMmX = mouseMmX - pageOffsetMmX;
+            const pageMmY = mouseMmY;
+
+            const dx = pageMmX - part.layout.x;
+            const dy = pageMmY - part.layout.y;
+            const rad = (-part.layout.rotation * Math.PI) / 180;
+            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+            const b = part.bounds;
+            if (lx < b.minX - 4 || lx > b.maxX + 4 || ly < b.minY - 4 || ly > b.maxY + 4) continue;
+
+            for (const edge of part.boundaryEdges) {
+                if (!edge.seamNumber) continue;
+                const dist = this._distToSegment(lx, ly, edge.p1.x, edge.p1.y, edge.p2.x, edge.p2.y);
+                if (dist <= 2.2) {
+                    return {
+                        type: 'edge',
+                        edge,
+                        part,
+                        pageIndex: p,
+                        seamNumber: edge.seamNumber,
+                        junctionKey: edge.junctionKey,
+                        side: edge.side,
+                        seam: this.seamByNumber.get(edge.seamNumber),
+                        junction: edge.junctionKey ? this.junctions?.get(edge.junctionKey) : null
+                    };
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Detecta qué pieza está debajo del cursor del ratón en coordenadas del lienzo Unfold
      */
     getPartAt(canvasX, canvasY, viewScale = 4.0) {
@@ -672,6 +1272,39 @@ export class PapercraftEngine {
             }
         }
         return null;
+    }
+
+    /**
+     * Obtiene la pieza que contiene una faceta 3D determinada (Rastreo 3D -> 2D instantáneo O(1))
+     */
+    getPartByFaceIndex(faceIndex) {
+        if (!this.faceToPart) return null;
+        return this.faceToPart.get(faceIndex) || null;
+    }
+
+    /**
+     * Obtiene la pieza según coordenadas UV de impacto 3D (Respaldo infalible)
+     */
+    getPartAtUV(u, v) {
+        if (!this.parts || this.parts.length === 0) return null;
+        for (const part of this.parts) {
+            if (part.uvBounds &&
+                u >= part.uvBounds.minU - 0.003 && u <= part.uvBounds.maxU + 0.003 &&
+                v >= part.uvBounds.minV - 0.003 && v <= part.uvBounds.maxV + 0.003) {
+                return part;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Establece o limpia la pieza resaltada por hover interactivo
+     */
+    setHoveredPart(part, source = '2d') {
+        if (this.hoveredPart === part) return false;
+        this.hoveredPart = part;
+        this.hoveredSource = source;
+        return true;
     }
 
     /**
@@ -1280,6 +1913,159 @@ export class PapercraftEngine {
     }
 
     /**
+     * Invalida la caché de canvases dilatados (Texture Bleed) para que se regeneren
+     */
+    invalidateBleedCache() {
+        if (this.parts && this.parts.length > 0) {
+            for (const p of this.parts) {
+                p._bleedCanvas = null;
+            }
+        }
+    }
+
+    /**
+     * Aplica Sangrado de Color Perimetral (Texture Bleed / Padding)
+     * Extiende los píxeles opacos del contorno hacia el exterior transparente
+     * por un radio de bleedPx píxeles usando propagación BFS por capas.
+     */
+    applyTextureBleed(canvas, bleedPx) {
+        if (!bleedPx || bleedPx <= 0) return;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        if (w <= 0 || h <= 0) return;
+
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const data32 = new Uint32Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength / 4);
+        const total = w * h;
+
+        const dist = new Int16Array(total);
+        for (let i = 0; i < total; i++) {
+            dist[i] = ((data32[i] >>> 24) >= 128) ? 0 : -1;
+        }
+
+        let frontier = new Int32Array(total);
+        let frontierLen = 0;
+
+        for (let y = 0; y < h; y++) {
+            const row = y * w;
+            for (let x = 0; x < w; x++) {
+                const idx = row + x;
+                if (dist[idx] !== -1) continue;
+
+                let neighborIdx = -1;
+                if (x > 0 && dist[idx - 1] === 0) neighborIdx = idx - 1;
+                else if (x < w - 1 && dist[idx + 1] === 0) neighborIdx = idx + 1;
+                else if (y > 0 && dist[idx - w] === 0) neighborIdx = idx - w;
+                else if (y < h - 1 && dist[idx + w] === 0) neighborIdx = idx + w;
+                else if (x > 0 && y > 0 && dist[idx - 1 - w] === 0) neighborIdx = idx - 1 - w;
+                else if (x < w - 1 && y > 0 && dist[idx + 1 - w] === 0) neighborIdx = idx + 1 - w;
+                else if (x > 0 && y < h - 1 && dist[idx - 1 + w] === 0) neighborIdx = idx - 1 + w;
+                else if (x < w - 1 && y < h - 1 && dist[idx + 1 + w] === 0) neighborIdx = idx + 1 + w;
+
+                if (neighborIdx !== -1) {
+                    frontier[frontierLen++] = idx;
+                    dist[idx] = 1;
+                    data32[idx] = (data32[neighborIdx] & 0x00FFFFFF) | 0xFF000000;
+                }
+            }
+        }
+
+        let nextFrontier = new Int32Array(total);
+        for (let step = 1; step < bleedPx; step++) {
+            if (frontierLen === 0) break;
+            let nextLen = 0;
+            const nextDist = step + 1;
+
+            for (let i = 0; i < frontierLen; i++) {
+                const idx = frontier[i];
+                const x = idx % w;
+                const y = (idx / w) | 0;
+                const col = data32[idx];
+
+                if (x > 0 && dist[idx - 1] === -1) { dist[idx - 1] = nextDist; data32[idx - 1] = col; nextFrontier[nextLen++] = idx - 1; }
+                if (x < w - 1 && dist[idx + 1] === -1) { dist[idx + 1] = nextDist; data32[idx + 1] = col; nextFrontier[nextLen++] = idx + 1; }
+                if (y > 0 && dist[idx - w] === -1) { dist[idx - w] = nextDist; data32[idx - w] = col; nextFrontier[nextLen++] = idx - w; }
+                if (y < h - 1 && dist[idx + w] === -1) { dist[idx + w] = nextDist; data32[idx + w] = col; nextFrontier[nextLen++] = idx + w; }
+            }
+
+            const tmp = frontier;
+            frontier = nextFrontier;
+            nextFrontier = tmp;
+            frontierLen = nextLen;
+        }
+
+        ctx.putImageData(imgData, 0, 0);
+    }
+
+    /**
+     * Obtiene o genera el canvas individual de una pieza con Sangrado de Textura perimetral
+     */
+    getPartBleedCanvas(part, canvas2d, bleedMm = 1.5) {
+        if (part._bleedCanvas && part._bleedCanvas._bleedMm === bleedMm) {
+            return part._bleedCanvas;
+        }
+
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+        for (const tri of part.localTriangles) {
+            if (!tri || tri.length < 3) continue;
+            for (const pt of tri) {
+                minX = Math.min(minX, pt.x); maxX = Math.max(maxX, pt.x);
+                minY = Math.min(minY, pt.y); maxY = Math.max(maxY, pt.y);
+            }
+        }
+        if (!isFinite(minX) || !isFinite(maxX) || !isFinite(minY) || !isFinite(maxY)) return null;
+
+        const pxPerMm = 6.0;
+        const bleedPx = Math.round(bleedMm * pxPerMm);
+        const padPx = bleedPx + 4;
+        const bW_px = Math.max(16, Math.ceil((maxX - minX) * pxPerMm) + padPx * 2);
+        const bH_px = Math.max(16, Math.ceil((maxY - minY) * pxPerMm) + padPx * 2);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = bW_px;
+        canvas.height = bH_px;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        ctx.translate(-minX * pxPerMm + padPx, -minY * pxPerMm + padPx);
+
+        ctx.beginPath();
+        for (const tri of part.localTriangles) {
+            if (!tri || tri.length < 3) continue;
+            ctx.moveTo(tri[0].x * pxPerMm, tri[0].y * pxPerMm);
+            ctx.lineTo(tri[1].x * pxPerMm, tri[1].y * pxPerMm);
+            ctx.lineTo(tri[2].x * pxPerMm, tri[2].y * pxPerMm);
+            ctx.closePath();
+        }
+        ctx.clip();
+
+        const partDrawSize = (part.islandMmPerUV || this.uvSheetSizeMm || 210.0) * pxPerMm;
+        ctx.drawImage(
+            canvas2d,
+            -part.centerU * partDrawSize,
+            -(1 - part.centerV) * partDrawSize,
+            partDrawSize,
+            partDrawSize
+        );
+
+        if (bleedPx > 0) {
+            this.applyTextureBleed(canvas, bleedPx);
+        }
+
+        canvas._bleedMm = bleedMm;
+        canvas._pxPerMm = pxPerMm;
+        canvas._padMm = padPx / pxPerMm;
+        canvas._originMinX = minX;
+        canvas._originMinY = minY;
+
+        part._bleedCanvas = canvas;
+        return canvas;
+    }
+
+    /**
      * Dibuja una pieza de papercraft individual con su textura, pliegues, solapas y cotas
      */
     drawPartOnCanvas(ctx, part, canvas2d, pageX_px, pageY_px, mmToPx, isSelectedOverlay = false) {
@@ -1291,7 +2077,7 @@ export class PapercraftEngine {
         ctx.translate(originPxX, originPxY);
         ctx.rotate(rotRad);
 
-        // A) Recorte y textura
+        // A) Recorte y textura de la pieza en la mesa de trabajo A4 (renderizado instantáneo GPU)
         if (canvas2d && part.localTriangles && part.localTriangles.length > 0) {
             try {
                 ctx.save();
@@ -1302,6 +2088,7 @@ export class PapercraftEngine {
                     ctx.lineTo(tri[1].x * mmToPx, tri[1].y * mmToPx);
                     ctx.lineTo(tri[2].x * mmToPx, tri[2].y * mmToPx);
                 }
+                ctx.closePath();
                 ctx.clip();
 
                 const partDrawSize = (part.islandMmPerUV || this.uvSheetSizeMm || 210.0) * mmToPx;
@@ -1327,10 +2114,11 @@ export class PapercraftEngine {
             ctx.setLineDash([]);
             ctx.beginPath();
             for (const tri of part.localTriangles) {
-                ctx.moveTo(tri.p1.x * mmToPx, tri.p1.y * mmToPx);
-                ctx.lineTo(tri.p2.x * mmToPx, tri.p2.y * mmToPx);
-                ctx.lineTo(tri.p3.x * mmToPx, tri.p3.y * mmToPx);
-                ctx.lineTo(tri.p1.x * mmToPx, tri.p1.y * mmToPx);
+                if (!tri || tri.length < 3) continue;
+                ctx.moveTo(tri[0].x * mmToPx, tri[0].y * mmToPx);
+                ctx.lineTo(tri[1].x * mmToPx, tri[1].y * mmToPx);
+                ctx.lineTo(tri[2].x * mmToPx, tri[2].y * mmToPx);
+                ctx.lineTo(tri[0].x * mmToPx, tri[0].y * mmToPx);
             }
             ctx.stroke();
         } else if (showInternalFolds && part.internalEdges && part.internalEdges.length > 0) {
@@ -1346,9 +2134,15 @@ export class PapercraftEngine {
         }
 
         // C) Solapas (Flaps)
+        const currentHoveredSeam = this.hoveredSeamNumber || (typeof window !== 'undefined' && window.papercraft && window.papercraft.hoveredSeamNumber);
+        const currentHoveredJunction = this.hoveredJunctionKey || (typeof window !== 'undefined' && window.papercraft && window.papercraft.hoveredJunctionKey);
+
         if (this.showFlaps && part.tabs && part.tabs.length > 0) {
             for (const tab of part.tabs) {
-                ctx.fillStyle = 'rgba(235, 235, 235, 0.7)';
+                const isHovered = (currentHoveredJunction && tab.junctionKey === currentHoveredJunction) ||
+                                  (currentHoveredSeam && tab.seamNumber === currentHoveredSeam);
+
+                ctx.fillStyle = isHovered ? 'rgba(0, 229, 255, 0.42)' : 'rgba(235, 235, 235, 0.7)';
                 ctx.beginPath();
                 ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
                 ctx.lineTo(tab.tabP1.x * mmToPx, tab.tabP1.y * mmToPx);
@@ -1357,9 +2151,9 @@ export class PapercraftEngine {
                 ctx.closePath();
                 ctx.fill();
 
-                ctx.strokeStyle = this.cutLineColor || '#666666';
+                ctx.strokeStyle = isHovered ? '#00e5ff' : (this.cutLineColor || '#666666');
                 const flapCutMm = parseFloat(this.cutLineWidthMm || 0.10) || 0.10;
-                ctx.lineWidth = Math.max(0.4, (flapCutMm / 0.10) * 0.85);
+                ctx.lineWidth = isHovered ? 2.2 : Math.max(0.4, (flapCutMm / 0.10) * 0.85);
                 ctx.setLineDash([]);
                 ctx.beginPath();
                 ctx.moveTo(tab.baseP1.x * mmToPx, tab.baseP1.y * mmToPx);
@@ -1376,9 +2170,10 @@ export class PapercraftEngine {
                 ctx.lineTo(tab.baseP2.x * mmToPx, tab.baseP2.y * mmToPx);
                 ctx.stroke();
 
+                // Números en solapas (ocultos bajo el pegamento al ensamblar)
                 if (this.showTabNumbers && this.numberPlacement !== 'none' && tab.seamNumber && (tab.baseLen || 10) >= 4.0) {
                     ctx.font = 'bold 9px sans-serif';
-                    ctx.fillStyle = '#1b5e20';
+                    ctx.fillStyle = isHovered ? '#004d40' : '#1b5e20';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                     ctx.fillText(`${tab.seamNumber}`, tab.tabCenter.x * mmToPx, tab.tabCenter.y * mmToPx);
@@ -1397,22 +2192,43 @@ export class PapercraftEngine {
         }
         ctx.stroke();
 
-        // Números rojos receptores
-        if (this.showTabNumbers && this.numberPlacement === 'outside') {
-            ctx.font = 'bold 8px sans-serif';
-            ctx.fillStyle = '#b71c1c';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+        // Resaltar arista receptora gemela cuando su costura o unión completa está en hover
+        if (currentHoveredJunction || currentHoveredSeam) {
             for (const cut of part.boundaryEdges) {
-                if (cut.isTarget && cut.seamNumber && (cut.len || 10) >= 5.0) {
-                    const distMm = 2.5;
+                const isHoverMatch = (currentHoveredJunction && cut.junctionKey === currentHoveredJunction) ||
+                                      (currentHoveredSeam && cut.seamNumber === currentHoveredSeam);
+                if (isHoverMatch && !cut.hasTab) {
+                    ctx.save();
+                    ctx.strokeStyle = '#00e5ff';
+                    ctx.lineWidth = 2.4;
+                    ctx.setLineDash([4, 3]);
+                    ctx.beginPath();
+                    ctx.moveTo(cut.p1.x * mmToPx, cut.p1.y * mmToPx);
+                    ctx.lineTo(cut.p2.x * mmToPx, cut.p2.y * mmToPx);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }
+
+        // Números solo si se eligen expresamente fuera de las piezas en la zona de descarte (NUNCA sobre el modelo)
+        if (this.showTabNumbers && this.numberPlacement === 'outside') {
+            for (const cut of part.boundaryEdges) {
+                if (cut.isTarget && cut.seamNumber && (cut.len || 10) >= 4.0) {
                     const midX = cut.mid ? cut.mid.x : (cut.p1.x + cut.p2.x) * 0.5;
                     const midY = cut.mid ? cut.mid.y : (cut.p1.y + cut.p2.y) * 0.5;
                     const nx = cut.nx || 0;
                     const ny = cut.ny || 0;
+                    const distMm = 2.5;
                     const ox = (midX + nx * distMm) * mmToPx;
                     const oy = (midY + ny * distMm) * mmToPx;
+                    ctx.save();
+                    ctx.font = 'bold 8px sans-serif';
+                    ctx.fillStyle = '#b71c1c';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
                     ctx.fillText(`[${cut.seamNumber}]`, ox, oy);
+                    ctx.restore();
                 }
             }
         }
@@ -1489,6 +2305,45 @@ export class PapercraftEngine {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(badgeText, bx + bw / 2, badgeY + badgeH / 2);
+        } else if (this.hoveredPart === part) {
+            // Fase 3: Resalte visual de pieza bajo Hover (Rastreo Inteligente 3D <-> 2D)
+            const b = part.bounds;
+            const bx = b.minX * mmToPx - 4;
+            const by = b.minY * mmToPx - 4;
+            const bw = part.wMm * mmToPx + 8;
+            const bh = part.hMm * mmToPx + 8;
+
+            ctx.save();
+            ctx.strokeStyle = '#00e5ff';
+            ctx.lineWidth = 2.0;
+            ctx.shadowColor = '#00e5ff';
+            ctx.shadowBlur = 10;
+            ctx.setLineDash([5, 3]);
+            ctx.strokeRect(bx, by, bw, bh);
+            ctx.restore();
+
+            const hoverBadge = `🧩 Pieza #${part.id + 1} (Hoja ${(part.layout?.pageIndex || 0) + 1})`;
+            ctx.save();
+            ctx.font = 'bold 10px sans-serif';
+            const badgeW = ctx.measureText(hoverBadge).width + 14;
+            const badgeH = 18;
+            const badgeX = bx + bw / 2 - badgeW / 2;
+            const badgeY = by - badgeH - 6;
+
+            ctx.fillStyle = 'rgba(0, 229, 255, 0.92)';
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3);
+            } else {
+                ctx.rect(badgeX, badgeY, badgeW, badgeH);
+            }
+            ctx.fill();
+
+            ctx.fillStyle = '#0a192f';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(hoverBadge, badgeX + badgeW / 2, badgeY + badgeH / 2);
+            ctx.restore();
         }
 
         ctx.restore();
@@ -1615,10 +2470,13 @@ export class PapercraftEngine {
                 return { x: rx, y: ry };
             };
 
-            // A) Textura raster de la pieza
+            // A) Textura raster de la pieza con Sangrado Perimetral (Texture Bleed)
             if (canvas2d && part.localTriangles && part.localTriangles.length > 0) {
                 try {
-                    const padPx = 4;
+                    const bleedMm = (typeof this.bleedMm === 'number') ? this.bleedMm : 1.5;
+                    const pxPerMm = (this.pixelsPerMm && this.pixelsPerMm > 0) ? this.pixelsPerMm : 10.0;
+                    const bleedPx = Math.round(bleedMm * pxPerMm);
+                    const padPx = bleedPx + 4;
                     const cosR = Math.cos(rotRad);
                     const sinR = Math.sin(rotRad);
 
@@ -1636,7 +2494,6 @@ export class PapercraftEngine {
                     }
 
                     if (isFinite(minRx) && isFinite(maxRx) && isFinite(minRy) && isFinite(maxRy)) {
-                        const pxPerMm = (this.pixelsPerMm && this.pixelsPerMm > 0) ? this.pixelsPerMm : 10.0;
                         const bW_px = Math.max(16, Math.ceil((maxRx - minRx) * pxPerMm) + padPx * 2);
                         const bH_px = Math.max(16, Math.ceil((maxRy - minRy) * pxPerMm) + padPx * 2);
                         const tempCanvas = document.createElement('canvas');
@@ -1669,6 +2526,11 @@ export class PapercraftEngine {
                             partDrawSize,
                             partDrawSize
                         );
+
+                        // Aplicar dilatación perimetral (Sangrado de corte 1 a 2 mm para Acabado de Museo)
+                        if (bleedPx > 0) {
+                            this.applyTextureBleed(tempCanvas, bleedPx);
+                        }
 
                         const partImgData = tempCanvas.toDataURL('image/png', 0.95);
                         const drawW_mm = bW_px / pxPerMm;
@@ -1703,9 +2565,10 @@ export class PapercraftEngine {
                 doc.setLineWidth(0.08);
                 doc.setLineDash([], 0);
                 for (const tri of part.localTriangles) {
-                    const p1 = toPageMm(tri.p1);
-                    const p2 = toPageMm(tri.p2);
-                    const p3 = toPageMm(tri.p3);
+                    if (!tri || tri.length < 3) continue;
+                    const p1 = toPageMm(tri[0]);
+                    const p2 = toPageMm(tri[1]);
+                    const p3 = toPageMm(tri[2]);
                     doc.line(p1.x, p1.y, p2.x, p2.y);
                     doc.line(p2.x, p2.y, p3.x, p3.y);
                     doc.line(p3.x, p3.y, p1.x, p1.y);
@@ -1765,7 +2628,7 @@ export class PapercraftEngine {
                 const pB = toPageMm(cut.p2);
                 doc.line(pA.x, pA.y, pB.x, pB.y);
 
-                if (this.showTabNumbers && this.numberPlacement === 'outside' && cut.isTarget && cut.seamNumber && (cut.len || 10) >= 5.0) {
+                if (this.showTabNumbers && this.numberPlacement === 'outside' && cut.isTarget && cut.seamNumber && (cut.len || 10) >= 4.0) {
                     const midLocal = cut.mid || { x: (cut.p1.x + cut.p2.x) * 0.5, y: (cut.p1.y + cut.p2.y) * 0.5 };
                     const nx = cut.nx || 0;
                     const ny = cut.ny || 0;

@@ -1484,59 +1484,141 @@ input[type=range]::-webkit-slider-runnable-track {
 
 .paint-dropdown-menu {
     position: fixed;
-    width: 250px;
-    background: #252525;
-    border: 1px solid #555;
-    border-radius: 6px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.85);
+    width: 310px;
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 8px;
+    box-shadow: 0 14px 40px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.05);
     z-index: 100000;
     padding: 6px 0;
     display: flex;
     flex-direction: column;
     max-height: calc(100vh - 120px);
     overflow-y: auto;
+    user-select: none;
+}
+
+.paint-menu-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 14px 4px 14px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #888;
+    text-transform: uppercase;
+}
+
+.paint-menu-section-header.section-assembly {
+    color: #ce93d8;
+}
+
+.paint-menu-badge-pill {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.paint-menu-badge-pill.pill-blue {
+    background: rgba(33, 150, 243, 0.2);
+    color: #64b5f6;
+    border: 1px solid rgba(33, 150, 243, 0.4);
+}
+
+.paint-menu-badge-pill.pill-purple {
+    background: rgba(171, 71, 188, 0.2);
+    color: #ce93d8;
+    border: 1px solid rgba(171, 71, 188, 0.4);
 }
 
 .paint-menu-item {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 8px 14px;
+    padding: 7px 14px;
     cursor: pointer;
-    transition: background-color 0.12s;
+    transition: background-color 0.12s, color 0.12s;
 }
 
 .paint-menu-item:hover {
-    background-color: #383838;
+    background-color: #2e2e2e;
 }
 
 .paint-menu-icon {
-    font-size: 18px;
-    width: 24px;
-    text-align: center;
+    font-size: 16px;
+    width: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .paint-menu-text {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 1px;
 }
 
-.paint-menu-text span {
+.paint-menu-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.paint-menu-label-row span:first-child {
     font-size: 12px;
     font-weight: 500;
-    color: #eee;
+    color: #ddd;
 }
 
-.paint-menu-text small {
-    color: #888;
+.paint-menu-item:hover .paint-menu-label-row span:first-child {
+    color: #fff;
+}
+
+.paint-menu-shortcut {
     font-size: 10px;
+    font-family: monospace;
+    font-weight: 600;
+    color: #888;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+.paint-menu-tag {
+    font-size: 10px;
+    color: #888;
+    font-family: monospace;
+}
+
+.paint-menu-badge-action {
+    font-size: 9px;
+    font-weight: bold;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: #4a148c;
+    color: #e1bee7;
 }
 
 .paint-menu-divider {
     height: 1px;
-    background-color: #3a3a3a;
+    background-color: #333;
     margin: 5px 0;
+}
+
+.paint-menu-footer-res {
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #181818;
+    border-top: 1px solid #333;
+    margin-top: 2px;
 }
 
 /* Panel Popover Flotante de Texturas */
@@ -2286,4 +2368,16 @@ input[type=range]::-webkit-slider-runnable-track {
 @keyframes fadeInMenu {
     from { opacity: 0; transform: translateY(-4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* Toast de Notificación en Banco de Trabajo A4 */
+#unfold-toast {
+    animation: slideUpToast 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    letter-spacing: 0.3px;
+    backdrop-filter: blur(8px);
+}
+
+@keyframes slideUpToast {
+    from { opacity: 0; transform: translate(-50%, 8px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
 }

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neo Substance Painter - Pepakura Edition</title>
     <link rel="icon" type="image/x-icon" href="app_icon.ico">
-    <link rel="stylesheet" href="style.css?v=8.4">
+    <link rel="stylesheet" href="style.css?v=8.5">
     <script>
         window.currentShapeStrokeDash = 'solid';
         window.updateShapeStrokeDash = function(dashStyle) {
@@ -1060,8 +1060,9 @@
                         <input type="checkbox" id="ribbon-toggle-numbers" style="display: none;">
                     </div>
                     <select id="ribbon-numbers-mode" class="ribbon-select" style="display: none;" title="Ubicación de los números de guía">
-                        <option value="flaps" selected>Solo solapas</option>
-                        <option value="outside">Fuera pieza</option>
+                        <option value="flaps" selected>Solo solapas (ocultos)</option>
+                        <option value="outside">Fuera pieza (descarte)</option>
+                        <option value="none">Sin números (limpio)</option>
                     </select>
                 </div>
                 <span class="ribbon-label">✂️ Papercraft</span>
@@ -1070,94 +1071,150 @@
         </header>
 
         <!-- Menú Desplegable: Archivo Flotante Global (Fuera de Header para evitar problemas de overflow) -->
+        <!-- Menú Desplegable: Archivo Flotante Global (Fuera de Header para evitar problemas de overflow) -->
         <div id="paint-file-dropdown" class="paint-dropdown-menu" style="display: none;">
+            <!-- SECCIÓN 1: PIEZA INDIVIDUAL (.NSP) -->
+            <div class="paint-menu-section-header">
+                <span>Proyecto Actual</span>
+                <span class="paint-menu-badge-pill pill-blue">.nsp</span>
+            </div>
+            
             <div class="paint-menu-item" id="btn-new-project">
                 <span class="paint-menu-icon">📄</span>
                 <div class="paint-menu-text">
-                    <span>Nuevo Archivo (Ctrl+N)</span>
-                    <small>Reiniciar proyecto con las 4 capas estándar</small>
+                    <div class="paint-menu-label-row">
+                        <span>Nuevo Lienzo en Blanco</span>
+                        <span class="paint-menu-shortcut">Ctrl+N</span>
+                    </div>
+                    <small>Reiniciar pieza con capas estándar</small>
                 </div>
             </div>
-            <div class="paint-menu-item" id="btn-apply-res">
-                <span class="paint-menu-icon">📐</span>
-                <div class="paint-menu-text">
-                    <span>Nueva Hoja / Resolución</span>
-                    <small>Reiniciar lienzo con resolución elegida</small>
-                </div>
-            </div>
+
             <div class="paint-menu-item" id="btn-load-project">
                 <span class="paint-menu-icon">📂</span>
                 <div class="paint-menu-text">
-                    <span>Abrir Pieza / Proyecto (.nsp)</span>
-                    <small>Cargar capas, modelo y papercraft</small>
+                    <div class="paint-menu-label-row">
+                        <span>Abrir Pieza</span>
+                        <span class="paint-menu-shortcut">Ctrl+O</span>
+                    </div>
+                    <small>Cargar archivo de proyecto .nsp</small>
                 </div>
             </div>
+
             <div class="paint-menu-item" id="btn-save-project">
                 <span class="paint-menu-icon">💾</span>
                 <div class="paint-menu-text">
-                    <span>Guardar Pieza / Proyecto (.nsp)</span>
-                    <small>Guardar pieza actual completa</small>
+                    <div class="paint-menu-label-row">
+                        <span>Guardar Pieza</span>
+                        <span class="paint-menu-shortcut">Ctrl+S</span>
+                    </div>
+                    <small>Guardar capas y textura en .nsp</small>
                 </div>
             </div>
+
             <div class="paint-menu-divider"></div>
-            <div class="paint-menu-item" id="btn-load-assembly-project">
-                <span class="paint-menu-icon">📁</span>
-                <div class="paint-menu-text">
-                    <span>Abrir Proyecto Ensamblado (.nspp)</span>
-                    <small>Cargar todas las piezas y montaje 3D</small>
-                </div>
+
+            <!-- SECCIÓN 2: ENSAMBLADOR 3D (.NSPP) -->
+            <div class="paint-menu-section-header section-assembly">
+                <span>Ensamblador 3D</span>
+                <span class="paint-menu-badge-pill pill-purple">.nspp</span>
             </div>
-            <div class="paint-menu-item" id="btn-save-assembly-project">
-                <span class="paint-menu-icon">💾</span>
-                <div class="paint-menu-text">
-                    <span>Guardar Proyecto Ensamblado (.nspp)</span>
-                    <small>Guardar todas las piezas, 3D y hojas A4</small>
-                </div>
-            </div>
-            <div class="paint-menu-divider"></div>
-            <div class="paint-menu-item" id="btn-load-obj">
-                <span class="paint-menu-icon">📦</span>
-                <div class="paint-menu-text">
-                    <span>Cargar Modelo 3D (.obj)</span>
-                    <small>Importar geometría 3D</small>
-                </div>
-            </div>
-            <div class="paint-menu-item" id="btn-import-texture-layer">
-                <span class="paint-menu-icon">📥</span>
-                <div class="paint-menu-text">
-                    <span>Importar Textura / SVG como Capa</span>
-                    <small>Cargar diseño vectorial o imagen (SVG, PNG)</small>
-                </div>
-            </div>
-            <div class="paint-menu-item" id="btn-export">
-                <span class="paint-menu-icon">🖼️</span>
-                <div class="paint-menu-text">
-                    <span>Guardar Textura (PNG)</span>
-                    <small>Exportar imagen plana de textura</small>
-                </div>
-            </div>
-            <div class="paint-menu-item" id="btn-export-pdf">
-                <span class="paint-menu-icon">📄</span>
-                <div class="paint-menu-text">
-                    <span>Exportar PDF A4 (1:1)</span>
-                    <small>Documento para imprimir y recortar</small>
-                </div>
-            </div>
+
             <div class="paint-menu-item" id="btn-menu-assembler">
-                <span class="paint-menu-icon">📦</span>
+                <span class="paint-menu-icon">🧩</span>
                 <div class="paint-menu-text">
-                    <span>Ensamblador de Piezas</span>
+                    <div class="paint-menu-label-row">
+                        <span>Panel Ensamblador 3D</span>
+                        <span class="paint-menu-badge-action">Abrir</span>
+                    </div>
                     <small>Ver robot completo 3D y Álbum PDF</small>
                 </div>
             </div>
+
+            <div class="paint-menu-item" id="btn-load-assembly-project">
+                <span class="paint-menu-icon">📁</span>
+                <div class="paint-menu-text">
+                    <div class="paint-menu-label-row">
+                        <span>Abrir Proyecto Ensamblado</span>
+                        <span class="paint-menu-tag">.nspp</span>
+                    </div>
+                    <small>Cargar todas las piezas y montaje 3D</small>
+                </div>
+            </div>
+
+            <div class="paint-menu-item" id="btn-save-assembly-project">
+                <span class="paint-menu-icon">💾</span>
+                <div class="paint-menu-text">
+                    <div class="paint-menu-label-row">
+                        <span>Guardar Proyecto Ensamblado</span>
+                        <span class="paint-menu-tag">.nspp</span>
+                    </div>
+                    <small>Guardar todas las piezas, 3D y hojas A4</small>
+                </div>
+            </div>
+
             <div class="paint-menu-divider"></div>
-            <div class="paint-menu-item-static" style="padding: 6px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #ccc;">
-                <span>Resolución:</span>
-                <select id="doc-resolution" class="ribbon-select" style="height: 22px; font-size: 11px; width: 85px;">
-                    <option value="1024">1024 px</option>
-                    <option value="2048" selected>2048 px</option>
-                    <option value="4096">4096 px</option>
-                </select>
+
+            <!-- SECCIÓN 3: IMPORTAR / EXPORTAR -->
+            <div class="paint-menu-section-header">
+                <span>Importar y Exportar</span>
+            </div>
+
+            <div class="paint-menu-item" id="btn-load-obj">
+                <span class="paint-menu-icon">📦</span>
+                <div class="paint-menu-text">
+                    <div class="paint-menu-label-row">
+                        <span>Importar Modelo 3D</span>
+                        <span class="paint-menu-tag">.obj</span>
+                    </div>
+                    <small>Importar geometría y mapa UV</small>
+                </div>
+            </div>
+
+            <div class="paint-menu-item" id="btn-import-texture-layer">
+                <span class="paint-menu-icon">📥</span>
+                <div class="paint-menu-text">
+                    <div class="paint-menu-label-row">
+                        <span>Importar Textura como Capa</span>
+                        <span class="paint-menu-tag">PNG/SVG</span>
+                    </div>
+                    <small>Cargar diseño vectorial o imagen</small>
+                </div>
+            </div>
+
+            <div class="paint-menu-item" id="btn-export">
+                <span class="paint-menu-icon">🖼️</span>
+                <div class="paint-menu-text">
+                    <div class="paint-menu-label-row">
+                        <span>Exportar Textura</span>
+                        <span class="paint-menu-tag">PNG</span>
+                    </div>
+                    <small>Exportar imagen plana de textura</small>
+                </div>
+            </div>
+
+            <div class="paint-menu-item" id="btn-export-pdf">
+                <span class="paint-menu-icon">🖨️</span>
+                <div class="paint-menu-text">
+                    <div class="paint-menu-label-row">
+                        <span>Exportar PDF para Armar</span>
+                        <span class="paint-menu-tag">1:1 A4</span>
+                    </div>
+                    <small>Documento para imprimir y recortar</small>
+                </div>
+            </div>
+
+            <!-- FOOTER RESOLUCIÓN CON BOTÓN APLICAR -->
+            <div class="paint-menu-footer-res">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size: 11px; color: #aaa;">📐 Res:</span>
+                    <select id="doc-resolution" class="ribbon-select" style="height: 22px; font-size: 11px; width: 145px;">
+                        <option value="1024">1024 px (Bajo)</option>
+                        <option value="2048" selected>2048 px (Recomendado)</option>
+                        <option value="4096">4096 px (Consumo Alto)</option>
+                    </select>
+                </div>
+                <button id="btn-apply-res" class="ribbon-btn" style="height: 22px; font-size: 10px; padding: 0 10px; background: #333; border: 1px solid #555; color: #eee; border-radius: 4px; cursor: pointer;">Aplicar</button>
             </div>
         </div>
 
@@ -1196,6 +1253,7 @@
                                 <button type="button" id="btn-unfold-add-page" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Añadir una nueva hoja A4 vacía">📄 +Hoja</button>
                                 <button type="button" id="btn-unfold-clean-pages" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; color: #ffab91; white-space: nowrap;" title="Eliminar y compactar hojas vacías que no contienen piezas">🗑️ Limpiar</button>
                                 <button type="button" id="btn-unfold-measure" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; color: #ffecb3; white-space: nowrap;" title="Regla interactiva: haz clic y arrastra en el lienzo para medir distancias exactas en mm">📏 Medir</button>
+                                <button type="button" id="btn-unfold-toggle-tracker" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; color: #888; white-space: nowrap;" title="Activar/Desactivar detección y resalte de caras (Hover Tracker 3D ⇄ 2D)">🧩 Rastreo 3D</button>
                             </div>
 
                             <div style="width: 1px; height: 18px; background: #555; margin: 0 1px;"></div>
@@ -1240,6 +1298,8 @@
                             <button type="button" id="btn-unfold-ann-delete" class="size-step-btn" style="width: auto; padding: 1px 7px; font-size: 11px; color: #ff5252; border-color: #ff5252;" title="Eliminar anotación (o presiona Supr)">🗑️ Borrar</button>
                         </div>
                     </div>
+                    <!-- Notificación Flotante de Acciones en Mesa (Flip Flap / Hide) -->
+                    <div id="unfold-toast" style="display: none; position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(18, 24, 38, 0.94); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.5); padding: 7px 18px; border-radius: 20px; font-size: 12px; font-weight: bold; box-shadow: 0 4px 16px rgba(0,0,0,0.6); pointer-events: none; z-index: 50; transition: opacity 0.25s ease;"></div>
                 </div>
 
                 <div id="view-2d-label" class="panel-label">Vista 2D (UV)</div>
@@ -1256,8 +1316,13 @@
                 <!-- Indicador de Vista 3D estilo Blender (Top-Left) -->
                 <div id="view3d-cam-label" class="view3d-cam-label">Perspectiva Usuario</div>
 
+                <!-- HUD Rastreo Inteligente 3D <-> 2D (Hover Tracker) -->
+                <div id="view3d-tracker-hud" style="display: none; position: absolute; bottom: 54px; left: 16px; background: rgba(10, 25, 47, 0.94); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.6); padding: 6px 14px; border-radius: 6px; font-size: 11px; font-weight: bold; box-shadow: 0 4px 16px rgba(0,0,0,0.7); pointer-events: none; z-index: 25; letter-spacing: 0.3px; backdrop-filter: blur(4px);"></div>
+
                 <!-- Barra de Vistas Ortogonales estilo Blender (Top-Right) -->
                 <div class="view3d-nav-toolbar">
+                    <button type="button" id="btn-view3d-toggle-tracker" class="btn-v3d" style="color: #888;" title="Activar o Desactivar Resalte de Caras (Rastreo 3D ⇄ 2D)">🧩 Rastreo: OFF</button>
+                    <span class="v3d-sep"></span>
                     <button type="button" id="btn-view3d-toggle-ortho" class="btn-v3d" title="Alternar Perspectiva / Ortogonal (Tecla 5 / Num 5)">📐 Ortogonal</button>
                     <span class="v3d-sep"></span>
                     <button type="button" class="btn-v3d btn-v3d-view" data-view="front" title="Vista Frontal (Tecla 1 / Num 1)">Frente (1)</button>
@@ -1448,10 +1513,14 @@
                             </div>
                             <div class="unfold-row" id="unfold-numbers-mode-row" style="display: none;">
                                 <label>Ubicación:</label>
-                                <select id="unfold-numbers-mode" class="ribbon-select" style="width: 140px;">
+                                <select id="unfold-numbers-mode" class="ribbon-select" style="width: 155px;">
                                     <option value="flaps" selected>Solo en solapas (ocultos)</option>
                                     <option value="outside">Fuera de piezas (descarte)</option>
+                                    <option value="none">Sin números (limpio)</option>
                                 </select>
+                            </div>
+                            <div style="font-size: 0.72em; color: #80cbc4; margin-top: 5px; line-height: 1.35; padding: 4px 6px; background: rgba(0, 77, 64, 0.25); border-radius: 4px; border: 1px solid rgba(0, 150, 136, 0.25);">
+                                💡 <b>Flip Flap:</b> Clic en una solapa para pasarla a la pieza contraria. Clic derecho para ocultar o restaurar.
                             </div>
                         </div>
 
@@ -1485,6 +1554,15 @@
                                     <option value="0.10" selected>0.10 mm (Hairline)</option>
                                     <option value="0.15">0.15 mm (Medio)</option>
                                     <option value="0.22">0.22 mm (Grueso)</option>
+                                </select>
+                            </div>
+                            <div class="unfold-row">
+                                <label title="Extiende la textura 1 a 2 mm hacia afuera del corte y hacia las solapas para evitar bordes blancos al cortar">Sangrado (Bleed):</label>
+                                <select id="unfold-bleed-margin" class="ribbon-select" style="width: 125px;" title="Sangrado perimetral (Texture Bleed / Padding) para corte limpio sin líneas blancas">
+                                    <option value="0">Sin sangrado (0 mm)</option>
+                                    <option value="1.0">1.0 mm (Estándar)</option>
+                                    <option value="1.5" selected>1.5 mm (Museo / Pro)</option>
+                                    <option value="2.0">2.0 mm (Amplio)</option>
                                 </select>
                             </div>
                             <div class="unfold-row">
@@ -1579,7 +1657,7 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=9.3"></script>
-    <script type="module" src="assembler.js?v=9.3"></script>
+    <script type="module" src="main.js?v=10.6"></script>
+    <script type="module" src="assembler.js?v=10.6"></script>
 </body>
 </html>

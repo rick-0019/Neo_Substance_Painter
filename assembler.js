@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { PapercraftEngine } from './papercraft.js?v=9.1';
+import { PapercraftEngine } from './papercraft.js?v=10.6';
 
 export class ModelAssembler {
     constructor() {
@@ -650,13 +650,52 @@ export class ModelAssembler {
         const canvas2d = document.getElementById('canvas-2d');
         if (!canvas2d) return;
 
+        // Auto-adaptación dinámica de resolución si canvas-2d cambió
+        if (piece.textureCanvas.width !== canvas2d.width || piece.textureCanvas.height !== canvas2d.height) {
+            piece.textureCanvas.width = canvas2d.width;
+            piece.textureCanvas.height = canvas2d.height;
+            if (piece.texture) {
+                piece.texture.dispose();
+                piece.texture = new THREE.CanvasTexture(piece.textureCanvas);
+                piece.texture.colorSpace = THREE.SRGBColorSpace;
+                if (piece.mesh) {
+                    piece.mesh.traverse(c => {
+                        if (c.isMesh && c.material && !c.userData?.isSelectionOverlay) {
+                            if (Array.isArray(c.material)) {
+                                c.material.forEach(m => { m.map = piece.texture; m.needsUpdate = true; });
+                            } else {
+                                c.material.map = piece.texture;
+                                c.material.needsUpdate = true;
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
         const ctx = piece.textureCanvas.getContext('2d');
         ctx.clearRect(0, 0, piece.textureCanvas.width, piece.textureCanvas.height);
         ctx.drawImage(canvas2d, 0, 0, piece.textureCanvas.width, piece.textureCanvas.height);
         if (piece.texture) piece.texture.needsUpdate = true;
         if (window.state?.texture) window.state.texture.needsUpdate = true;
+        if (piece.papercraft && typeof piece.papercraft.invalidateBleedCache === 'function') {
+            piece.papercraft.invalidateBleedCache();
+        }
         if (this.is3DMode) {
             this.updateAssemblyMaterials();
+        }
+    }
+
+    /**
+     * Invalida las cachés de textura sangrada de todas las piezas del ensamblador
+     */
+    invalidateAllBleedCaches() {
+        if (this.pieces && Array.isArray(this.pieces)) {
+            this.pieces.forEach(p => {
+                if (p.papercraft && typeof p.papercraft.invalidateBleedCache === 'function') {
+                    p.papercraft.invalidateBleedCache();
+                }
+            });
         }
     }
 
@@ -1050,6 +1089,26 @@ export class ModelAssembler {
     }
 
     /**
+     * Detecta si se hizo clic en una solapa o arista en cualquiera de las piezas activas del modelo ensamblado
+     */
+    getTabOrEdgeAt(canvasX, canvasY, viewScale = 4.0) {
+        const activePieces = this.pieces.filter(p => p.visible !== false);
+        if (activePieces.length === 0) return null;
+
+        for (let pi = activePieces.length - 1; pi >= 0; pi--) {
+            const piece = activePieces[pi];
+            if (piece.papercraft && typeof piece.papercraft.getTabOrEdgeAt === 'function') {
+                const hit = piece.papercraft.getTabOrEdgeAt(canvasX, canvasY, viewScale);
+                if (hit) {
+                    hit.piece = piece;
+                    return hit;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * Renderiza todas las hojas A4 de todas las piezas ensambladas en la Mesa de Trabajo 2D
      */
     renderWorkbench(ctx, canvasW, canvasH) {
@@ -1233,6 +1292,7 @@ export class ModelAssembler {
         if (pp.tabAngleDeg) piecePapercraft.tabAngleDeg = pp.tabAngleDeg;
         if (pp.cutLineColor) piecePapercraft.cutLineColor = pp.cutLineColor;
         if (pp.cutLineWidthMm) piecePapercraft.cutLineWidthMm = pp.cutLineWidthMm;
+        if (pp.bleedMm !== undefined) piecePapercraft.bleedMm = pp.bleedMm;
         if (pp.foldLineColor) piecePapercraft.foldLineColor = pp.foldLineColor;
         if (pp.foldLineWidthMm) piecePapercraft.foldLineWidthMm = pp.foldLineWidthMm;
         if (pp.hideSmoothLines !== undefined) piecePapercraft.hideSmoothLines = pp.hideSmoothLines;
@@ -1292,7 +1352,7 @@ export class ModelAssembler {
      * Procesa una pieza directa desde archivo .obj (sin pintar aún o pintada con color base)
      */
     async loadOBJPiece(objText, defaultName) {
-        const size = 2048;
+        const size = window.TEX_SIZE || 2048;
         const textureCanvas = document.createElement('canvas');
         textureCanvas.width = size;
         textureCanvas.height = size;
@@ -1320,6 +1380,7 @@ export class ModelAssembler {
             piecePapercraft.tabAngleDeg = refPapercraft.tabAngleDeg;
             piecePapercraft.cutLineColor = refPapercraft.cutLineColor;
             piecePapercraft.cutLineWidthMm = refPapercraft.cutLineWidthMm;
+            piecePapercraft.bleedMm = refPapercraft.bleedMm;
             piecePapercraft.foldLineColor = refPapercraft.foldLineColor;
             piecePapercraft.foldLineWidthMm = refPapercraft.foldLineWidthMm;
             piecePapercraft.hideSmoothLines = refPapercraft.hideSmoothLines;
@@ -2013,6 +2074,7 @@ export class ModelAssembler {
                         tabAngleDeg: piece.papercraft.tabAngleDeg,
                         cutLineColor: piece.papercraft.cutLineColor,
                         cutLineWidthMm: piece.papercraft.cutLineWidthMm,
+                        bleedMm: piece.papercraft.bleedMm,
                         foldLineColor: piece.papercraft.foldLineColor,
                         foldLineWidthMm: piece.papercraft.foldLineWidthMm,
                         hideSmoothLines: piece.papercraft.hideSmoothLines,
@@ -2133,6 +2195,7 @@ export class ModelAssembler {
                     if (ps.tabAngleDeg !== undefined) piecePapercraft.tabAngleDeg = ps.tabAngleDeg;
                     if (ps.cutLineColor) piecePapercraft.cutLineColor = ps.cutLineColor;
                     if (ps.cutLineWidthMm) piecePapercraft.cutLineWidthMm = ps.cutLineWidthMm;
+                    if (ps.bleedMm !== undefined) piecePapercraft.bleedMm = ps.bleedMm;
                     if (ps.foldLineColor) piecePapercraft.foldLineColor = ps.foldLineColor;
                     if (ps.foldLineWidthMm) piecePapercraft.foldLineWidthMm = ps.foldLineWidthMm;
                     if (ps.hideSmoothLines !== undefined) piecePapercraft.hideSmoothLines = ps.hideSmoothLines;

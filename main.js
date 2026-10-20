@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=9.0';
-import { DecalSystem } from './decals.js?v=8.9';
-import { LayerManager } from './layers.js?v=8.6';
-import { PapercraftEngine } from './papercraft.js?v=8.6';
-import { SelectionManager } from './selection.js?v=8.6';
-import { ColorPickerManager } from './colorPicker.js?v=8.6';
-import { DecalLibraryManager } from './decalLibrary.js?v=8.9';
+import { Painter } from './painter.js?v=9.8';
+import { DecalSystem } from './decals.js?v=9.8';
+import { LayerManager } from './layers.js?v=9.8';
+import { PapercraftEngine } from './papercraft.js?v=10.6';
+import { SelectionManager } from './selection.js?v=9.8';
+import { ColorPickerManager } from './colorPicker.js?v=9.8';
+import { DecalLibraryManager } from './decalLibrary.js?v=9.8';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -26,11 +26,32 @@ const canvas2d = document.getElementById('canvas-2d');
 canvas2d.width = TEX_SIZE;
 canvas2d.height = TEX_SIZE;
 
+// Sincronizador de renderizado fluido (60 FPS) para el Banco de Trabajo A4
+let unfoldWorkbenchRaf = null;
+function scheduleUnfoldWorkbenchRender() {
+    if (unfoldWorkbenchRaf) return;
+    unfoldWorkbenchRaf = requestAnimationFrame(() => {
+        unfoldWorkbenchRaf = null;
+        if (typeof renderUnfoldWorkbench === 'function') {
+            renderUnfoldWorkbench();
+        }
+    });
+}
+window.scheduleUnfoldWorkbenchRender = scheduleUnfoldWorkbenchRender;
+
 // Layer Manager (Gestor de Capas Acelerado por GPU)
 const layerManager = new LayerManager(canvas2d, TEX_SIZE, TEX_SIZE, () => {
     if (state.texture) state.texture.needsUpdate = true;
     if (window.modelAssembler && typeof window.modelAssembler.syncActivePieceTexture === 'function') {
         window.modelAssembler.syncActivePieceTexture();
+    }
+    if (window.papercraft) {
+        if (typeof window.papercraft.invalidateBleedCache === 'function') {
+            window.papercraft.invalidateBleedCache();
+        }
+        if (window.papercraft.active) {
+            scheduleUnfoldWorkbenchRender();
+        }
     }
 });
 window.layerManager = layerManager;
@@ -383,23 +404,14 @@ document.getElementById('btn-new-project')?.addEventListener('click', () => {
 });
 
 document.getElementById('btn-apply-res')?.addEventListener('click', () => {
+    const dropdown = document.getElementById('paint-file-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
     showAppConfirm('Cambiar la resolución redimensionará el lienzo y reiniciará el proyecto. ¿Continuar?', {
         title: 'Cambiar Resolución',
         confirmText: 'Continuar',
         onConfirm: () => {
-            TEX_SIZE = parseInt(document.getElementById('doc-resolution').value, 10);
-            
-            layerManager.resize(TEX_SIZE, TEX_SIZE);
-            selectionManager.resize(TEX_SIZE, TEX_SIZE);
-            
-            canvasUV.width = TEX_SIZE;
-            canvasUV.height = TEX_SIZE;
-            const canvasUI = document.getElementById('canvas-ui');
-            if (canvasUI) {
-                canvasUI.width = TEX_SIZE;
-                canvasUI.height = TEX_SIZE;
-            }
-            
+            const newRes = parseInt(document.getElementById('doc-resolution').value, 10);
+            updateTextureResolution(newRes);
             createNewProject(false);
         }
     });
@@ -546,6 +558,317 @@ decalSystem.setMesh(state.mesh);
 setupSelection3DOverlay(state.mesh);
 layerManager.renderUI();
 
+// Fase 3: Malla de Resalte 3D Dinámica para Rastreo Inteligente (Hover Tracker 3D <-> 2D)
+const tracker3DGeometry = new THREE.BufferGeometry();
+const tracker3DMaterial = new THREE.MeshBasicMaterial({
+    color: 0x00e5ff,
+    transparent: true,
+    opacity: 0.45,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2
+});
+const tracker3DWireMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.7,
+    depthWrite: false
+});
+const tracker3DGroup = new THREE.Group();
+tracker3DGroup.renderOrder = 100;
+const tracker3DFillMesh = new THREE.Mesh(tracker3DGeometry, tracker3DMaterial);
+const tracker3DWireMesh = new THREE.Mesh(tracker3DGeometry, tracker3DWireMaterial);
+tracker3DGroup.add(tracker3DFillMesh);
+tracker3DGroup.add(tracker3DWireMesh);
+tracker3DGroup.visible = false;
+scene.add(tracker3DGroup);
+
+function highlightPartIn3D(part, targetRoot) {
+    if (!part || !part.tracker3DPositions || part.tracker3DPositions.length === 0) {
+        tracker3DGroup.visible = false;
+        return;
+    }
+
+    tracker3DGeometry.setAttribute('position', new THREE.BufferAttribute(part.tracker3DPositions, 3));
+    tracker3DGeometry.setIndex(null);
+    tracker3DGeometry.computeVertexNormals();
+
+    const root = targetRoot || state.mesh;
+    if (root) {
+        tracker3DGroup.matrixAutoUpdate = false;
+        root.updateWorldMatrix(true, false);
+        tracker3DGroup.matrix.copy(root.matrixWorld);
+    }
+    tracker3DGroup.visible = true;
+}
+window.highlightPartIn3D = highlightPartIn3D;
+
+// Control de Activación / Desactivación de Rastreo 3D <-> 2D
+let is3DTrackerEnabled = false;
+
+function set3DTrackerEnabled(enabled) {
+    is3DTrackerEnabled = !!enabled;
+    const btn3d = document.getElementById('btn-view3d-toggle-tracker');
+    const btnUnfold = document.getElementById('btn-unfold-toggle-tracker');
+    if (btn3d) {
+        btn3d.textContent = is3DTrackerEnabled ? '🧩 Rastreo: ON' : '🧩 Rastreo: OFF';
+        btn3d.classList.toggle('active', is3DTrackerEnabled);
+        btn3d.style.color = is3DTrackerEnabled ? '#00e5ff' : '#888';
+        btn3d.style.borderColor = is3DTrackerEnabled ? '#00e5ff' : 'rgba(255, 255, 255, 0.12)';
+    }
+    if (btnUnfold) {
+        btnUnfold.classList.toggle('active', is3DTrackerEnabled);
+        btnUnfold.style.color = is3DTrackerEnabled ? '#00e5ff' : '#888';
+        btnUnfold.style.borderColor = is3DTrackerEnabled ? '#00e5ff' : '#555';
+    }
+    if (!is3DTrackerEnabled) {
+        highlightPartIn3D(null);
+        papercraft.setHoveredPart(null);
+        const hudEl = document.getElementById('view3d-tracker-hud');
+        if (hudEl) hudEl.style.display = 'none';
+        if (papercraft.active) renderUnfoldWorkbench();
+    }
+}
+window.set3DTrackerEnabled = set3DTrackerEnabled;
+
+document.getElementById('btn-view3d-toggle-tracker')?.addEventListener('click', () => {
+    set3DTrackerEnabled(!is3DTrackerEnabled);
+});
+
+document.getElementById('btn-unfold-toggle-tracker')?.addEventListener('click', () => {
+    set3DTrackerEnabled(!is3DTrackerEnabled);
+});
+
+// Eventos de Rastreo 3D -> 2D
+const raycasterTracker = new THREE.Raycaster();
+let lastHoveredFaceIdx = null;
+
+renderer.domElement.addEventListener('mousemove', (e) => {
+    // Si la función de rastreo está desactivada por el usuario, o si se está pintando / orbitando / usando calcas, no resaltar
+    if (!is3DTrackerEnabled || e.buttons !== 0 || (painter && painter.isPainting) || (decalSystem && decalSystem.selectedDecal)) {
+        if (tracker3DGroup.visible) {
+            highlightPartIn3D(null);
+            papercraft.setHoveredPart(null);
+            const hudEl = document.getElementById('view3d-tracker-hud');
+            if (hudEl) hudEl.style.display = 'none';
+            if (papercraft.active) renderUnfoldWorkbench();
+        }
+        return;
+    }
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const mouse = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    raycasterTracker.setFromCamera(mouse, camera);
+
+    let targetRoot = state.mesh;
+    let targetPapercraft = papercraft;
+    let rawIntersects = [];
+
+    if (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler && window.modelAssembler.is3DMode) {
+        const pieceMeshes = window.modelAssembler.pieces.filter(p => p.visible && p.mesh).map(p => p.mesh);
+        rawIntersects = raycasterTracker.intersectObjects(pieceMeshes, true);
+    } else if (state.mesh) {
+        rawIntersects = raycasterTracker.intersectObject(state.mesh, true);
+    }
+
+    // FILTRADO ESTRICTO: Solo mallas reales con faceta válida (ignorar líneas Edges, wireframe overlay y selection overlay)
+    const validHits = rawIntersects.filter(h =>
+        h.object &&
+        h.object.isMesh &&
+        !h.object.userData?.isSelectionOverlay &&
+        !h.object.userData?.isWireframeOverlay &&
+        h.faceIndex !== undefined &&
+        h.faceIndex !== null
+    );
+
+    if (validHits.length > 0) {
+        const hit = validHits[0];
+        let hitMesh = hit.object;
+
+        if (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler) {
+            let rootObj = hitMesh;
+            while (rootObj && rootObj.parent && rootObj.parent !== window.modelAssembler.group) {
+                rootObj = rootObj.parent;
+            }
+            const hitPiece = window.modelAssembler.pieces.find(p => p.mesh === rootObj);
+            if (hitPiece && hitPiece.papercraft) {
+                targetPapercraft = hitPiece.papercraft;
+                targetRoot = hitPiece.mesh || rootObj;
+            }
+        }
+
+        const baseFaceOffset = hitMesh.userData?._papercraftBaseFaceIdx || 0;
+        const globalFaceIdx = baseFaceOffset + hit.faceIndex;
+        let part = null;
+
+        if (targetPapercraft && typeof targetPapercraft.getPartByFaceIndex === 'function') {
+            part = targetPapercraft.getPartByFaceIndex(globalFaceIdx);
+        }
+
+        // Respaldo por coordenadas UV si la pieza no se halló por índice de cara
+        if (!part && hit.uv && targetPapercraft && typeof targetPapercraft.getPartAtUV === 'function') {
+            part = targetPapercraft.getPartAtUV(hit.uv.x, hit.uv.y);
+        }
+
+        if (part) {
+            if (targetPapercraft.hoveredPart !== part || lastHoveredFaceIdx !== globalFaceIdx) {
+                lastHoveredFaceIdx = globalFaceIdx;
+                targetPapercraft.setHoveredPart(part, '3d');
+                highlightPartIn3D(part, targetRoot);
+
+                const hudEl = document.getElementById('view3d-tracker-hud');
+                if (hudEl) {
+                    const pageNum = (part.layout?.pageIndex || 0) + 1;
+                    const totPages = targetPapercraft.pagesCount || 1;
+                    hudEl.innerHTML = `🧩 <b>Pieza #${part.id + 1}</b> — ${Math.round(part.wMm)} × ${Math.round(part.hMm)} mm <span style="color: #ffab40; margin-left: 6px;">[Hoja ${pageNum} de ${totPages}]</span>`;
+                    hudEl.style.display = 'block';
+                }
+
+                if (papercraft.active) {
+                    renderUnfoldWorkbench();
+                }
+            }
+            return;
+        }
+    }
+
+    if (lastHoveredFaceIdx !== null || (papercraft.hoveredPart && papercraft.hoveredSource === '3d')) {
+        lastHoveredFaceIdx = null;
+        papercraft.setHoveredPart(null);
+        highlightPartIn3D(null);
+        const hudEl = document.getElementById('view3d-tracker-hud');
+        if (hudEl) hudEl.style.display = 'none';
+        if (papercraft.active) renderUnfoldWorkbench();
+    }
+});
+
+renderer.domElement.addEventListener('mouseleave', () => {
+    if (papercraft.hoveredSource === '3d') {
+        lastHoveredFaceIdx = null;
+        papercraft.setHoveredPart(null);
+        highlightPartIn3D(null);
+        const hudEl = document.getElementById('view3d-tracker-hud');
+        if (hudEl) hudEl.style.display = 'none';
+        if (papercraft.active) renderUnfoldWorkbench();
+    }
+});
+
+// Al hacer clic en una pieza en la vista 3D, seleccionarla en la Mesa A4
+renderer.domElement.addEventListener('click', () => {
+    if (papercraft.active && papercraft.hoveredPart && papercraft.hoveredSource === '3d') {
+        papercraft.selectedPart = papercraft.hoveredPart;
+        updateSelectedPartCard();
+        renderUnfoldWorkbench();
+    }
+});
+
+/**
+ * Redimensiona la resolución del proyecto recreando limpiamente las texturas WebGL de la GPU.
+ * Evita el error GL_INVALID_VALUE en texSubImage2D de Three.js al cambiar de 2048 a 4096 px o viceversa.
+ */
+export function updateTextureResolution(newSize) {
+    if (!newSize || isNaN(newSize)) return;
+    TEX_SIZE = parseInt(newSize, 10);
+    window.TEX_SIZE = TEX_SIZE;
+
+    // 1. Redimensionar el gestor de capas y managers 2D
+    if (layerManager) layerManager.resize(TEX_SIZE, TEX_SIZE);
+    if (selectionManager) selectionManager.resize(TEX_SIZE, TEX_SIZE);
+
+    if (canvasUV) {
+        canvasUV.width = TEX_SIZE;
+        canvasUV.height = TEX_SIZE;
+    }
+    const canvasUI = document.getElementById('canvas-ui');
+    if (canvasUI) {
+        canvasUI.width = TEX_SIZE;
+        canvasUI.height = TEX_SIZE;
+    }
+
+    // 2. Destruir texturas WebGL antiguas de la GPU para desalojar el búfer inmutable anterior
+    if (state.texture) {
+        state.texture.dispose();
+    }
+    if (state.textureUI) {
+        state.textureUI.dispose();
+    }
+
+    // 3. Crear texturas CanvasTexture nuevas con el tamaño exacto actualizado
+    const newCanvasTexture = new THREE.CanvasTexture(canvas2d);
+    newCanvasTexture.colorSpace = THREE.SRGBColorSpace;
+    const maxAniso = renderer ? renderer.capabilities.getMaxAnisotropy() : 16;
+    newCanvasTexture.anisotropy = maxAniso;
+    newCanvasTexture.minFilter = THREE.LinearMipmapLinearFilter;
+    newCanvasTexture.magFilter = THREE.LinearFilter;
+    newCanvasTexture.generateMipmaps = true;
+    newCanvasTexture.needsUpdate = true;
+    state.texture = newCanvasTexture;
+
+    if (canvasUI) {
+        const newTextureUI = new THREE.CanvasTexture(canvasUI);
+        newTextureUI.colorSpace = THREE.SRGBColorSpace;
+        newTextureUI.minFilter = THREE.LinearFilter;
+        newTextureUI.magFilter = THREE.LinearFilter;
+        newTextureUI.generateMipmaps = false;
+        newTextureUI.needsUpdate = true;
+        state.textureUI = newTextureUI;
+    }
+
+    // 4. Actualizar referencias en Painter y DecalSystem
+    if (window.painter) {
+        window.painter.texture = state.texture;
+        window.painter.canvas = canvas2d;
+        window.painter.canvasUI = canvasUI;
+        if (canvasUI) window.painter.ctxUI = canvasUI.getContext('2d');
+        window.painter.needsUpdate = true;
+        window.painter.forceUpdate = true;
+    }
+    if (window.decalSystem) {
+        window.decalSystem.texture = state.texture;
+        window.decalSystem.canvas = canvas2d;
+    }
+
+    // 5. Reasignar la nueva textura a todos los materiales de las mallas 3D activas
+    if (state.mesh) {
+        state.mesh.traverse(child => {
+            if (child.isMesh && child.material && !child.userData?.isSelectionOverlay) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(m => {
+                        m.map = state.texture;
+                        m.needsUpdate = true;
+                    });
+                } else {
+                    child.material.map = state.texture;
+                    child.material.needsUpdate = true;
+                }
+            }
+        });
+        setupSelection3DOverlay(state.mesh);
+    }
+
+    // 6. Actualizar el selector y el badge de la barra de título
+    const resSelect = document.getElementById('doc-resolution');
+    if (resSelect) resSelect.value = String(TEX_SIZE);
+    const elRes = document.getElementById('title-bar-res');
+    if (elRes) elRes.textContent = `${TEX_SIZE} × ${TEX_SIZE} px`;
+
+    // 7. Sincronizar papercraft si está activo
+    if (window.papercraft && typeof window.papercraft.invalidateBleedCache === 'function') {
+        window.papercraft.invalidateBleedCache();
+    }
+    if (typeof drawUVWireframe === 'function') {
+        drawUVWireframe();
+    }
+}
+window.updateTextureResolution = updateTextureResolution;
+
 // Visibilidad optimizada del overlay de selección 3D
 function setSelection3DOverlayVisible(visible) {
     if (!state.mesh) return;
@@ -645,6 +968,10 @@ function updatePapercraftUI() {
     const cutWidthSel = document.getElementById('unfold-cut-width');
     if (cutWidthSel && papercraft.cutLineWidthMm !== undefined) {
         cutWidthSel.value = Number(papercraft.cutLineWidthMm).toFixed(2);
+    }
+    const bleedSel = document.getElementById('unfold-bleed-margin');
+    if (bleedSel && papercraft.bleedMm !== undefined) {
+        bleedSel.value = Number(papercraft.bleedMm).toFixed(1);
     }
 
     const partsCount = document.getElementById('unfold-parts-count');
@@ -1040,6 +1367,13 @@ function loadOBJContents(contents, mtlContents = null) {
         painter.setMesh(state.mesh);
         decalSystem.setMesh(state.mesh);
         setupSelection3DOverlay(state.mesh);
+        if (state.texture) {
+            state.texture.needsUpdate = true;
+        }
+        if (painter) {
+            painter.needsUpdate = true;
+            painter.forceUpdate = true;
+        }
         
         if (!window.currentProjectFileName || window.currentProjectFileName === 'Sin título') {
             window.currentProjectFileName = 'Modelo 3D';
@@ -1074,7 +1408,9 @@ function loadOBJContents(contents, mtlContents = null) {
 
         updatePapercraftUI();
         
-        // Dibujar vista UV / Papercraft
+        if (typeof papercraft.invalidateBleedCache === 'function') {
+            papercraft.invalidateBleedCache();
+        }
         drawUVWireframe();
         update3DWireframe();
         renderUnfoldWorkbench();
@@ -1506,6 +1842,7 @@ function setUnfoldMode(active) {
             view2dLabel.textContent = 'Vista 2D (UV)';
         }
         drawUVWireframe();
+        set3DTrackerEnabled(false);
     }
 }
 window.setUnfoldMode = setUnfoldMode;
@@ -1551,6 +1888,31 @@ function getWorkbenchPartAt(canvasX, canvasY) {
     };
 }
 window.getWorkbenchPartAt = getWorkbenchPartAt;
+
+function getWorkbenchTabOrEdgeAt(canvasX, canvasY) {
+    if (isAssemblyWorkbenchActive() && window.modelAssembler && typeof window.modelAssembler.getTabOrEdgeAt === 'function') {
+        return window.modelAssembler.getTabOrEdgeAt(canvasX, canvasY);
+    }
+    if (papercraft && typeof papercraft.getTabOrEdgeAt === 'function') {
+        return papercraft.getTabOrEdgeAt(canvasX, canvasY);
+    }
+    return null;
+}
+window.getWorkbenchTabOrEdgeAt = getWorkbenchTabOrEdgeAt;
+
+function showWorkbenchToast(msg, durationMs = 2000) {
+    const el = document.getElementById('unfold-toast');
+    if (!el) return;
+    el.innerHTML = msg;
+    el.style.display = 'block';
+    el.style.opacity = '1';
+    if (el._timer) clearTimeout(el._timer);
+    el._timer = setTimeout(() => {
+        el.style.opacity = '0';
+        setTimeout(() => { el.style.display = 'none'; }, 300);
+    }, durationMs);
+}
+window.showWorkbenchToast = showWorkbenchToast;
 
 function getActivePartEngine() {
     if (isAssemblyWorkbenchActive() && window.modelAssembler && papercraft.selectedPart) {
@@ -1843,6 +2205,27 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
         }
 
         // 6. Modo SELECT / MOVER:
+        // Fase 2: Comprobar clic sobre solapa o arista de costura (Flip Flap / Asignar solapa)
+        const hitTabEdge = getWorkbenchTabOrEdgeAt(mouseCanvasX, mouseCanvasY);
+        if (hitTabEdge) {
+            const engine = (hitTabEdge.piece && hitTabEdge.piece.papercraft) || papercraft;
+            if (hitTabEdge.part) {
+                papercraft.selectedPart = hitTabEdge.part;
+                updateSelectedPartCard();
+            }
+            if (hitTabEdge.type === 'tab') {
+                engine.flipSeam(hitTabEdge.seamNumber);
+                const jText = hitTabEdge.junction ? `Solapas unión Pieza #${hitTabEdge.junction.islandA + 1} ↔ Pieza #${hitTabEdge.junction.islandB + 1}` : `Solapa #${hitTabEdge.seamNumber}`;
+                showWorkbenchToast(`⇄ <b>${jText}</b> invertida`);
+            } else if (hitTabEdge.type === 'edge') {
+                engine.setSeamActiveEdge(hitTabEdge.edge);
+                const jText = hitTabEdge.junction ? `Solapas unión Pieza #${hitTabEdge.junction.islandA + 1} ↔ Pieza #${hitTabEdge.junction.islandB + 1}` : `Solapa #${hitTabEdge.seamNumber}`;
+                showWorkbenchToast(`⇄ <b>${jText}</b> asignada a esta pieza`);
+            }
+            renderUnfoldWorkbench();
+            return;
+        }
+
         // Primero verificar si se hace clic en una anotación
         const hitAnn = papercraft.getAnnotationAt(mouseCanvasX, mouseCanvasY);
         if (hitAnn) {
@@ -1882,6 +2265,25 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
             renderUnfoldWorkbench();
         }
     } else if (e.button === 2) { // Clic derecho
+        // Fase 2: Clic derecho sobre solapa o arista de costura -> Ocultar / Restaurar solapa
+        const hitTabEdge = getWorkbenchTabOrEdgeAt(mouseCanvasX, mouseCanvasY);
+        if (hitTabEdge) {
+            const engine = (hitTabEdge.piece && hitTabEdge.piece.papercraft) || papercraft;
+            const isVisible = engine.toggleSeam(hitTabEdge.seamNumber);
+            const jText = hitTabEdge.junction ? `Solapas unión Pieza #${hitTabEdge.junction.islandA + 1} ↔ #${hitTabEdge.junction.islandB + 1}` : `Solapa #${hitTabEdge.seamNumber}`;
+            if (isVisible) {
+                showWorkbenchToast(`✅ <b>${jText}</b> restaurada`);
+            } else {
+                showWorkbenchToast(`🚫 <b>${jText}</b> oculta (sin pestaña)`);
+            }
+            if (hitTabEdge.part) {
+                papercraft.selectedPart = hitTabEdge.part;
+                updateSelectedPartCard();
+            }
+            renderUnfoldWorkbench();
+            return;
+        }
+
         // Si clic derecho sobre una anotación, rotarla 45°
         const hitAnn = papercraft.getAnnotationAt(mouseCanvasX, mouseCanvasY);
         if (hitAnn) {
@@ -2045,15 +2447,78 @@ window.addEventListener('mousemove', (e) => {
             if (activeTool !== 'select') {
                 canvasUnfold.style.cursor = (activeTool === 'text') ? 'text' : 'crosshair';
             } else {
-                const hitAnn = papercraft.getAnnotationAt(mouseCanvasX, mouseCanvasY);
-                if (hitAnn) {
-                    canvasUnfold.style.cursor = (hitAnn.handle === 'end' || hitAnn.handle === 'start') ? 'crosshair' : 'grab';
+                // Fase 2: Detectar hover sobre solapas y aristas de costura
+                const hitTabEdge = getWorkbenchTabOrEdgeAt(mouseCanvasX, mouseCanvasY);
+                if (hitTabEdge) {
+                    canvasUnfold.style.cursor = 'pointer';
+                    const targetSeamNum = hitTabEdge.seamNumber;
+                    const targetJunctionKey = hitTabEdge.junctionKey;
+                    if (papercraft.hoveredSeamNumber !== targetSeamNum || papercraft.hoveredJunctionKey !== targetJunctionKey) {
+                        papercraft.hoveredSeamNumber = targetSeamNum;
+                        papercraft.hoveredJunctionKey = targetJunctionKey;
+                        renderUnfoldWorkbench();
+                    }
                 } else {
-                    const hit = getWorkbenchPartAt(mouseCanvasX, mouseCanvasY);
-                    canvasUnfold.style.cursor = hit ? 'grab' : 'default';
+                    if (papercraft.hoveredSeamNumber !== null || papercraft.hoveredJunctionKey !== null) {
+                        papercraft.hoveredSeamNumber = null;
+                        papercraft.hoveredJunctionKey = null;
+                        renderUnfoldWorkbench();
+                    }
+                    const hitAnn = papercraft.getAnnotationAt(mouseCanvasX, mouseCanvasY);
+                    if (hitAnn) {
+                        canvasUnfold.style.cursor = (hitAnn.handle === 'end' || hitAnn.handle === 'start') ? 'crosshair' : 'grab';
+                    } else {
+                        const hit = getWorkbenchPartAt(mouseCanvasX, mouseCanvasY);
+                        canvasUnfold.style.cursor = hit ? 'grab' : 'default';
+
+                        if (hit && hit.part) {
+                            const hitTargetMesh = hit.piece?.mesh || state.mesh;
+                            if (papercraft.hoveredPart !== hit.part || papercraft.hoveredSource !== '2d') {
+                                papercraft.setHoveredPart(hit.part, '2d');
+                                if (is3DTrackerEnabled) {
+                                    highlightPartIn3D(hit.part, hitTargetMesh);
+                                    const hudEl = document.getElementById('view3d-tracker-hud');
+                                    if (hudEl) {
+                                        const pageNum = (hit.part.layout?.pageIndex || 0) + 1;
+                                        const totPages = (hit.piece?.papercraft?.pagesCount) || papercraft.pagesCount || 1;
+                                        hudEl.innerHTML = `✂️ <b>Pieza #${hit.part.id + 1}</b> (Mesa A4) — ${Math.round(hit.part.wMm)} × ${Math.round(hit.part.hMm)} mm <span style="color: #00e5ff; margin-left: 6px;">[Hoja ${pageNum} de ${totPages}]</span>`;
+                                        hudEl.style.display = 'block';
+                                    }
+                                }
+                                renderUnfoldWorkbench();
+                            }
+                        } else {
+                            if (papercraft.hoveredPart && papercraft.hoveredSource === '2d') {
+                                papercraft.setHoveredPart(null);
+                                highlightPartIn3D(null);
+                                const hudEl = document.getElementById('view3d-tracker-hud');
+                                if (hudEl) hudEl.style.display = 'none';
+                                renderUnfoldWorkbench();
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+});
+
+canvasUnfold?.addEventListener('mouseleave', () => {
+    let needsRedraw = false;
+    if (papercraft.hoveredSeamNumber !== null || papercraft.hoveredJunctionKey !== null) {
+        papercraft.hoveredSeamNumber = null;
+        papercraft.hoveredJunctionKey = null;
+        needsRedraw = true;
+    }
+    if (papercraft.hoveredSource === '2d') {
+        papercraft.setHoveredPart(null);
+        highlightPartIn3D(null);
+        const hudEl = document.getElementById('view3d-tracker-hud');
+        if (hudEl) hudEl.style.display = 'none';
+        needsRedraw = true;
+    }
+    if (needsRedraw) {
+        renderUnfoldWorkbench();
     }
 });
 
@@ -2453,7 +2918,11 @@ function updateTabHeight(val) {
     papercraft.tabHeightMm = clamped;
     if (tabHSlider) tabHSlider.value = clamped;
     if (tabHLabel) tabHLabel.textContent = `${clamped} mm`;
-    if (state.mesh) papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+    if (papercraft.parts && papercraft.parts.length > 0) {
+        papercraft.rebuildAllTabs();
+    } else if (state.mesh) {
+        papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+    }
     drawUVWireframe();
     renderUnfoldWorkbench();
 }
@@ -2468,7 +2937,11 @@ tabAngleSlider?.addEventListener('input', (e) => {
     const val = parseInt(e.target.value, 10);
     papercraft.tabAngleDeg = val;
     if (tabAngleLabel) tabAngleLabel.textContent = `${val}°`;
-    if (state.mesh) papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+    if (papercraft.parts && papercraft.parts.length > 0) {
+        papercraft.rebuildAllTabs();
+    } else if (state.mesh) {
+        papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+    }
     drawUVWireframe();
     renderUnfoldWorkbench();
 });
@@ -2497,6 +2970,26 @@ unfoldCutWidth?.addEventListener('change', (e) => {
         });
     }
     drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
+const unfoldBleedMargin = document.getElementById('unfold-bleed-margin');
+unfoldBleedMargin?.addEventListener('change', (e) => {
+    const val = parseFloat(e.target.value) || 0;
+    papercraft.bleedMm = val;
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) {
+                p.papercraft.bleedMm = val;
+                if (typeof p.papercraft.invalidateBleedCache === 'function') {
+                    p.papercraft.invalidateBleedCache();
+                }
+            }
+        });
+    }
+    if (typeof papercraft.invalidateBleedCache === 'function') {
+        papercraft.invalidateBleedCache();
+    }
     renderUnfoldWorkbench();
 });
 
@@ -3584,6 +4077,7 @@ function getProjectNSPData() {
                 numberPlacement: papercraft.numberPlacement,
                 cutLineColor: papercraft.cutLineColor,
                 cutLineWidthMm: papercraft.cutLineWidthMm,
+                bleedMm: papercraft.bleedMm,
                 foldLineColor: papercraft.foldLineColor,
                 foldLineWidthMm: papercraft.foldLineWidthMm,
                 lineMode: state.uvWireframeMode || papercraft.lineMode || 'clean',
@@ -3593,6 +4087,8 @@ function getProjectNSPData() {
                     id: p.id,
                     layout: { ...p.layout }
                 })),
+                seamOverrides: papercraft.seamOverrides ? Array.from(papercraft.seamOverrides.entries()) : [],
+                junctionOverrides: papercraft.junctionOverrides ? Array.from(papercraft.junctionOverrides.entries()) : [],
                 annotations: (papercraft.annotations || []).map(a => ({ ...a }))
             }
         };
@@ -3661,16 +4157,7 @@ async function loadProjectNSP(fileOrData, silent = false) {
 
         // 1. Restaurar resolución si cambió
         if (project.resolution && project.resolution !== TEX_SIZE) {
-            TEX_SIZE = project.resolution;
-            layerManager.resize(TEX_SIZE, TEX_SIZE);
-            canvasUV.width = TEX_SIZE;
-            canvasUV.height = TEX_SIZE;
-            if (canvasUI) {
-                canvasUI.width = TEX_SIZE;
-                canvasUI.height = TEX_SIZE;
-            }
-            const resSelect = document.getElementById('doc-resolution');
-            if (resSelect) resSelect.value = String(TEX_SIZE);
+            updateTextureResolution(project.resolution);
         }
 
         // 2. Restaurar Colores Rápidos
@@ -3792,6 +4279,11 @@ async function loadProjectNSP(fileOrData, silent = false) {
                 const sel = document.getElementById('unfold-cut-width');
                 if (sel) sel.value = Number(pp.cutLineWidthMm).toFixed(2);
             }
+            if (pp.bleedMm !== undefined) {
+                papercraft.bleedMm = pp.bleedMm;
+                const sel = document.getElementById('unfold-bleed-margin');
+                if (sel) sel.value = Number(pp.bleedMm).toFixed(1);
+            }
             if (pp.tabHeightMm) updateTabHeight(pp.tabHeightMm);
             if (pp.tabAngleDeg) {
                 papercraft.tabAngleDeg = pp.tabAngleDeg;
@@ -3813,12 +4305,29 @@ async function loadProjectNSP(fileOrData, silent = false) {
                 });
             }
 
+            if (pp.junctionOverrides && Array.isArray(pp.junctionOverrides)) {
+                papercraft.junctionOverrides = new Map(pp.junctionOverrides);
+            }
+
+            if (pp.seamOverrides && Array.isArray(pp.seamOverrides)) {
+                papercraft.seamOverrides = new Map(pp.seamOverrides);
+                if (typeof papercraft.rebuildAllTabs === 'function') {
+                    papercraft.rebuildAllTabs();
+                }
+            }
+
             if (pp.annotations && Array.isArray(pp.annotations)) {
                 papercraft.annotations = pp.annotations.map(a => ({ ...a }));
                 if (typeof updateAnnotationUI === 'function') updateAnnotationUI();
             }
         }
 
+        if (typeof papercraft.invalidateBleedCache === 'function') {
+            papercraft.invalidateBleedCache();
+        }
+        if (window.modelAssembler && typeof window.modelAssembler.invalidateAllBleedCaches === 'function') {
+            window.modelAssembler.invalidateAllBleedCaches();
+        }
         drawUVWireframe();
         if (typeof renderUnfoldWorkbench === 'function') renderUnfoldWorkbench();
         if (state.texture) state.texture.needsUpdate = true;
@@ -4315,6 +4824,14 @@ window.addEventListener('keydown', (e) => {
         e.preventDefault();
         createNewProject(true);
     }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        saveProjectNSP();
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'o' || e.key === 'O')) {
+        e.preventDefault();
+        document.getElementById('input-project')?.click();
+    }
     if (e.key === 'Escape') {
         if (papercraft && (papercraft.measureMode || papercraft.activeMeasurement)) {
             papercraft.measureMode = false;
@@ -4630,7 +5147,8 @@ function animate(time) {
     // Desacoplar textura principal a ~30fps durante pintura interactiva
     if (painter && painter.needsUpdate) {
         if (painter.forceUpdate || (time - lastTextureUpdate > 33)) {
-            state.texture.needsUpdate = true;
+            if (state.texture) state.texture.needsUpdate = true;
+            if (painter.texture && painter.texture !== state.texture) painter.texture.needsUpdate = true;
             painter.needsUpdate = false;
             painter.forceUpdate = false;
             lastTextureUpdate = time;

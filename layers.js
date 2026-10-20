@@ -544,8 +544,13 @@ export class LayerManager {
         if (window.state && window.state.texture) {
             window.state.texture.needsUpdate = true;
         }
-        if (window.papercraft && window.papercraft.active && window.renderUnfoldWorkbench) {
-            window.renderUnfoldWorkbench();
+        if (window.papercraft && window.papercraft.active) {
+            if (typeof window.papercraft.invalidateBleedCache === 'function') {
+                window.papercraft.invalidateBleedCache();
+            }
+            if (window.renderUnfoldWorkbench) {
+                window.renderUnfoldWorkbench();
+            }
         }
     }
 
@@ -668,6 +673,7 @@ export class LayerManager {
         }
 
         this.compositeCtx.globalAlpha = 1.0;
+        if (this.onUpdate) this.onUpdate();
     }
 
     getLayerBoundingBox(layer) {
