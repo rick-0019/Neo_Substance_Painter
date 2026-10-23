@@ -748,14 +748,6 @@ export class ReferenceImageManager {
         }
     }
 
-        this._updateUIForSlot(slotKey);
-
-        // Si el usuario hace clic en la pestaña, alinear la cámara a esa vista
-        if (triggerViewChange && window.setOrthogonalView) {
-            window.setOrthogonalView(slotKey);
-        }
-    }
-
     _updateUIForSlot(slotKey) {
         const slot = this.slots[slotKey];
         if (!slot) return;
