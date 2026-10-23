@@ -8,6 +8,7 @@ import { PapercraftEngine } from './papercraft.js?v=10.6';
 import { SelectionManager } from './selection.js?v=9.8';
 import { ColorPickerManager } from './colorPicker.js?v=9.8';
 import { DecalLibraryManager } from './decalLibrary.js?v=9.8';
+import { ReferenceImageManager } from './referenceManager.js?v=10.7';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -507,6 +508,11 @@ window.decalSystem = decalSystem;
 const decalLibrary = new DecalLibraryManager();
 window.decalLibrary = decalLibrary;
 decalLibrary.init();
+
+// Gestor de Imágenes de Referencia / Blueprints (Estilo Blender)
+const referenceManager = new ReferenceImageManager(scene, () => camera, () => controls, state);
+window.referenceManager = referenceManager;
+referenceManager.init();
 
 // Exponer sistemas y componentes al scope global para el Ensamblador y extensiones
 window.scene = scene;
@@ -4592,6 +4598,7 @@ function setCameraMode(ortho = true) {
 
     syncCameras(fromCam, camera);
     updateCameraReferences();
+    if (window.referenceManager) window.referenceManager.onViewChanged(currentOrthoView, isOrthographic);
 }
 
 function toggleCameraMode() {
@@ -4659,6 +4666,7 @@ function setOrthogonalView(viewName) {
     orthoCamera.updateProjectionMatrix();
 
     updateCameraReferences();
+    if (window.referenceManager) window.referenceManager.onViewChanged(currentOrthoView, isOrthographic);
 }
 window.setCameraMode = setCameraMode;
 window.toggleCameraMode = toggleCameraMode;
@@ -4669,6 +4677,7 @@ controls.addEventListener('change', () => {
     if (isOrthographic && currentOrthoView && currentOrthoView !== 'user_ortho') {
         currentOrthoView = 'user_ortho';
         updateView3DIndicator();
+        if (window.referenceManager) window.referenceManager.onViewChanged(currentOrthoView, isOrthographic);
     }
 });
 
@@ -4705,6 +4714,8 @@ function frameModel(mesh = state.mesh) {
         orthoCamera.position.set(center.x + dist * 0.7, center.y + dist * 0.5, center.z + dist * 0.7);
     }
     orthoCamera.updateProjectionMatrix();
+
+    if (window.referenceManager) window.referenceManager.onModelLoaded(mesh);
 
     controls.update();
     updateView3DIndicator();

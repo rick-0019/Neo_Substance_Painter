@@ -1321,6 +1321,8 @@
 
                 <!-- Barra de Vistas Ortogonales estilo Blender (Top-Right) -->
                 <div class="view3d-nav-toolbar">
+                    <button type="button" id="btn-view3d-toggle-ref-img" class="btn-v3d" style="color: #bbb;" title="Imágenes de Referencia y Planos en 3D (Estilo Blender)">🖼️ Planos: OFF</button>
+                    <span class="v3d-sep"></span>
                     <button type="button" id="btn-view3d-toggle-tracker" class="btn-v3d" style="color: #888;" title="Activar o Desactivar Resalte de Caras (Rastreo 3D ⇄ 2D)">🧩 Rastreo: OFF</button>
                     <span class="v3d-sep"></span>
                     <button type="button" id="btn-view3d-toggle-ortho" class="btn-v3d" title="Alternar Perspectiva / Ortogonal (Tecla 5 / Num 5)">📐 Ortogonal</button>
@@ -1331,6 +1333,110 @@
                     <button type="button" class="btn-v3d btn-v3d-view" data-view="back" title="Vista Trasera (Ctrl + 1)">Atrás</button>
                     <button type="button" class="btn-v3d btn-v3d-view" data-view="left" title="Vista Lateral Izquierda (Ctrl + 3)">Izq</button>
                     <button type="button" class="btn-v3d btn-v3d-view" data-view="bottom" title="Vista Inferior (Ctrl + 7)">Inferior</button>
+                </div>
+
+                <!-- Panel Flotante de Imágenes de Referencia / Blueprints (Estilo Blender) -->
+                <div id="view3d-ref-panel" class="v3d-ref-panel" style="display: none;">
+                    <div class="v3d-ref-header">
+                        <span class="v3d-ref-title">🖼️ Planos de Referencia</span>
+                        <div class="v3d-ref-header-actions">
+                            <button type="button" id="btn-ref-lock" class="btn-ref-icon" title="Bloquear edición de posición/escala">🔓</button>
+                            <button type="button" id="btn-ref-close" class="btn-ref-icon" title="Cerrar panel">✖</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Pestañas de Vista (Lateral, Superior, Frontal) -->
+                    <div class="v3d-ref-tabs">
+                        <button type="button" class="btn-ref-tab active" data-ref-slot="right">✈️ Lateral (3)</button>
+                        <button type="button" class="btn-ref-tab" data-ref-slot="top">🛩️ Superior (7)</button>
+                        <button type="button" class="btn-ref-tab" data-ref-slot="front">🎯 Frontal (1)</button>
+                    </div>
+
+                    <div class="v3d-ref-body">
+                        <!-- Zona de Carga / Vista Previa -->
+                        <div class="v3d-ref-upload-zone" id="ref-upload-dropzone">
+                            <input type="file" id="input-ref-file" accept="image/*" style="display: none;">
+                            <div id="ref-preview-empty" class="ref-empty-state">
+                                <span style="font-size: 20px;">📂</span>
+                                <p style="margin: 3px 0 6px; font-size: 11px; color: #aaa;">Arrastrá un plano aquí o</p>
+                                <button type="button" id="btn-ref-select-file" class="btn-ref-action">Cargar Imagen</button>
+                            </div>
+                            <div id="ref-preview-loaded" class="ref-loaded-state" style="display: none;">
+                                <img id="ref-thumb-img" src="" alt="Blueprint" class="ref-thumbnail">
+                                <div class="ref-file-meta">
+                                    <span id="ref-file-name" class="ref-filename">blueprint.png</span>
+                                    <div class="ref-file-buttons">
+                                        <button type="button" id="btn-ref-replace" class="btn-ref-small" title="Cambiar imagen">Cambiar</button>
+                                        <button type="button" id="btn-ref-clear" class="btn-ref-small btn-ref-danger" title="Quitar imagen">Quitar</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Controles de Propiedades Estilo Blender -->
+                        <div id="ref-controls-group" class="v3d-ref-controls">
+                            <!-- Opacidad -->
+                            <div class="ref-ctrl-row">
+                                <label>Opacidad</label>
+                                <input type="range" id="ref-slider-opacity" min="5" max="100" value="50">
+                                <span id="ref-label-opacity" class="ref-val">50%</span>
+                            </div>
+
+                            <!-- Profundidad (Detrás / Delante) -->
+                            <div class="ref-ctrl-row">
+                                <label>Profundidad</label>
+                                <div class="ref-btn-group">
+                                    <button type="button" id="btn-ref-depth-back" class="btn-ref-opt" title="Detrás del modelo 3D (silueta)">Detrás</button>
+                                    <button type="button" id="btn-ref-depth-front" class="btn-ref-opt active" title="Delante del modelo 3D (modo calco semitransparente)">Calco (Delante)</button>
+                                </div>
+                            </div>
+
+                            <!-- Escala -->
+                            <div class="ref-ctrl-row">
+                                <label>Escala</label>
+                                <button type="button" id="btn-ref-scale-dec" class="btn-ref-mini" title="Reducir">-</button>
+                                <input type="range" id="ref-slider-scale" min="20" max="300" value="100">
+                                <button type="button" id="btn-ref-scale-inc" class="btn-ref-mini" title="Aumentar">+</button>
+                                <span id="ref-label-scale" class="ref-val">100%</span>
+                            </div>
+
+                            <!-- Posición X (Horizontal) -->
+                            <div class="ref-ctrl-row">
+                                <label>Posición X</label>
+                                <input type="range" id="ref-slider-pos-x" min="-200" max="200" value="0">
+                                <button type="button" id="btn-ref-reset-pos-x" class="btn-ref-mini" title="Centrar X">⌂</button>
+                            </div>
+
+                            <!-- Posición Y (Vertical) -->
+                            <div class="ref-ctrl-row">
+                                <label>Posición Y</label>
+                                <input type="range" id="ref-slider-pos-y" min="-200" max="200" value="0">
+                                <button type="button" id="btn-ref-reset-pos-y" class="btn-ref-mini" title="Centrar Y">⌂</button>
+                            </div>
+
+                            <!-- Rotación -->
+                            <div class="ref-ctrl-row">
+                                <label>Rotación</label>
+                                <input type="range" id="ref-slider-rot" min="-45" max="45" value="0" step="0.5">
+                                <span id="ref-label-rot" class="ref-val">0°</span>
+                                <button type="button" id="btn-ref-reset-rot" class="btn-ref-mini" title="Reset Rotación">0°</button>
+                            </div>
+
+                            <!-- Opciones extra: Espejo y Solo en Ortogonal -->
+                            <div class="ref-ctrl-row-extra">
+                                <button type="button" id="btn-ref-flip-h" class="btn-ref-toggle" title="Invertir horizontalmente">⇄ Espejo H</button>
+                                <label class="ref-checkbox-label" title="Ocultar la referencia automáticamente al orbitar en 3D libre">
+                                    <input type="checkbox" id="ref-check-only-ortho" checked> Solo en Ortogonal
+                                </label>
+                            </div>
+                            
+                            <!-- Botones Footer -->
+                            <div class="ref-ctrl-footer">
+                                <button type="button" id="btn-ref-auto-fit" class="btn-ref-footer-action" title="Ajustar automáticamente al largo y centro del modelo 3D">🎯 Ajustar al Modelo</button>
+                                <button type="button" id="btn-ref-drag-mode" class="btn-ref-footer-action" title="Activar arrastre directo con el ratón sobre la vista 3D (o mantener Alt)">✋ Arrastrar con Mouse</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div style="position: absolute; bottom: 15px; left: 15px; display: flex; gap: 8px; z-index: 10;">
@@ -1657,7 +1763,7 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=10.6"></script>
-    <script type="module" src="assembler.js?v=10.6"></script>
+    <script type="module" src="main.js?v=10.7"></script>
+    <script type="module" src="assembler.js?v=10.7"></script>
 </body>
 </html>

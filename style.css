@@ -2381,3 +2381,373 @@ input[type=range]::-webkit-slider-runnable-track {
     from { opacity: 0; transform: translate(-50%, 8px); }
     to { opacity: 1; transform: translate(-50%, 0); }
 }
+
+/* ==========================================================================
+   PANEL FLOTANTE DE PLANOS Y REFERENCIAS 3D (ESTILO BLENDER)
+   ========================================================================== */
+.v3d-ref-panel {
+    position: absolute;
+    top: 42px;
+    right: 12px;
+    width: 290px;
+    max-height: calc(100% - 60px);
+    background: rgba(18, 18, 22, 0.95);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 229, 255, 0.35);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+    color: #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    z-index: 30;
+    font-family: inherit;
+    font-size: 11px;
+    overflow: hidden;
+    animation: fadeInPanel 0.15s ease-out;
+}
+
+@keyframes fadeInPanel {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.v3d-ref-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: rgba(0, 229, 255, 0.08);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.v3d-ref-title {
+    font-weight: 700;
+    font-size: 11.5px;
+    color: #00e5ff;
+    letter-spacing: 0.3px;
+}
+
+.v3d-ref-header-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.btn-ref-icon {
+    background: transparent;
+    border: none;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    transition: all 0.15s;
+}
+
+.btn-ref-icon:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+}
+
+.btn-ref-icon.locked {
+    color: #ffaa00;
+}
+
+.v3d-ref-tabs {
+    display: flex;
+    background: rgba(0, 0, 0, 0.3);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 2px 4px;
+    gap: 3px;
+}
+
+.btn-ref-tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 4px;
+    color: #888;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.btn-ref-tab:hover {
+    color: #ccc;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.btn-ref-tab.active {
+    color: #00e5ff;
+    background: rgba(0, 229, 255, 0.15);
+    font-weight: 700;
+}
+
+.v3d-ref-body {
+    padding: 10px 12px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.v3d-ref-upload-zone {
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.25);
+    transition: all 0.15s;
+}
+
+.v3d-ref-upload-zone.drag-over {
+    border-color: #00e5ff;
+    background: rgba(0, 229, 255, 0.1);
+}
+
+.ref-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.btn-ref-action {
+    background: #00838f;
+    color: #fff;
+    border: 1px solid #00e5ff;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-ref-action:hover {
+    background: #00acc1;
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
+}
+
+.ref-loaded-state {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ref-thumbnail {
+    width: 52px;
+    height: 52px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 229, 255, 0.4);
+    background: #111;
+}
+
+.ref-file-meta {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.ref-filename {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: #eee;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ref-file-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.btn-ref-small {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #ddd;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 9.5px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-ref-small:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+
+.btn-ref-danger {
+    background: rgba(244, 67, 54, 0.15);
+    border-color: rgba(244, 67, 54, 0.3);
+    color: #ff8a80;
+}
+
+.btn-ref-danger:hover {
+    background: #d32f2f;
+    color: #fff;
+}
+
+.v3d-ref-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.ref-ctrl-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ref-ctrl-row label {
+    width: 68px;
+    font-size: 10px;
+    color: #aaa;
+    flex-shrink: 0;
+}
+
+.ref-ctrl-row input[type="range"] {
+    flex: 1;
+    accent-color: #00e5ff;
+    cursor: pointer;
+    height: 4px;
+}
+
+.ref-val {
+    width: 32px;
+    text-align: right;
+    font-size: 9.5px;
+    color: #00e5ff;
+    font-family: monospace;
+    flex-shrink: 0;
+}
+
+.ref-btn-group {
+    display: flex;
+    flex: 1;
+    gap: 4px;
+}
+
+.btn-ref-opt {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #aaa;
+    border-radius: 3px;
+    padding: 3px 4px;
+    font-size: 9.5px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+}
+
+.btn-ref-opt.active {
+    background: #00838f;
+    border-color: #00e5ff;
+    color: #fff;
+    font-weight: 700;
+}
+
+.btn-ref-mini {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #aaa;
+    border-radius: 3px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+
+.btn-ref-mini:hover {
+    background: rgba(0, 229, 255, 0.2);
+    color: #00e5ff;
+    border-color: #00e5ff;
+}
+
+.ref-ctrl-row-extra {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 3px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.btn-ref-toggle {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #aaa;
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-ref-toggle.active {
+    background: #00838f;
+    border-color: #00e5ff;
+    color: #fff;
+}
+
+.ref-checkbox-label {
+    font-size: 10px;
+    color: #bbb;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ref-checkbox-label input {
+    cursor: pointer;
+    accent-color: #00e5ff;
+}
+
+.ref-ctrl-footer {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.btn-ref-footer-action {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #ddd;
+    border-radius: 4px;
+    padding: 5px 4px;
+    font-size: 9.5px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+}
+
+.btn-ref-footer-action:hover {
+    background: rgba(0, 229, 255, 0.15);
+    border-color: #00e5ff;
+    color: #00e5ff;
+}
+
+.btn-ref-footer-action.active {
+    background: #e65100;
+    border-color: #ff9800;
+    color: #fff;
+    font-weight: 700;
+}
