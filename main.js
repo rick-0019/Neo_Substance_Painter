@@ -8,7 +8,7 @@ import { PapercraftEngine } from './papercraft.js?v=10.6';
 import { SelectionManager } from './selection.js?v=9.8';
 import { ColorPickerManager } from './colorPicker.js?v=9.8';
 import { DecalLibraryManager } from './decalLibrary.js?v=9.8';
-import { ReferenceImageManager } from './referenceManager.js?v=10.7';
+import { ReferenceImageManager } from './referenceManager.js?v=10.8';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -510,9 +510,13 @@ window.decalLibrary = decalLibrary;
 decalLibrary.init();
 
 // Gestor de Imágenes de Referencia / Blueprints (Estilo Blender)
-const referenceManager = new ReferenceImageManager(scene, () => camera, () => controls, state);
-window.referenceManager = referenceManager;
-referenceManager.init();
+try {
+    const referenceManager = new ReferenceImageManager(scene, () => camera, () => controls, state);
+    window.referenceManager = referenceManager;
+    referenceManager.init();
+} catch (e) {
+    console.error('[ReferenceImageManager] Error iniciando:', e);
+}
 
 // Exponer sistemas y componentes al scope global para el Ensamblador y extensiones
 window.scene = scene;

@@ -62,11 +62,19 @@ export class ReferenceImageManager {
     }
 
     init() {
-        this._bindUI();
-        this._bindShortcutsAndMouse();
-        this._bindDragAndDrop();
-        this._loadSavedPreferences();
-        this.updateView(window.currentOrthoView || 'user_ortho', window.isOrthographic || false);
+        try {
+            this._bindUI();
+            this._bindShortcutsAndMouse();
+            this._bindDragAndDrop();
+            this._loadSavedPreferences();
+            this.onViewChanged(window.currentOrthoView || 'user_ortho', window.isOrthographic || false);
+        } catch (err) {
+            console.error('[ReferenceImageManager] Error durante init:', err);
+        }
+    }
+
+    updateView(viewName, isOrthographic) {
+        return this.onViewChanged(viewName, isOrthographic);
     }
 
     _bindUI() {
