@@ -462,6 +462,11 @@ export class ReferenceImageManager {
             this._updateUIForSlot(slotKey);
             this.updateVisibility();
             this._updateToolbarButton();
+
+            // Alinear cámara a la vista del slot recién cargado para que el usuario la vea de inmediato!
+            if (window.setOrthogonalView) {
+                window.setOrthogonalView(slotKey);
+            }
         };
         img.src = dataUrl;
     }
@@ -577,21 +582,27 @@ export class ReferenceImageManager {
         let normal = new THREE.Vector3(1, 0, 0);
         let screenUp = new THREE.Vector3(0, 1, 0);
         let screenRight = new THREE.Vector3(0, 0, -1);
-        let baseSpan = Math.max(0.1, size.z || 2);
-        let halfThickness = Math.max(0.05, (size.x || 1) / 2);
+        let baseSpan = Math.max(0.01, size.z || 2);
+        let halfThickness = Math.max(0.005, (size.x || 1) / 2);
 
         if (slotKey === 'top') {
             normal.set(0, 1, 0);
             screenUp.set(0, 0, -1);
             screenRight.set(1, 0, 0);
-            baseSpan = Math.max(0.1, size.x || 2);
-            halfThickness = Math.max(0.05, (size.y || 1) / 2);
+            baseSpan = Math.max(0.01, Math.max(size.x, size.z) || 2);
+            halfThickness = Math.max(0.005, (size.y || 1) / 2);
         } else if (slotKey === 'front') {
             normal.set(0, 0, 1);
             screenUp.set(0, 1, 0);
             screenRight.set(1, 0, 0);
-            baseSpan = Math.max(0.1, size.x || 2);
-            halfThickness = Math.max(0.05, (size.z || 1) / 2);
+            baseSpan = Math.max(0.01, Math.max(size.x, size.z) || 2);
+            halfThickness = Math.max(0.005, (size.z || 1) / 2);
+        } else if (slotKey === 'right') {
+            normal.set(1, 0, 0);
+            screenUp.set(0, 1, 0);
+            screenRight.set(0, 0, -1);
+            baseSpan = Math.max(0.01, Math.max(size.z, size.x) || 2);
+            halfThickness = Math.max(0.005, (size.x || 1) / 2);
         }
 
         const width = baseSpan * slot.scale;
@@ -620,7 +631,8 @@ export class ReferenceImageManager {
         pos.addScaledVector(uRot, slot.offsetX);
         pos.addScaledVector(vRot, slot.offsetY);
 
-        const depthOffset = (slot.depth === 'front') ? (halfThickness + 0.05) : -(halfThickness + 0.05);
+        const clearance = Math.max(0.001, halfThickness * 0.05);
+        const depthOffset = (slot.depth === 'front') ? (halfThickness + clearance) : -(halfThickness + clearance);
         pos.addScaledVector(normal, depthOffset);
 
         slot.planeMesh.position.copy(pos);
@@ -696,24 +708,27 @@ export class ReferenceImageManager {
                 return;
             }
 
-            // Mostrar el plano si coincide con la vista activa
-            const matchesView = (
-                (key === 'right' && (this.currentView === 'right' || this.currentView === 'left')) ||
-                (key === 'top' && (this.currentView === 'top' || this.currentView === 'bottom')) ||
-                (key === 'front' && (this.currentView === 'front' || this.currentView === 'back'))
-            );
-
-            if (this.onlyInOrtho) {
-                slot.planeMesh.visible = matchesView;
-            } else {
-                slot.planeMesh.visible = true;
+            // Mostrar el plano si coincide con la vista activa o si está en ortogonal con el slot activo
+            let shouldShow = false;
+            if (!this.onlyInOrtho) {
+                shouldShow = true;
+            } else if (key === 'right' && (this.currentView === 'right' || this.currentView === 'left')) {
+                shouldShow = true;
+            } else if (key === 'top' && (this.currentView === 'top' || this.currentView === 'bottom')) {
+                shouldShow = true;
+            } else if (key === 'front' && (this.currentView === 'front' || this.currentView === 'back')) {
+                shouldShow = true;
+            } else if (this.isOrtho && key === this.activeSlotKey) {
+                shouldShow = true;
             }
+
+            slot.planeMesh.visible = shouldShow;
         });
 
         this._updateToolbarButton();
     }
 
-    selectSlot(slotKey, triggerViewChange = false) {
+    selectSlot(slotKey, triggerViewChange = true) {
         if (!this.slots[slotKey]) return;
         this.activeSlotKey = slotKey;
 
@@ -723,6 +738,15 @@ export class ReferenceImageManager {
                 btn.classList.toggle('active', btn.getAttribute('data-ref-slot') === slotKey);
             });
         }
+
+        this._updateUIForSlot(slotKey);
+        this.updateVisibility();
+
+        // Si se cambia de pestaña, alinear la cámara automáticamente a esa vista
+        if (triggerViewChange && window.setOrthogonalView) {
+            window.setOrthogonalView(slotKey);
+        }
+    }
 
         this._updateUIForSlot(slotKey);
 

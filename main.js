@@ -8,7 +8,7 @@ import { PapercraftEngine } from './papercraft.js?v=10.6';
 import { SelectionManager } from './selection.js?v=9.8';
 import { ColorPickerManager } from './colorPicker.js?v=9.8';
 import { DecalLibraryManager } from './decalLibrary.js?v=9.8';
-import { ReferenceImageManager } from './referenceManager.js?v=10.8';
+import { ReferenceImageManager } from './referenceManager.js?v=10.9';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -4679,8 +4679,20 @@ window.setOrthogonalView = setOrthogonalView;
 controls.addEventListener('change', () => {
     if (isProgrammaticCameraChange) return;
     if (isOrthographic && currentOrthoView && currentOrthoView !== 'user_ortho') {
-        currentOrthoView = 'user_ortho';
-        updateView3DIndicator();
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        let stillMatches = false;
+        if (currentOrthoView === 'front' && dir.z < -0.98) stillMatches = true;
+        else if (currentOrthoView === 'back' && dir.z > 0.98) stillMatches = true;
+        else if (currentOrthoView === 'right' && dir.x < -0.98) stillMatches = true;
+        else if (currentOrthoView === 'left' && dir.x > 0.98) stillMatches = true;
+        else if (currentOrthoView === 'top' && dir.y < -0.98) stillMatches = true;
+        else if (currentOrthoView === 'bottom' && dir.y > 0.98) stillMatches = true;
+
+        if (!stillMatches) {
+            currentOrthoView = 'user_ortho';
+            updateView3DIndicator();
+        }
         if (window.referenceManager) window.referenceManager.onViewChanged(currentOrthoView, isOrthographic);
     }
 });
