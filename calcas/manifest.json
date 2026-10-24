@@ -136,6 +136,14 @@
     "isUser": false
   },
   {
+    "id": "avisos_rescue-mirror",
+    "name": "Rescue Mirror",
+    "category": "avisos",
+    "src": "./calcas/avisos/Rescue-Mirror.png",
+    "filename": "Rescue-Mirror.png",
+    "isUser": false
+  },
+  {
     "id": "avisos_rescue",
     "name": "Rescue (Flecha Rescate)",
     "category": "avisos",

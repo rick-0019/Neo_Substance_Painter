@@ -7,3 +7,5 @@ screen_*.png
 Airplane*.pdf
 PDFs/
 scratch/
+
+__pycache__/
