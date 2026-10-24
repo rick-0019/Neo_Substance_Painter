@@ -8,7 +8,7 @@ import { PapercraftEngine } from './papercraft.js?v=10.6';
 import { SelectionManager } from './selection.js?v=9.8';
 import { ColorPickerManager } from './colorPicker.js?v=9.8';
 import { DecalLibraryManager } from './decalLibrary.js?v=9.8';
-import { ReferenceImageManager } from './referenceManager.js?v=11.1';
+import { ReferenceImageManager } from './referenceManager.js?v=11.2';
 
 // Configuration
 let TEX_SIZE = 2048;
@@ -72,6 +72,7 @@ const ctxUV = canvasUV.getContext('2d');
 // ========================================================
 window.currentProjectFileName = 'Sin título';
 window.currentProjectFileType = 'nsp';
+window.currentProjectFileHandle = null;
 window.currentProjectIsDirty = false;
 
 function updateAppTitle(fileName, fileType = 'nsp', isDirty = false) {
@@ -364,8 +365,12 @@ function doCreateNewProject() {
 
     // 4. Limpiar almacenamiento en memoria local
     state.rawOBJText = null;
+    window.currentProjectFileHandle = null;
     window.currentProjectFileName = 'Sin título';
     window.currentProjectFileType = 'nsp';
+    if (window.referenceManager) {
+        window.referenceManager.clearAllSlots();
+    }
     try {
         localStorage.removeItem('nsp_last_model_obj');
         localStorage.removeItem('nsp_last_project');
@@ -1785,8 +1790,22 @@ window.addEventListener('drop', (e) => {
         };
         reader.readAsText(nsppFile);
     } else if (nspFile && typeof window.loadProjectNSP === 'function') {
+        window.currentProjectFileHandle = null;
         window.currentProjectFileName = nspFile.name.replace(/\.[^/.]+$/, '');
         updateAppTitle(window.currentProjectFileName, 'nsp', false);
+        // Intentar obtener FileSystemFileHandle desde DataTransferItem para permitir sobreescritura directa
+        if (e.dataTransfer && e.dataTransfer.items) {
+            for (const item of e.dataTransfer.items) {
+                if (item.kind === 'file' && typeof item.getAsFileSystemHandle === 'function') {
+                    item.getAsFileSystemHandle().then(handle => {
+                        if (handle && handle.kind === 'file') {
+                            window.currentProjectFileHandle = handle;
+                        }
+                    }).catch(() => {});
+                    break;
+                }
+            }
+        }
         const reader = new FileReader();
         reader.onload = (ev) => {
             try {
@@ -4074,6 +4093,7 @@ function getProjectNSPData() {
             backgroundColor: bgPresetSelect?.value || '#222222',
             quickColors: slots,
             layers: layersData,
+            referenceImages: window.referenceManager ? window.referenceManager.exportData() : null,
             papercraft: {
                 modelLengthMm: papercraft.modelLengthMm,
                 baseModelLengthMm: papercraft.baseModelLengthMm,
@@ -4109,24 +4129,119 @@ function getProjectNSPData() {
 }
 window.getProjectNSPData = getProjectNSPData;
 
-async function saveProjectNSP() {
+function showAppToast(message, isSuccess = true) {
+    let toast = document.getElementById('app-general-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'app-general-toast';
+        toast.style.position = 'fixed';
+        toast.style.bottom = '28px';
+        toast.style.left = '50%';
+        toast.style.transform = 'translateX(-50%)';
+        toast.style.background = 'rgba(18, 24, 38, 0.95)';
+        toast.style.color = '#00e5ff';
+        toast.style.border = '1px solid rgba(0, 229, 255, 0.6)';
+        toast.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.7)';
+        toast.style.backdropFilter = 'blur(10px)';
+        toast.style.padding = '8px 20px';
+        toast.style.borderRadius = '24px';
+        toast.style.fontSize = '12px';
+        toast.style.fontWeight = 'bold';
+        toast.style.letterSpacing = '0.4px';
+        toast.style.zIndex = '10050';
+        toast.style.pointerEvents = 'none';
+        toast.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+    clearTimeout(window._appToastTimeout);
+    window._appToastTimeout = setTimeout(() => {
+        if (toast) {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(-50%) translateY(8px)';
+        }
+    }, 2400);
+}
+window.showAppToast = showAppToast;
+
+async function saveProjectNSP(forceSaveAs = false) {
     try {
         const project = getProjectNSPData();
         if (!project) throw new Error('No se pudieron compilar los datos del proyecto');
 
         const jsonStr = JSON.stringify(project);
         const blob = new Blob([jsonStr], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
         const currentName = (window.currentProjectFileName && window.currentProjectFileName !== 'Sin título') 
             ? window.currentProjectFileName 
             : 'proyecto_substance';
+
+        // 1. Si ya tenemos un archivo abierto en disco y no es "Guardar como", sobrescribimos directamente sin preguntar nada
+        if (window.currentProjectFileHandle && !forceSaveAs) {
+            try {
+                const options = { mode: 'readwrite' };
+                let hasPerm = false;
+                if (typeof window.currentProjectFileHandle.queryPermission === 'function') {
+                    hasPerm = (await window.currentProjectFileHandle.queryPermission(options)) === 'granted';
+                }
+                if (!hasPerm && typeof window.currentProjectFileHandle.requestPermission === 'function') {
+                    hasPerm = (await window.currentProjectFileHandle.requestPermission(options)) === 'granted';
+                }
+                if (hasPerm || !window.currentProjectFileHandle.queryPermission) {
+                    const writable = await window.currentProjectFileHandle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+
+                    const savedName = window.currentProjectFileHandle.name.replace(/\.[^/.]+$/, '');
+                    window.currentProjectFileName = savedName;
+                    updateAppTitle(savedName, 'nsp', false);
+                    showAppToast(`💾 Guardado: ${window.currentProjectFileHandle.name}`);
+                    return;
+                }
+            } catch (fsErr) {
+                console.warn('Error al sobrescribir con handle existente, intentando selector:', fsErr);
+            }
+        }
+
+        // 2. Si es la primera vez o se pidió "Guardar como", usamos File System Access API para elegir ubicación
+        if (window.showSaveFilePicker) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: `${currentName}.nsp`,
+                    types: [{
+                        description: 'Proyecto Neo Substance Painter (*.nsp)',
+                        accept: { 'application/json': ['.nsp', '.json'] }
+                    }]
+                });
+                if (handle) {
+                    window.currentProjectFileHandle = handle;
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+
+                    const savedName = handle.name.replace(/\.[^/.]+$/, '');
+                    window.currentProjectFileName = savedName;
+                    updateAppTitle(savedName, 'nsp', false);
+                    showAppToast(`💾 Guardado: ${handle.name}`);
+                    return;
+                }
+            } catch (cancelErr) {
+                if (cancelErr.name === 'AbortError') return; // Cancelado por el usuario
+                console.warn('Error con showSaveFilePicker, recurriendo a descarga clásica:', cancelErr);
+            }
+        }
+
+        // 3. Fallback de descarga clásica si la API no está disponible
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
         link.download = `${currentName}.nsp`;
         link.click();
         URL.revokeObjectURL(url);
 
         updateAppTitle(currentName, 'nsp', false);
+        showAppToast(`💾 Proyecto descargado: ${currentName}.nsp`);
     } catch (err) {
         console.error('Error guardando proyecto .nsp:', err);
         alert('Error al guardar el proyecto: ' + err.message);
@@ -4332,6 +4447,15 @@ async function loadProjectNSP(fileOrData, silent = false) {
             }
         }
 
+        // 6. Restaurar Imágenes de Referencia (Blueprints)
+        if (window.referenceManager) {
+            if (project.referenceImages) {
+                window.referenceManager.importData(project.referenceImages);
+            } else {
+                window.referenceManager.clearAllSlots();
+            }
+        }
+
         if (typeof papercraft.invalidateBleedCache === 'function') {
             papercraft.invalidateBleedCache();
         }
@@ -4343,7 +4467,7 @@ async function loadProjectNSP(fileOrData, silent = false) {
         if (state.texture) state.texture.needsUpdate = true;
 
         if (!silent) {
-            alert('¡Proyecto cargado exitosamente!');
+            showAppToast('📂 Proyecto cargado exitosamente');
         }
     } catch (err) {
         console.error('Error cargando proyecto .nsp:', err);
@@ -4357,13 +4481,56 @@ async function loadProjectNSP(fileOrData, silent = false) {
 window.saveProjectNSP = saveProjectNSP;
 window.loadProjectNSP = loadProjectNSP;
 
-document.getElementById('btn-save-project')?.addEventListener('click', saveProjectNSP);
-document.getElementById('btn-load-project')?.addEventListener('click', () => {
+async function openProjectNSPDialog() {
+    if (window.showOpenFilePicker) {
+        try {
+            const [handle] = await window.showOpenFilePicker({
+                types: [{
+                    description: 'Proyecto Neo Substance Painter (*.nsp, *.json)',
+                    accept: {
+                        'application/json': ['.nsp', '.json']
+                    }
+                }],
+                multiple: false
+            });
+            if (handle) {
+                window.currentProjectFileHandle = handle;
+                const file = await handle.getFile();
+                window.currentProjectFileName = file.name.replace(/\.[^/.]+$/, '');
+                updateAppTitle(window.currentProjectFileName, 'nsp', false);
+                await loadProjectNSP(file);
+                showAppToast(`📂 Proyecto abierto: ${file.name}`);
+                return;
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') return; // Cancelado por el usuario
+            console.warn('showOpenFilePicker no disponible o cancelado, usando fallback file input:', err);
+        }
+    }
+    // Fallback estándar si no hay File System Access API
     document.getElementById('input-project')?.click();
+}
+window.openProjectNSPDialog = openProjectNSPDialog;
+
+document.getElementById('btn-save-project')?.addEventListener('click', () => {
+    const dropdown = document.getElementById('paint-file-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    saveProjectNSP(false);
+});
+document.getElementById('btn-save-project-as')?.addEventListener('click', () => {
+    const dropdown = document.getElementById('paint-file-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    saveProjectNSP(true);
+});
+document.getElementById('btn-load-project')?.addEventListener('click', () => {
+    const dropdown = document.getElementById('paint-file-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    openProjectNSPDialog();
 });
 document.getElementById('input-project')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
+        window.currentProjectFileHandle = null;
         window.currentProjectFileName = file.name.replace(/\.[^/.]+$/, '');
         updateAppTitle(window.currentProjectFileName, 'nsp', false);
         loadProjectNSP(file);
@@ -4853,11 +5020,11 @@ window.addEventListener('keydown', (e) => {
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
-        saveProjectNSP();
+        saveProjectNSP(e.shiftKey);
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'o' || e.key === 'O')) {
         e.preventDefault();
-        document.getElementById('input-project')?.click();
+        openProjectNSPDialog();
     }
     if (e.key === 'Escape') {
         if (papercraft && (papercraft.measureMode || papercraft.activeMeasurement)) {

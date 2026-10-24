@@ -46,6 +46,7 @@ export class ReferenceImageManager {
             viewKey,
             image: null,
             texture: null,
+            dataUrl: null,
             fileName: '',
             aspectRatio: 1,
             opacity: 0.5,
@@ -512,9 +513,11 @@ export class ReferenceImageManager {
         reader.readAsDataURL(file);
     }
 
-    setImageDataUrl(slotKey, dataUrl, fileName = 'blueprint.png') {
+    setImageDataUrl(slotKey, dataUrl, fileName = 'blueprint.png', preserveTransform = false) {
         const slot = this.slots[slotKey];
         if (!slot) return;
+
+        slot.dataUrl = dataUrl;
 
         const img = new Image();
         img.onload = () => {
@@ -531,13 +534,21 @@ export class ReferenceImageManager {
 
             // Crear o actualizar PlaneMesh
             this._buildPlaneMesh(slotKey);
-            this.autoFitToModel(slotKey);
+
+            if (!preserveTransform) {
+                this.autoFitToModel(slotKey);
+            } else {
+                this._applySlotMaterial(slotKey);
+                this.updateSlotTransform(slotKey);
+                this._syncSlidersFromSlot(slot);
+            }
+
             this._updateUIForSlot(slotKey);
             this.updateVisibility();
             this._updateToolbarButton();
 
-            // Alinear cámara a la vista del slot recién cargado para que el usuario la vea de inmediato!
-            if (window.setOrthogonalView) {
+            // Alinear cámara a la vista del slot recién cargado para que el usuario la vea de inmediato (solo carga interactiva)
+            if (!preserveTransform && window.setOrthogonalView) {
                 window.setOrthogonalView(slotKey);
             }
         };
@@ -559,6 +570,7 @@ export class ReferenceImageManager {
             slot.texture = null;
         }
         slot.image = null;
+        slot.dataUrl = null;
         slot.fileName = '';
         slot.scale = 1.0;
         slot.offsetX = 0;
@@ -567,6 +579,108 @@ export class ReferenceImageManager {
         slot.flipH = false;
 
         this._updateUIForSlot(slotKey);
+        this.updateVisibility();
+        this._updateToolbarButton();
+    }
+
+    clearAllSlots() {
+        Object.keys(this.slots).forEach(key => this.clearSlot(key));
+        this.selectSlot('right', false);
+        this.updateVisibility();
+        this._updateToolbarButton();
+    }
+
+    exportData() {
+        const result = {
+            version: '1.0',
+            enabled: this.enabled,
+            onlyInOrtho: this.onlyInOrtho,
+            activeSlotKey: this.activeSlotKey,
+            slots: {}
+        };
+
+        let hasAnyImage = false;
+        for (const [key, slot] of Object.entries(this.slots)) {
+            if (!slot) continue;
+            let dataUrl = slot.dataUrl;
+            if (!dataUrl && slot.image) {
+                if (typeof slot.image.src === 'string' && slot.image.src.startsWith('data:')) {
+                    dataUrl = slot.image.src;
+                } else if (slot.image.complete && slot.image.naturalWidth) {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = slot.image.naturalWidth;
+                        canvas.height = slot.image.naturalHeight;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(slot.image, 0, 0);
+                        dataUrl = canvas.toDataURL('image/png');
+                    } catch (e) {
+                        console.warn(`[ReferenceImageManager] Error exportando canvas para slot ${key}:`, e);
+                    }
+                }
+            }
+
+            if (dataUrl) {
+                hasAnyImage = true;
+            }
+
+            result.slots[key] = {
+                fileName: slot.fileName || '',
+                dataUrl: dataUrl || null,
+                aspectRatio: slot.aspectRatio,
+                opacity: slot.opacity,
+                depth: slot.depth,
+                scale: slot.scale,
+                offsetX: slot.offsetX,
+                offsetY: slot.offsetY,
+                rotation: slot.rotation,
+                flipH: !!slot.flipH,
+                visible: !!slot.visible,
+                locked: !!slot.locked
+            };
+        }
+
+        return hasAnyImage ? result : null;
+    }
+
+    importData(data) {
+        if (!data || !data.slots) return;
+
+        if (typeof data.enabled === 'boolean') this.enabled = data.enabled;
+        if (typeof data.onlyInOrtho === 'boolean') {
+            this.onlyInOrtho = data.onlyInOrtho;
+            if (this.dom.checkOnlyOrtho) this.dom.checkOnlyOrtho.checked = this.onlyInOrtho;
+        }
+        if (data.activeSlotKey && this.slots[data.activeSlotKey]) {
+            this.activeSlotKey = data.activeSlotKey;
+        }
+
+        Object.keys(this.slots).forEach(key => {
+            const slotData = data.slots[key];
+            const slot = this.slots[key];
+            if (!slot) return;
+
+            if (slotData && slotData.dataUrl) {
+                slot.fileName = slotData.fileName || '';
+                slot.aspectRatio = slotData.aspectRatio || 1;
+                slot.opacity = (typeof slotData.opacity === 'number') ? slotData.opacity : 0.5;
+                slot.depth = slotData.depth || 'front';
+                slot.scale = (typeof slotData.scale === 'number') ? slotData.scale : 1.0;
+                slot.offsetX = (typeof slotData.offsetX === 'number') ? slotData.offsetX : 0.0;
+                slot.offsetY = (typeof slotData.offsetY === 'number') ? slotData.offsetY : 0.0;
+                slot.rotation = (typeof slotData.rotation === 'number') ? slotData.rotation : 0.0;
+                slot.flipH = !!slotData.flipH;
+                slot.visible = (typeof slotData.visible === 'boolean') ? slotData.visible : true;
+                slot.locked = !!slotData.locked;
+
+                this.setImageDataUrl(key, slotData.dataUrl, slot.fileName, true);
+            } else {
+                this.clearSlot(key);
+            }
+        });
+
+        this.selectSlot(this.activeSlotKey, false);
+        this.updateVisibility();
         this._updateToolbarButton();
     }
 
