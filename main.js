@@ -1791,7 +1791,8 @@ window.addEventListener('drop', (e) => {
         reader.readAsText(nsppFile);
     } else if (nspFile && typeof window.loadProjectNSP === 'function') {
         window.currentProjectFileHandle = null;
-        window.currentProjectFileName = nspFile.name.replace(/\.[^/.]+$/, '');
+        const rawName = nspFile.name.replace(/\.[^/.]+$/, '');
+        window.currentProjectFileName = rawName.replace(/\s*\(\d+\)$/, '').trim();
         updateAppTitle(window.currentProjectFileName, 'nsp', false);
         // Intentar obtener FileSystemFileHandle desde DataTransferItem para permitir sobreescritura directa
         if (e.dataTransfer && e.dataTransfer.items) {
@@ -4177,38 +4178,58 @@ async function saveProjectNSP(forceSaveAs = false) {
             ? window.currentProjectFileName 
             : 'proyecto_substance';
 
-        // 1. Si ya tenemos un archivo abierto en disco y no es "Guardar como", sobrescribimos directamente sin preguntar nada
-        if (window.currentProjectFileHandle && !forceSaveAs) {
+        // 1. Guardado silencioso directo en disco a través del servidor local (localhost:8000)
+        // Sobrescribe el archivo directamente en disco sin cuadros de diálogo ni sufijos (1) o (2)
+        if (!forceSaveAs && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
             try {
-                const options = { mode: 'readwrite' };
-                let hasPerm = false;
-                if (typeof window.currentProjectFileHandle.queryPermission === 'function') {
-                    hasPerm = (await window.currentProjectFileHandle.queryPermission(options)) === 'granted';
+                const cleanName = currentName.replace(/\s*\(\d+\)$/, '').trim();
+                const res = await fetch('/api/save_project', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fileName: `${cleanName}.nsp`,
+                        filePath: window.currentProjectFilePath || null,
+                        content: jsonStr
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.success) {
+                        window.currentProjectFilePath = data.path;
+                        window.currentProjectFileName = data.fileName.replace(/\.[^/.]+$/, '');
+                        updateAppTitle(window.currentProjectFileName, 'nsp', false);
+                        showAppToast(`💾 Guardado: ${data.fileName}`);
+                        return;
+                    }
                 }
-                if (!hasPerm && typeof window.currentProjectFileHandle.requestPermission === 'function') {
-                    hasPerm = (await window.currentProjectFileHandle.requestPermission(options)) === 'granted';
-                }
-                if (hasPerm || !window.currentProjectFileHandle.queryPermission) {
-                    const writable = await window.currentProjectFileHandle.createWritable();
-                    await writable.write(blob);
-                    await writable.close();
-
-                    const savedName = window.currentProjectFileHandle.name.replace(/\.[^/.]+$/, '');
-                    window.currentProjectFileName = savedName;
-                    updateAppTitle(savedName, 'nsp', false);
-                    showAppToast(`💾 Guardado: ${window.currentProjectFileHandle.name}`);
-                    return;
-                }
-            } catch (fsErr) {
-                console.warn('Error al sobrescribir con handle existente, intentando selector:', fsErr);
+            } catch (apiErr) {
+                console.warn('API local /api/save_project no disponible, usando File System API:', apiErr);
             }
         }
 
-        // 2. Si es la primera vez o se pidió "Guardar como", usamos File System Access API para elegir ubicación
+        // 2. Si ya tenemos un FileSystemFileHandle y no es "Guardar como", sobrescribimos directamente
+        if (window.currentProjectFileHandle && !forceSaveAs) {
+            try {
+                const writable = await window.currentProjectFileHandle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+
+                const savedName = window.currentProjectFileHandle.name.replace(/\.[^/.]+$/, '');
+                window.currentProjectFileName = savedName;
+                updateAppTitle(savedName, 'nsp', false);
+                showAppToast(`💾 Guardado: ${window.currentProjectFileHandle.name}`);
+                return;
+            } catch (fsErr) {
+                console.warn('Error al sobrescribir con handle existente:', fsErr);
+            }
+        }
+
+        // 3. Si se pidió "Guardar como" o no hay servidor local/handle, usamos File System Access API
         if (window.showSaveFilePicker) {
             try {
+                const cleanName = currentName.replace(/\s*\(\d+\)$/, '').trim();
                 const handle = await window.showSaveFilePicker({
-                    suggestedName: `${currentName}.nsp`,
+                    suggestedName: `${cleanName}.nsp`,
                     types: [{
                         description: 'Proyecto Neo Substance Painter (*.nsp)',
                         accept: { 'application/json': ['.nsp', '.json'] }
@@ -4232,16 +4253,17 @@ async function saveProjectNSP(forceSaveAs = false) {
             }
         }
 
-        // 3. Fallback de descarga clásica si la API no está disponible
+        // 4. Fallback de descarga clásica si la API no está disponible
+        const cleanName = currentName.replace(/\s*\(\d+\)$/, '').trim();
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `${currentName}.nsp`;
+        link.download = `${cleanName}.nsp`;
         link.click();
         URL.revokeObjectURL(url);
 
-        updateAppTitle(currentName, 'nsp', false);
-        showAppToast(`💾 Proyecto descargado: ${currentName}.nsp`);
+        updateAppTitle(cleanName, 'nsp', false);
+        showAppToast(`💾 Proyecto descargado: ${cleanName}.nsp`);
     } catch (err) {
         console.error('Error guardando proyecto .nsp:', err);
         alert('Error al guardar el proyecto: ' + err.message);
@@ -4496,7 +4518,8 @@ async function openProjectNSPDialog() {
             if (handle) {
                 window.currentProjectFileHandle = handle;
                 const file = await handle.getFile();
-                window.currentProjectFileName = file.name.replace(/\.[^/.]+$/, '');
+                const rawName = file.name.replace(/\.[^/.]+$/, '');
+                window.currentProjectFileName = rawName.replace(/\s*\(\d+\)$/, '').trim();
                 updateAppTitle(window.currentProjectFileName, 'nsp', false);
                 await loadProjectNSP(file);
                 showAppToast(`📂 Proyecto abierto: ${file.name}`);
@@ -4531,7 +4554,8 @@ document.getElementById('input-project')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
         window.currentProjectFileHandle = null;
-        window.currentProjectFileName = file.name.replace(/\.[^/.]+$/, '');
+        const rawName = file.name.replace(/\.[^/.]+$/, '');
+        window.currentProjectFileName = rawName.replace(/\s*\(\d+\)$/, '').trim();
         updateAppTitle(window.currentProjectFileName, 'nsp', false);
         loadProjectNSP(file);
     }

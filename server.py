@@ -98,6 +98,89 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        if self.path == '/api/save_project':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_len).decode('utf-8')
+                data = json.loads(body)
+
+                filename = data.get('fileName', '').strip()
+                if not filename:
+                    filename = 'proyecto_substance.nsp'
+                if not filename.lower().endswith('.nsp') and not filename.lower().endswith('.nspp'):
+                    filename += '.nsp'
+
+                file_path = data.get('filePath', '').strip()
+                content = data.get('content', '')
+                if not content:
+                    raise ValueError('Contenido vacío')
+                if isinstance(content, (dict, list)):
+                    content = json.dumps(content, ensure_ascii=False)
+
+                target_path = None
+                # 1. Si el cliente envió una ruta relativa conocida, probarla primero
+                if file_path:
+                    cand = os.path.normpath(os.path.join(BASE_DIR, file_path))
+                    if cand.startswith(BASE_DIR) and os.path.exists(cand):
+                        target_path = cand
+
+                # 2. Si no, buscar el archivo existente en BASE_DIR para sobreescribir el actual
+                if not target_path:
+                    clean_target = filename.lower()
+                    base_stem = re.sub(r'\s*\(\d+\)$', '', os.path.splitext(clean_target)[0]).strip()
+                    ext = os.path.splitext(clean_target)[1]
+                    canonical_target = f"{base_stem}{ext}".lower()
+
+                    exact_match = None
+                    canonical_match = None
+
+                    for root, dirs, files in os.walk(BASE_DIR):
+                        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('node_modules', '__pycache__')]
+                        for f in files:
+                            f_lower = f.lower()
+                            if f_lower == clean_target:
+                                exact_match = os.path.join(root, f)
+                                break
+                            elif f_lower == canonical_target and not canonical_match:
+                                canonical_match = os.path.join(root, f)
+                        if exact_match:
+                            break
+
+                    target_path = exact_match or canonical_match
+
+                # 3. Si no existe aún, guardarlo en models/
+                if not target_path:
+                    models_dir = os.path.join(BASE_DIR, 'models')
+                    os.makedirs(models_dir, exist_ok=True)
+                    target_path = os.path.join(models_dir, filename)
+
+                with open(target_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+                rel_path = os.path.relpath(target_path, BASE_DIR).replace('\\', '/')
+                actual_name = os.path.basename(target_path)
+
+                resp = json.dumps({
+                    "success": True,
+                    "path": rel_path,
+                    "fileName": actual_name
+                }, ensure_ascii=False).encode('utf-8')
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Content-Length', str(len(resp)))
+                self.end_headers()
+                self.wfile.write(resp)
+                return
+            except Exception as e:
+                err_resp = json.dumps({"error": str(e)}).encode('utf-8')
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(err_resp)))
+                self.end_headers()
+                self.wfile.write(err_resp)
+                return
+
         if self.path == '/api/decals/upload':
             try:
                 content_len = int(self.headers.get('Content-Length', 0))
