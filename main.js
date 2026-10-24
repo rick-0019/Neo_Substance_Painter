@@ -4,7 +4,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { Painter } from './painter.js?v=9.8';
 import { DecalSystem } from './decals.js?v=9.8';
 import { LayerManager } from './layers.js?v=9.8';
-import { PapercraftEngine } from './papercraft.js?v=10.6';
+import { PapercraftEngine } from './papercraft.js?v=11.4';
 import { SelectionManager } from './selection.js?v=9.8';
 import { ColorPickerManager } from './colorPicker.js?v=9.8';
 import { DecalLibraryManager } from './decalLibrary.js?v=9.8';
@@ -1015,7 +1015,7 @@ function updateSelectedPartCard() {
     }
 
     if (badge) {
-        badge.textContent = `Pieza #${part.id + 1}`;
+        badge.textContent = `Pieza #${part.id + 1}${part.isDuplicate ? ' (Copia)' : ''}`;
         badge.style.color = '#00e5ff';
         badge.style.borderColor = '#00e5ff';
         badge.style.background = 'rgba(0,229,255,0.12)';
@@ -1041,7 +1041,30 @@ function updateSelectedPartCard() {
     }
 
     const rotEl = document.getElementById('unfold-sel-rot');
-    if (rotEl) rotEl.textContent = `${part.layout.rotation % 360}°`;
+    if (rotEl) {
+        const normRot = Math.round((((part.layout.rotation || 0) % 360) + 360) % 360 * 10) / 10;
+        let flipStr = '';
+        if (part.layout.flipX && part.layout.flipY) flipStr = ' (XY)';
+        else if (part.layout.flipX) flipStr = ' (X)';
+        else if (part.layout.flipY) flipStr = ' (Y)';
+        rotEl.textContent = `${normRot}°${flipStr}`;
+    }
+
+    const isFlipX = !!part.layout.flipX;
+    [document.getElementById('btn-unfold-flip-x'), document.getElementById('btn-unfold-sel-flip-x')].forEach(b => {
+        if (b) {
+            b.style.borderColor = isFlipX ? '#00e5ff' : '';
+            b.style.background = isFlipX ? 'rgba(0,229,255,0.2)' : '';
+        }
+    });
+
+    const isFlipY = !!part.layout.flipY;
+    [document.getElementById('btn-unfold-flip-y'), document.getElementById('btn-unfold-sel-flip-y')].forEach(b => {
+        if (b) {
+            b.style.borderColor = isFlipY ? '#00e5ff' : '';
+            b.style.background = isFlipY ? 'rgba(0,229,255,0.2)' : '';
+        }
+    });
 }
 window.updateSelectedPartCard = updateSelectedPartCard;
 
@@ -2329,9 +2352,9 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
         if (hit) {
             papercraft.selectedPart = hit.part;
             currentHitInfo = hit;
-            hit.part.layout.rotation = (hit.part.layout.rotation + 45) % 360;
-            if (hit.piece?.papercraft) hit.piece.papercraft.notifyChange();
-            else papercraft.notifyChange();
+            const delta = e.shiftKey ? 1 : 45;
+            const pEngine = hit.piece?.papercraft || papercraft;
+            pEngine.rotateSelectedPart(delta);
             updateSelectedPartCard();
             renderUnfoldWorkbench();
         } else {
@@ -2602,6 +2625,12 @@ window.addEventListener('mouseup', () => {
 
 canvasUnfold?.addEventListener('wheel', (e) => {
     e.preventDefault();
+    if (e.shiftKey || e.altKey) {
+        // Rotación fina cuando hay una pieza seleccionada en la Mesa A4
+        const delta = (e.deltaY < 0 ? 1 : -1) * (e.altKey ? 5 : 1);
+        handleRotatePart(delta);
+        return;
+    }
     const zoomFactor = e.deltaY < 0 ? 1.15 : (1 / 1.15);
     const oldZoom = papercraft.zoom;
     papercraft.zoom = Math.max(0.2, Math.min(5.0, papercraft.zoom * zoomFactor));
@@ -2628,7 +2657,7 @@ document.getElementById('btn-unfold-zoom-reset')?.addEventListener('click', () =
     renderUnfoldWorkbench();
 });
 
-// Botones Auto-Acomodar, Rotar, +Hoja A4
+// Botones Auto-Acomodar, Rotar, Duplicar, Espejo, +Hoja A4
 function handleAutoPack() {
     if (isAssemblyWorkbenchActive() && window.modelAssembler) {
         let targetPiece = currentHitInfo?.piece;
@@ -2649,17 +2678,69 @@ function handleAutoPack() {
 document.getElementById('btn-unfold-autopack')?.addEventListener('click', handleAutoPack);
 document.getElementById('btn-unfold-autopack-side')?.addEventListener('click', handleAutoPack);
 
-function handleRotatePart() {
-    if (papercraft.selectedPart) {
-        papercraft.selectedPart.layout.rotation = (papercraft.selectedPart.layout.rotation + 45) % 360;
-        const pEngine = getActivePartEngine();
-        if (pEngine) pEngine.notifyChange();
+function handleRotatePart(deltaDeg = 45) {
+    const pEngine = typeof getActivePartEngine === 'function' ? getActivePartEngine() : papercraft;
+    if (pEngine && pEngine.selectedPart) {
+        pEngine.rotateSelectedPart(deltaDeg);
         updateSelectedPartCard();
         renderUnfoldWorkbench();
     }
 }
-document.getElementById('btn-unfold-rotate')?.addEventListener('click', handleRotatePart);
-document.getElementById('btn-unfold-rotate-side')?.addEventListener('click', handleRotatePart);
+window.handleRotatePart = handleRotatePart;
+
+function handleFlipPart(axis = 'x') {
+    const pEngine = typeof getActivePartEngine === 'function' ? getActivePartEngine() : papercraft;
+    if (pEngine && pEngine.selectedPart) {
+        pEngine.flipSelectedPart(axis);
+        updateSelectedPartCard();
+        renderUnfoldWorkbench();
+        const axisLabel = axis.toUpperCase();
+        showWorkbenchToast(`🪞 Pieza #${pEngine.selectedPart.id + 1} espejo ${axisLabel}`, 1500);
+    }
+}
+window.handleFlipPart = handleFlipPart;
+
+function handleDuplicatePart() {
+    const pEngine = typeof getActivePartEngine === 'function' ? getActivePartEngine() : papercraft;
+    if (pEngine && pEngine.selectedPart) {
+        const cloned = pEngine.duplicateSelectedPart();
+        if (cloned) {
+            papercraft.selectedPart = cloned;
+            updatePapercraftUI();
+            updateSelectedPartCard();
+            renderUnfoldWorkbench();
+            showWorkbenchToast(`📋 Pieza #${cloned.id + 1} duplicada`, 2000);
+        }
+    }
+}
+window.handleDuplicatePart = handleDuplicatePart;
+
+function handleDeletePart() {
+    const pEngine = typeof getActivePartEngine === 'function' ? getActivePartEngine() : papercraft;
+    if (pEngine && pEngine.selectedPart) {
+        const partId = pEngine.selectedPart.id + 1;
+        const deleted = pEngine.deleteSelectedPart();
+        if (deleted) {
+            papercraft.selectedPart = null;
+            updatePapercraftUI();
+            updateSelectedPartCard();
+            renderUnfoldWorkbench();
+            showWorkbenchToast(`🗑️ Pieza #${partId} eliminada`, 2000);
+        }
+    }
+}
+window.handleDeletePart = handleDeletePart;
+
+// Listeners de rotación toolbar
+document.getElementById('btn-unfold-rot-dec1')?.addEventListener('click', (e) => handleRotatePart(e.shiftKey ? -15 : -1));
+document.getElementById('btn-unfold-rot-inc1')?.addEventListener('click', (e) => handleRotatePart(e.shiftKey ? 15 : 1));
+document.getElementById('btn-unfold-rotate')?.addEventListener('click', (e) => handleRotatePart(e.shiftKey ? 1 : 45));
+document.getElementById('btn-unfold-rotate-side')?.addEventListener('click', (e) => handleRotatePart(e.shiftKey ? 1 : 45));
+
+// Listeners de duplicado y espejo toolbar
+document.getElementById('btn-unfold-duplicate')?.addEventListener('click', handleDuplicatePart);
+document.getElementById('btn-unfold-flip-x')?.addEventListener('click', () => handleFlipPart('x'));
+document.getElementById('btn-unfold-flip-y')?.addEventListener('click', () => handleFlipPart('y'));
 
 function handleAddPage() {
     if (isAssemblyWorkbenchActive() && window.modelAssembler) {
@@ -2726,16 +2807,13 @@ function toggleMeasureMode() {
 }
 btnMeasure?.addEventListener('click', toggleMeasureMode);
 
-// Acciones de Pieza Seleccionada en Sidebar (Girar y Centrar en Hoja)
-document.getElementById('btn-unfold-sel-rotate')?.addEventListener('click', () => {
-    if (papercraft.selectedPart) {
-        papercraft.selectedPart.layout.rotation = (papercraft.selectedPart.layout.rotation + 45) % 360;
-        const pEngine = typeof getActivePartEngine === 'function' ? getActivePartEngine() : papercraft;
-        if (pEngine) pEngine.notifyChange();
-        updateSelectedPartCard();
-        renderUnfoldWorkbench();
-    }
-});
+// Acciones de Pieza Seleccionada en Sidebar (Girar 1°, 45°, Duplicar, Espejo, Centrar)
+document.getElementById('btn-unfold-sel-rot-dec1')?.addEventListener('click', (e) => handleRotatePart(e.shiftKey ? -15 : -1));
+document.getElementById('btn-unfold-sel-rot-inc1')?.addEventListener('click', (e) => handleRotatePart(e.shiftKey ? 15 : 1));
+document.getElementById('btn-unfold-sel-rotate')?.addEventListener('click', (e) => handleRotatePart(e.shiftKey ? 1 : 45));
+document.getElementById('btn-unfold-sel-duplicate')?.addEventListener('click', handleDuplicatePart);
+document.getElementById('btn-unfold-sel-flip-x')?.addEventListener('click', () => handleFlipPart('x'));
+document.getElementById('btn-unfold-sel-flip-y')?.addEventListener('click', () => handleFlipPart('y'));
 document.getElementById('btn-unfold-sel-center')?.addEventListener('click', () => {
     if (papercraft.selectedPart) {
         papercraft.selectedPart.layout.x = Math.round(papercraft.A4_W / 2);
@@ -4969,6 +5047,35 @@ document.querySelectorAll('.btn-v3d-view').forEach(btn => {
 window.addEventListener('keydown', (e) => {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
 
+    // Atajos de Mesa A4 / Papercraft Workbench cuando hay una pieza seleccionada
+    if (papercraft && papercraft.active && papercraft.selectedPart) {
+        if (e.key === '[' || e.key === '{') {
+            e.preventDefault();
+            handleRotatePart(e.shiftKey ? -15 : -1);
+            return;
+        }
+        if (e.key === ']' || e.key === '}') {
+            e.preventDefault();
+            handleRotatePart(e.shiftKey ? 15 : 1);
+            return;
+        }
+        if ((e.key === 'h' || e.key === 'H') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+            handleFlipPart('x');
+            return;
+        }
+        if ((e.key === 'v' || e.key === 'V') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+            handleFlipPart('y');
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+            e.preventDefault();
+            handleDuplicatePart();
+            return;
+        }
+    }
+
     // Atajos de cámara estilo Blender (5 = Toggle Persp/Ortho, 1 = Front, 3 = Right, 7 = Top, Ctrl para opuestas)
     if (e.key === '5' || e.code === 'Numpad5') {
         e.preventDefault();
@@ -5090,6 +5197,11 @@ window.addEventListener('keydown', (e) => {
             papercraft.selectedAnnotation = null;
             if (typeof updateAnnotationUI === 'function') updateAnnotationUI();
             if (typeof renderUnfoldWorkbench === 'function') renderUnfoldWorkbench();
+            return;
+        }
+        if (papercraft && papercraft.active && papercraft.selectedPart) {
+            e.preventDefault();
+            handleDeletePart();
             return;
         }
         if (selectionManager.active) {

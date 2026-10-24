@@ -664,12 +664,105 @@ export class PapercraftEngine {
     }
 
     /**
-     * Rota la pieza actualmente seleccionada por deltaDeg grados (ej. 45° o 15°)
+     * Rota la pieza actualmente seleccionada por deltaDeg grados (ej. 1°, 45° o -1°)
      */
-    rotateSelectedPart(deltaDeg = 45) {
+    rotateSelectedPart(deltaDeg = 1) {
         if (!this.selectedPart) return;
-        this.selectedPart.layout.rotation = (this.selectedPart.layout.rotation + deltaDeg) % 360;
+        const curRot = this.selectedPart.layout.rotation || 0;
+        this.selectedPart.layout.rotation = Math.round(((curRot + deltaDeg) % 360 + 360) % 360 * 10) / 10;
+        this.invalidateBleedCache();
         this.notifyChange();
+    }
+
+    /**
+     * Aplica espejo horizontal (X) o vertical (Y) a la pieza seleccionada
+     */
+    flipSelectedPart(axis = 'x') {
+        if (!this.selectedPart) return;
+        if (axis === 'x') {
+            this.selectedPart.layout.flipX = !this.selectedPart.layout.flipX;
+        } else if (axis === 'y') {
+            this.selectedPart.layout.flipY = !this.selectedPart.layout.flipY;
+        }
+        this.invalidateBleedCache();
+        this.notifyChange();
+    }
+
+    /**
+     * Duplica la pieza seleccionada creando una copia exacta con su propio ID en la mesa A4
+     */
+    duplicateSelectedPart() {
+        if (!this.selectedPart) return null;
+        const src = this.selectedPart;
+        const newId = this.parts.reduce((max, p) => Math.max(max, p.id), -1) + 1;
+
+        const clonedTriangles = (src.localTriangles || []).map(tri => tri.map(pt => ({ ...pt })));
+        const clonedBoundaryEdges = (src.boundaryEdges || []).map(e => ({
+            ...e,
+            p1: { ...e.p1 },
+            p2: { ...e.p2 },
+            mid: e.mid ? { ...e.mid } : undefined
+        }));
+        const clonedInternalEdges = (src.internalEdges || []).map(e => ({
+            ...e,
+            p1: { ...e.p1 },
+            p2: { ...e.p2 }
+        }));
+        const clonedTabs = (src.tabs || []).map(t => ({
+            ...t,
+            baseP1: { ...t.baseP1 },
+            baseP2: { ...t.baseP2 },
+            tabP1: { ...t.tabP1 },
+            tabP2: { ...t.tabP2 },
+            tabCenter: { ...t.tabCenter }
+        }));
+
+        const newPart = {
+            id: newId,
+            sourcePartId: src.id,
+            faceIndices: [...(src.faceIndices || [])],
+            centerU: src.centerU,
+            centerV: src.centerV,
+            islandMmPerUV: src.islandMmPerUV,
+            localTriangles: clonedTriangles,
+            boundaryEdges: clonedBoundaryEdges,
+            internalEdges: clonedInternalEdges,
+            tabs: clonedTabs,
+            bounds: { ...src.bounds },
+            wMm: src.wMm,
+            hMm: src.hMm,
+            isDuplicate: true,
+            layout: {
+                pageIndex: src.layout.pageIndex,
+                x: Math.min(this.A4_W - src.wMm / 2, src.layout.x + 8),
+                y: Math.min(this.A4_H - src.hMm / 2, src.layout.y + 8),
+                rotation: src.layout.rotation || 0,
+                flipX: !!src.layout.flipX,
+                flipY: !!src.layout.flipY
+            }
+        };
+
+        this.parts.push(newPart);
+        this.selectedPart = newPart;
+        this.invalidateBleedCache();
+        this.notifyChange();
+        return newPart;
+    }
+
+    /**
+     * Elimina la pieza seleccionada de la mesa de trabajo (útil para descartar duplicados)
+     */
+    deleteSelectedPart() {
+        if (!this.selectedPart) return false;
+        const idx = this.parts.indexOf(this.selectedPart);
+        if (idx !== -1) {
+            this.parts.splice(idx, 1);
+            this.selectedPart = null;
+            this.invalidateBleedCache();
+            this.notifyChange();
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -1162,8 +1255,10 @@ export class PapercraftEngine {
             const dx = pageMmX - part.layout.x;
             const dy = pageMmY - part.layout.y;
             const rad = (-part.layout.rotation * Math.PI) / 180;
-            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
-            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            let lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            let ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            if (part.layout.flipX) lx = -lx;
+            if (part.layout.flipY) ly = -ly;
 
             const b = part.bounds;
             if (lx < b.minX - 6 || lx > b.maxX + 6 || ly < b.minY - 6 || ly > b.maxY + 6) continue;
@@ -1200,8 +1295,10 @@ export class PapercraftEngine {
             const dx = pageMmX - part.layout.x;
             const dy = pageMmY - part.layout.y;
             const rad = (-part.layout.rotation * Math.PI) / 180;
-            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
-            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            let lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            let ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            if (part.layout.flipX) lx = -lx;
+            if (part.layout.flipY) ly = -ly;
 
             const b = part.bounds;
             if (lx < b.minX - 4 || lx > b.maxX + 4 || ly < b.minY - 4 || ly > b.maxY + 4) continue;
@@ -1262,8 +1359,10 @@ export class PapercraftEngine {
             const dx = pageMmX - part.layout.x;
             const dy = pageMmY - part.layout.y;
             const rad = (-part.layout.rotation * Math.PI) / 180;
-            const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
-            const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            let lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+            let ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+            if (part.layout.flipX) lx = -lx;
+            if (part.layout.flipY) ly = -ly;
 
             // Comprobar bounding box con holgura para seleccionar fácilmente
             const b = part.bounds;
@@ -2072,10 +2171,15 @@ export class PapercraftEngine {
         const originPxX = pageX_px + part.layout.x * mmToPx;
         const originPxY = pageY_px + part.layout.y * mmToPx;
         const rotRad = (part.layout.rotation * Math.PI) / 180;
+        const flipX = part.layout.flipX ? -1 : 1;
+        const flipY = part.layout.flipY ? -1 : 1;
 
         ctx.save();
         ctx.translate(originPxX, originPxY);
         ctx.rotate(rotRad);
+        if (flipX !== 1 || flipY !== 1) {
+            ctx.scale(flipX, flipY);
+        }
 
         // A) Recorte y textura de la pieza en la mesa de trabajo A4 (renderizado instantáneo GPU)
         if (canvas2d && part.localTriangles && part.localTriangles.length > 0) {
@@ -2458,15 +2562,21 @@ export class PapercraftEngine {
             const originY = part.layout.y;
             const rotDeg = part.layout.rotation;
             const rotRad = (rotDeg * Math.PI) / 180;
+            const flipX = part.layout.flipX ? -1 : 1;
+            const flipY = part.layout.flipY ? -1 : 1;
 
             const toPageMm = (pt) => {
-                const rx = pt.x * Math.cos(rotRad) - pt.y * Math.sin(rotRad);
-                const ry = pt.x * Math.sin(rotRad) + pt.y * Math.cos(rotRad);
+                const px = pt.x * flipX;
+                const py = pt.y * flipY;
+                const rx = px * Math.cos(rotRad) - py * Math.sin(rotRad);
+                const ry = px * Math.sin(rotRad) + py * Math.cos(rotRad);
                 return { x: originX + rx, y: originY + ry };
             };
             const toPageDir = (dir) => {
-                const rx = dir.x * Math.cos(rotRad) - dir.y * Math.sin(rotRad);
-                const ry = dir.x * Math.sin(rotRad) + dir.y * Math.cos(rotRad);
+                const px = dir.x * flipX;
+                const py = dir.y * flipY;
+                const rx = px * Math.cos(rotRad) - py * Math.sin(rotRad);
+                const ry = px * Math.sin(rotRad) + py * Math.cos(rotRad);
                 return { x: rx, y: ry };
             };
 
@@ -2486,8 +2596,10 @@ export class PapercraftEngine {
                     for (const tri of part.localTriangles) {
                         if (!tri || tri.length < 3) continue;
                         for (const pt of tri) {
-                            const rx = pt.x * cosR - pt.y * sinR;
-                            const ry = pt.x * sinR + pt.y * cosR;
+                            const px = pt.x * flipX;
+                            const py = pt.y * flipY;
+                            const rx = px * cosR - py * sinR;
+                            const ry = px * sinR + py * cosR;
                             minRx = Math.min(minRx, rx); maxRx = Math.max(maxRx, rx);
                             minRy = Math.min(minRy, ry); maxRy = Math.max(maxRy, ry);
                         }
@@ -2506,6 +2618,9 @@ export class PapercraftEngine {
                         // Situar origen y rotar directamente dentro del canvas antes de dibujar
                         tCtx.translate(-minRx * pxPerMm + padPx, -minRy * pxPerMm + padPx);
                         tCtx.rotate(rotRad);
+                        if (flipX !== 1 || flipY !== 1) {
+                            tCtx.scale(flipX, flipY);
+                        }
 
                         // Recorte vectorial de triángulos
                         tCtx.beginPath();

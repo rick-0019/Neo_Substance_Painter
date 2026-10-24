@@ -1260,7 +1260,12 @@
                             <!-- Grupo 2: Acciones de Mesa -->
                             <div class="unfold-tool-group">
                                 <button type="button" id="btn-unfold-autopack" class="ribbon-btn" style="background: #0288d1; padding: 2px 7px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Organizar automáticamente todas las piezas en hojas A4 con espacio para solapas">🧩 Auto</button>
-                                <button type="button" id="btn-unfold-rotate" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Girar pieza seleccionada 45° (o usa clic derecho)">↻ 45°</button>
+                                <button type="button" id="btn-unfold-rot-dec1" class="size-step-btn" style="width: auto; padding: 0 5px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Girar pieza seleccionada -1° (Shift: -15°)">↺ 1°</button>
+                                <button type="button" id="btn-unfold-rot-inc1" class="size-step-btn" style="width: auto; padding: 0 5px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Girar pieza seleccionada +1° (Shift: +15°)">↻ 1°</button>
+                                <button type="button" id="btn-unfold-rotate" class="size-step-btn" style="width: auto; padding: 0 5px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Girar pieza seleccionada 45° (Shift: 1°)">↻ 45°</button>
+                                <button type="button" id="btn-unfold-duplicate" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Duplicar pieza seleccionada (Ctrl+D)">📋 Duplicar</button>
+                                <button type="button" id="btn-unfold-flip-x" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Espejo horizontal (Tecla H)">🪞 Esp. X</button>
+                                <button type="button" id="btn-unfold-flip-y" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Espejo vertical (Tecla V)">🪞 Esp. Y</button>
                                 <button type="button" id="btn-unfold-add-page" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Añadir una nueva hoja A4 vacía">📄 +Hoja</button>
                                 <button type="button" id="btn-unfold-clean-pages" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; color: #ffab91; white-space: nowrap;" title="Eliminar y compactar hojas vacías que no contienen piezas">🗑️ Limpiar</button>
                                 <button type="button" id="btn-unfold-measure" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; color: #ffecb3; white-space: nowrap;" title="Regla interactiva: haz clic y arrastra en el lienzo para medir distancias exactas en mm">📏 Medir</button>
@@ -1598,10 +1603,17 @@
                                 </div>
                                 <div class="unfold-row">
                                     <span>Rotación:</span>
-                                    <span id="unfold-sel-rot" style="color: #bbb;">0°</span>
+                                    <div style="display: flex; align-items: center; gap: 4px;">
+                                        <button type="button" id="btn-unfold-sel-rot-dec1" class="btn-ref-mini" title="Girar -1° (Shift: -15°)">-</button>
+                                        <span id="unfold-sel-rot" style="color: #00e5ff; font-family: monospace; min-width: 44px; text-align: center;">0°</span>
+                                        <button type="button" id="btn-unfold-sel-rot-inc1" class="btn-ref-mini" title="Girar +1° (Shift: +15°)">+</button>
+                                        <button type="button" id="btn-unfold-sel-rotate" class="layer-action-btn" style="padding: 1px 6px;" title="Girar 45°">↻ 45°</button>
+                                    </div>
                                 </div>
-                                <div style="display: flex; gap: 4px; margin-top: 4px;">
-                                    <button type="button" id="btn-unfold-sel-rotate" class="layer-action-btn" style="flex: 1;" title="Girar esta pieza 45°">↻ Girar 45°</button>
+                                <div style="display: flex; gap: 4px; margin-top: 5px;">
+                                    <button type="button" id="btn-unfold-sel-duplicate" class="layer-action-btn" style="flex: 1;" title="Duplicar esta pieza en la hoja">📋 Duplicar</button>
+                                    <button type="button" id="btn-unfold-sel-flip-x" class="layer-action-btn" style="flex: 1;" title="Reflejar en eje horizontal (Espejo X)">🪞 Esp. X</button>
+                                    <button type="button" id="btn-unfold-sel-flip-y" class="layer-action-btn" style="flex: 1;" title="Reflejar en eje vertical (Espejo Y)">🪞 Esp. Y</button>
                                     <button type="button" id="btn-unfold-sel-center" class="layer-action-btn" style="flex: 1;" title="Centrar pieza en su hoja actual">🎯 Centrar</button>
                                 </div>
                             </div>
@@ -1782,7 +1794,7 @@
         <button type="button" id="btn-mask-exit" title="Volver a pintar color / Deseleccionar (Esc)">Pintar Color</button>
     </div>
 
-    <script type="module" src="main.js?v=11.3"></script>
+    <script type="module" src="main.js?v=11.4"></script>
     <script type="module" src="assembler.js?v=11.0"></script>
 </body>
 </html>

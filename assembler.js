@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { PapercraftEngine } from './papercraft.js?v=10.6';
+import { PapercraftEngine } from './papercraft.js?v=11.4';
 
 export class ModelAssembler {
     constructor() {
