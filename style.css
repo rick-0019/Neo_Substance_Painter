@@ -2605,11 +2605,11 @@ input[type=range]::-webkit-slider-runnable-track {
 .ref-ctrl-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
 }
 
 .ref-ctrl-row label {
-    width: 68px;
+    width: 62px;
     font-size: 10px;
     color: #aaa;
     flex-shrink: 0;
@@ -2617,6 +2617,7 @@ input[type=range]::-webkit-slider-runnable-track {
 
 .ref-ctrl-row input[type="range"] {
     flex: 1;
+    min-width: 40px;
     accent-color: #00e5ff;
     cursor: pointer;
     height: 4px;

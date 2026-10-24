@@ -101,6 +101,8 @@ export class ReferenceImageManager {
         // Sliders y Controles
         this.dom.sliderOpacity = document.getElementById('ref-slider-opacity');
         this.dom.labelOpacity = document.getElementById('ref-label-opacity');
+        this.dom.btnOpacityDec = document.getElementById('btn-ref-opacity-dec');
+        this.dom.btnOpacityInc = document.getElementById('btn-ref-opacity-inc');
         this.dom.btnDepthBack = document.getElementById('btn-ref-depth-back');
         this.dom.btnDepthFront = document.getElementById('btn-ref-depth-front');
 
@@ -110,12 +112,19 @@ export class ReferenceImageManager {
         this.dom.btnScaleInc = document.getElementById('btn-ref-scale-inc');
 
         this.dom.sliderPosX = document.getElementById('ref-slider-pos-x');
+        this.dom.btnPosXDec = document.getElementById('btn-ref-pos-x-dec');
+        this.dom.btnPosXInc = document.getElementById('btn-ref-pos-x-inc');
         this.dom.btnResetPosX = document.getElementById('btn-ref-reset-pos-x');
+
         this.dom.sliderPosY = document.getElementById('ref-slider-pos-y');
+        this.dom.btnPosYDec = document.getElementById('btn-ref-pos-y-dec');
+        this.dom.btnPosYInc = document.getElementById('btn-ref-pos-y-inc');
         this.dom.btnResetPosY = document.getElementById('btn-ref-reset-pos-y');
 
         this.dom.sliderRot = document.getElementById('ref-slider-rot');
         this.dom.labelRot = document.getElementById('ref-label-rot');
+        this.dom.btnRotDec = document.getElementById('btn-ref-rot-dec');
+        this.dom.btnRotInc = document.getElementById('btn-ref-rot-inc');
         this.dom.btnResetRot = document.getElementById('btn-ref-reset-rot');
 
         this.dom.btnFlipH = document.getElementById('btn-ref-flip-h');
@@ -177,6 +186,12 @@ export class ReferenceImageManager {
                 this._applySlotMaterial(this.activeSlotKey);
             });
         }
+        if (this.dom.btnOpacityDec) {
+            this.dom.btnOpacityDec.addEventListener('click', () => this.adjustOpacity(this.activeSlotKey, -0.05));
+        }
+        if (this.dom.btnOpacityInc) {
+            this.dom.btnOpacityInc.addEventListener('click', () => this.adjustOpacity(this.activeSlotKey, 0.05));
+        }
 
         // Profundidad (Detrás / Delante)
         if (this.dom.btnDepthBack) {
@@ -201,10 +216,10 @@ export class ReferenceImageManager {
             });
         }
         if (this.dom.btnScaleDec) {
-            this.dom.btnScaleDec.addEventListener('click', () => this.adjustScale(this.activeSlotKey, -0.05));
+            this.dom.btnScaleDec.addEventListener('click', (e) => this.adjustScale(this.activeSlotKey, e.shiftKey ? -0.05 : -0.01));
         }
         if (this.dom.btnScaleInc) {
-            this.dom.btnScaleInc.addEventListener('click', () => this.adjustScale(this.activeSlotKey, 0.05));
+            this.dom.btnScaleInc.addEventListener('click', (e) => this.adjustScale(this.activeSlotKey, e.shiftKey ? 0.05 : 0.01));
         }
 
         // Posición X / Y
@@ -215,6 +230,12 @@ export class ReferenceImageManager {
                 slot.offsetX = parseFloat(e.target.value) * this._getSensitivity();
                 this.updateSlotTransform(this.activeSlotKey);
             });
+        }
+        if (this.dom.btnPosXDec) {
+            this.dom.btnPosXDec.addEventListener('click', (e) => this.adjustPosX(this.activeSlotKey, e.shiftKey ? -5 : -1));
+        }
+        if (this.dom.btnPosXInc) {
+            this.dom.btnPosXInc.addEventListener('click', (e) => this.adjustPosX(this.activeSlotKey, e.shiftKey ? 5 : 1));
         }
         if (this.dom.btnResetPosX) {
             this.dom.btnResetPosX.addEventListener('click', () => {
@@ -233,6 +254,12 @@ export class ReferenceImageManager {
                 slot.offsetY = parseFloat(e.target.value) * this._getSensitivity();
                 this.updateSlotTransform(this.activeSlotKey);
             });
+        }
+        if (this.dom.btnPosYDec) {
+            this.dom.btnPosYDec.addEventListener('click', (e) => this.adjustPosY(this.activeSlotKey, e.shiftKey ? -5 : -1));
+        }
+        if (this.dom.btnPosYInc) {
+            this.dom.btnPosYInc.addEventListener('click', (e) => this.adjustPosY(this.activeSlotKey, e.shiftKey ? 5 : 1));
         }
         if (this.dom.btnResetPosY) {
             this.dom.btnResetPosY.addEventListener('click', () => {
@@ -253,6 +280,12 @@ export class ReferenceImageManager {
                 if (this.dom.labelRot) this.dom.labelRot.textContent = `${slot.rotation.toFixed(1)}°`;
                 this.updateSlotTransform(this.activeSlotKey);
             });
+        }
+        if (this.dom.btnRotDec) {
+            this.dom.btnRotDec.addEventListener('click', (e) => this.adjustRotation(this.activeSlotKey, e.shiftKey ? -2.5 : -0.5));
+        }
+        if (this.dom.btnRotInc) {
+            this.dom.btnRotInc.addEventListener('click', (e) => this.adjustRotation(this.activeSlotKey, e.shiftKey ? 2.5 : 0.5));
         }
         if (this.dom.btnResetRot) {
             this.dom.btnResetRot.addEventListener('click', () => {
@@ -384,6 +417,46 @@ export class ReferenceImageManager {
                 this.adjustScale(this.activeSlotKey, delta);
             }
         }, { passive: false, capture: true });
+
+        // Ajuste fino con teclado (Flechas, +, -, [, ]) cuando el panel de referencia está abierto
+        window.addEventListener('keydown', (e) => {
+            if (!this.dom.panel || this.dom.panel.style.display === 'none') return;
+            const slot = this.slots[this.activeSlotKey];
+            if (!slot || !slot.image || slot.locked) return;
+
+            // Ignorar si el foco está en un input de texto
+            const target = e.target;
+            if (target && (target.tagName === 'INPUT' && target.type !== 'range' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+                return;
+            }
+
+            const mult = e.shiftKey ? 5 : 1;
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                this.adjustPosX(this.activeSlotKey, -1 * mult);
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                this.adjustPosX(this.activeSlotKey, 1 * mult);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.adjustPosY(this.activeSlotKey, 1 * mult);
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.adjustPosY(this.activeSlotKey, -1 * mult);
+            } else if (e.key === '+' || e.key === '=') {
+                e.preventDefault();
+                this.adjustScale(this.activeSlotKey, e.shiftKey ? 0.05 : 0.01);
+            } else if (e.key === '-' || e.key === '_') {
+                e.preventDefault();
+                this.adjustScale(this.activeSlotKey, e.shiftKey ? -0.05 : -0.01);
+            } else if (e.key === '[' || e.key === '{') {
+                e.preventDefault();
+                this.adjustRotation(this.activeSlotKey, e.shiftKey ? -2.5 : -0.5);
+            } else if (e.key === ']' || e.key === '}') {
+                e.preventDefault();
+                this.adjustRotation(this.activeSlotKey, e.shiftKey ? 2.5 : 0.5);
+            }
+        });
     }
 
     _bindDragAndDrop() {
@@ -652,13 +725,48 @@ export class ReferenceImageManager {
         this.updateSlotTransform(slotKey);
     }
 
+    adjustOpacity(slotKey, delta) {
+        const slot = this.slots[slotKey];
+        if (!slot) return;
+        slot.opacity = Math.max(0.05, Math.min(1.0, Math.round((slot.opacity + delta) * 100) / 100));
+        if (this.dom.sliderOpacity) this.dom.sliderOpacity.value = Math.round(slot.opacity * 100);
+        if (this.dom.labelOpacity) this.dom.labelOpacity.textContent = `${Math.round(slot.opacity * 100)}%`;
+        this._applySlotMaterial(slotKey);
+    }
+
     adjustScale(slotKey, delta) {
         const slot = this.slots[slotKey];
         if (!slot || slot.locked) return;
-        slot.scale = Math.max(0.1, Math.min(4.0, slot.scale + delta));
+        slot.scale = Math.max(0.1, Math.min(4.0, Math.round((slot.scale + delta) * 100) / 100));
         if (this.dom.sliderScale) this.dom.sliderScale.value = Math.round(slot.scale * 100);
         if (this.dom.labelScale) this.dom.labelScale.textContent = `${Math.round(slot.scale * 100)}%`;
         this.updateSlotTransform(slotKey);
+    }
+
+    adjustPosX(slotKey, deltaSteps) {
+        const slot = this.slots[slotKey];
+        if (!slot || slot.locked) return;
+        const sensitivity = this._getSensitivity() || 0.02;
+        slot.offsetX += deltaSteps * sensitivity;
+        this.updateSlotTransform(slotKey);
+        this._syncSlidersFromSlot(slot);
+    }
+
+    adjustPosY(slotKey, deltaSteps) {
+        const slot = this.slots[slotKey];
+        if (!slot || slot.locked) return;
+        const sensitivity = this._getSensitivity() || 0.02;
+        slot.offsetY += deltaSteps * sensitivity;
+        this.updateSlotTransform(slotKey);
+        this._syncSlidersFromSlot(slot);
+    }
+
+    adjustRotation(slotKey, deltaDeg) {
+        const slot = this.slots[slotKey];
+        if (!slot || slot.locked) return;
+        slot.rotation = Math.max(-180, Math.min(180, Math.round((slot.rotation + deltaDeg) * 10) / 10));
+        this.updateSlotTransform(slotKey);
+        this._syncSlidersFromSlot(slot);
     }
 
     onViewChanged(viewName, isOrthographic) {
