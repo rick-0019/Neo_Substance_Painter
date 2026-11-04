@@ -1,4 +1,10 @@
 {
+  "name": "neo-substance-painter",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node check.js",
+    "check": "node check.js"
+  },
   "dependencies": {
     "puppeteer": "^25.10.0"
   }
