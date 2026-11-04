@@ -102,7 +102,8 @@ export class DecalSystem {
         this.painter = painter;
     }
 
-    setMode(mode) {
+    setMode(mode, preserveProjector = false) {
+        const prevMode = this.mode;
         this.mode = mode;
         if (this.textOptions) this.textOptions.mode = mode;
         if (mode === '2d' && window.papercraft?.active && typeof window.setUnfoldMode === 'function') {
@@ -172,7 +173,7 @@ export class DecalSystem {
                 const rotInput = document.getElementById('decal-rotation');
                 const rotLabel = document.getElementById('decal-rot-label');
                 const currentScalePct = Math.round((this.decal2D.width / this.decal2D.baseWidth) * 100);
-                if (scaleInput) scaleInput.value = Math.min(300, Math.max(10, currentScalePct));
+                if (scaleInput) scaleInput.value = Math.min(800, Math.max(5, currentScalePct));
                 const deg = Math.round((this.decal2D.rotation * 180 / Math.PI) % 360);
                 const normDeg = deg > 180 ? deg - 360 : (deg < -180 ? deg + 360 : deg);
                 if (rotInput) rotInput.value = normDeg;
@@ -196,8 +197,31 @@ export class DecalSystem {
             const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
 
             if (this.isActive) {
-                // Si cambiamos a 3D, sincronizar posición del proyector 3D desde las coordenadas 2D actuales
-                if (this.decal2D && this.mesh) {
+                const hasExisting3D = preserveProjector || (decal && decal.projectorPosition && (decal.mode === '3d' || prevMode !== '2d'));
+                if (hasExisting3D && decal && decal.projectorPosition) {
+                    this.projectorPosition.copy(decal.projectorPosition);
+                    if (decal.projectorNormal) this.projectorNormal.copy(decal.projectorNormal);
+                    if (decal.surfaceTangent) this.surfaceTangent = decal.surfaceTangent.clone();
+                    if (decal.surfaceBitangent) this.surfaceBitangent = decal.surfaceBitangent.clone();
+                    if ((!decal.worldPerPixelX || !decal.worldPerPixelY) && this.decal2D && this.mesh) {
+                        const u = this.decal2D.x / this.canvas.width;
+                        const v = 1 - (this.decal2D.y / this.canvas.height);
+                        const pt3D = this.find3DPointFromUV(u, v);
+                        if (pt3D && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
+                            const isShape = ['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line', 'curve', 'vector_container'].includes(decal.type);
+                            if (isShape) {
+                                decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
+                                decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
+                            }
+                        }
+                    }
+                    this.projectorRotation = decal.projectorRotation !== undefined ? decal.projectorRotation : (this.decal2D ? (this.decal2D.rotation || 0) : 0);
+                    const scalePct = (this.decal2D && this.decal2D.baseWidth)
+                        ? Math.round((this.decal2D.width / this.decal2D.baseWidth) * 100)
+                        : (decal.projectorScale || 100);
+                    this.projectorScale = Math.min(800, Math.max(5, scalePct)) || 100;
+                } else if (this.decal2D && this.mesh) {
+                    // Si cambiamos de 2D a 3D por primera vez, sincronizar posición del proyector 3D desde las coordenadas 2D actuales
                     const u = this.decal2D.x / this.canvas.width;
                     const v = 1 - (this.decal2D.y / this.canvas.height);
                     const pt3D = this.find3DPointFromUV(u, v);
@@ -208,10 +232,21 @@ export class DecalSystem {
                             this.surfaceTangent = pt3D.tangent.clone();
                             if (decal) decal.surfaceTangent = this.surfaceTangent.clone();
                         }
+                        if (pt3D.bitangent) {
+                            this.surfaceBitangent = pt3D.bitangent.clone();
+                            if (decal) decal.surfaceBitangent = this.surfaceBitangent.clone();
+                        }
+                        if (decal && (!decal.worldPerPixelX || !decal.worldPerPixelY) && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
+                            const isShape = ['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line', 'curve', 'vector_container'].includes(decal.type);
+                            if (isShape) {
+                                decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
+                                decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
+                            }
+                        }
                     }
                     this.projectorRotation = this.decal2D.rotation || 0;
                     const scalePct = Math.round((this.decal2D.width / this.decal2D.baseWidth) * 100);
-                    this.projectorScale = Math.min(300, Math.max(10, scalePct)) || 100;
+                    this.projectorScale = Math.min(800, Math.max(5, scalePct)) || 100;
                 }
 
                 const scaleInput = document.getElementById('decal-scale');
@@ -518,21 +553,63 @@ export class DecalSystem {
             }
         };
 
-        // Esquinas para escalar
+        // Esquinas para escalar proporcionalmente
         setNode('nw', -halfW,  halfH);
         setNode('ne',  halfW,  halfH);
         setNode('sw', -halfW, -halfH);
         setNode('se',  halfW, -halfH);
 
-        // Bordes para anchura/altura (solo si la calca es suficientemente amplia en pantalla: > 70px)
-        const showEdges = (size.x > 70 * pxWorld) && (size.y > 70 * pxWorld);
-        setNode('n', 0,  halfH, showEdges);
-        setNode('s', 0, -halfH, showEdges);
-        setNode('w', -halfW, 0, showEdges);
-        setNode('e',  halfW, 0, showEdges);
+        // Bordes para anchura/altura independiente (siempre disponibles en formas y calcas excepto curvas)
+        const showEdges = decal.type !== 'curve';
+        const offY = (size.x < 24 * pxWorld) ? handleSize * 0.85 : 0;
+        const offX = (size.y < 24 * pxWorld) ? handleSize * 0.85 : 0;
+        setNode('n', 0,  halfH + offY, showEdges);
+        setNode('s', 0, -halfH - offY, showEdges);
+        setNode('w', -halfW - offX, 0, showEdges);
+        setNode('e',  halfW + offX, 0, showEdges);
 
         // Nodo circular superior para rotación
-        setNode('rotate', 0, halfH + stemLen, true, true);
+        setNode('rotate', 0, halfH + offY + stemLen, true, true);
+    }
+
+    regenerateVectorShapeCanvas(decal, targetW, targetH, initPoints = null, initW = 0, initH = 0) {
+        if (!decal || !decal.shapeOptions || decal.type === 'text' || decal.shapeOptions.type === 'curve') return;
+        if (!window.painter || !window.painter.createShapeCanvas) return;
+
+        const s = decal.shapeOptions;
+        if (decal.type === 'vector_container' && initPoints && initW > 0 && initH > 0) {
+            const sx = targetW / initW;
+            const sy = targetH / initH;
+            s.points = initPoints.map(p => ({
+                x: Math.round(p.x * sx),
+                y: Math.round(p.y * sy)
+            }));
+        } else if (decal.type !== 'vector_container') {
+            const innerW = Math.max(10, Math.round(targetW));
+            const innerH = Math.max(10, Math.round(targetH));
+            const signX = (s.x2 !== undefined && s.x1 !== undefined && s.x2 < s.x1) ? -1 : 1;
+            const signY = (s.y2 !== undefined && s.y1 !== undefined && s.y2 < s.y1) ? -1 : 1;
+            s.width = innerW;
+            s.height = innerH;
+            s.x1 = signX < 0 ? innerW : 0;
+            s.y1 = signY < 0 ? innerH : 0;
+            s.x2 = signX < 0 ? 0 : innerW;
+            s.y2 = signY < 0 ? 0 : innerH;
+        }
+
+        const newCanvas = window.painter.createShapeCanvas(s);
+        if (newCanvas) {
+            decal.img = newCanvas;
+            this.currentDecalImage = newCanvas;
+            if (this.decal2D) {
+                this.decal2D.img = newCanvas;
+                this.decal2D.shapeOptions = { ...s };
+            }
+            if (this.decalTexture) {
+                this.decalTexture.image = newCanvas;
+                this.decalTexture.needsUpdate = true;
+            }
+        }
     }
 
     setupEvents() {
@@ -633,14 +710,14 @@ export class DecalSystem {
 
         btnScaleDec?.addEventListener('click', () => {
             if (!scaleInput) return;
-            scaleInput.value = Math.max(10, parseInt(scaleInput.value, 10) - 10);
+            scaleInput.value = Math.max(5, parseInt(scaleInput.value, 10) - 10);
             scaleInput.dispatchEvent(new Event('input'));
             scaleInput.dispatchEvent(new Event('change'));
         });
 
         btnScaleInc?.addEventListener('click', () => {
             if (!scaleInput) return;
-            scaleInput.value = Math.min(300, parseInt(scaleInput.value, 10) + 10);
+            scaleInput.value = Math.min(800, parseInt(scaleInput.value, 10) + 10);
             scaleInput.dispatchEvent(new Event('input'));
             scaleInput.dispatchEvent(new Event('change'));
         });
@@ -1099,8 +1176,11 @@ export class DecalSystem {
             if (valLabel) valLabel.textContent = `${val}%`;
             if (this.selectedDecalId) {
                 const scale = val / 100;
-                this.decal2D.width = Math.round(this.decal2D.baseWidth * scale);
-                this.decal2D.height = Math.round(this.decal2D.baseHeight * scale);
+                const oldW = this.decal2D.width;
+                const oldH = this.decal2D.height;
+                const oldPts = (this.decal2D.shapeOptions?.points) ? JSON.parse(JSON.stringify(this.decal2D.shapeOptions.points)) : null;
+                this.decal2D.width = Math.max(8, Math.round(this.decal2D.baseWidth * scale));
+                this.decal2D.height = Math.max(8, Math.round(this.decal2D.baseHeight * scale));
                 this.projectorScale = val;
                 const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
                 const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
@@ -1108,6 +1188,7 @@ export class DecalSystem {
                     decal.projectorScale = val;
                     decal.width = this.decal2D.width;
                     decal.height = this.decal2D.height;
+                    this.regenerateVectorShapeCanvas(decal, this.decal2D.width, this.decal2D.height, oldPts, oldW, oldH);
                 }
                 if (this.mode === '3d') {
                     this._doUpdatePreviewTransform();
@@ -1127,13 +1208,13 @@ export class DecalSystem {
         });
         btnShapeScaleDec?.addEventListener('click', () => {
             if (!shapeScaleInput) return;
-            shapeScaleInput.value = Math.max(10, parseInt(shapeScaleInput.value, 10) - 10);
+            shapeScaleInput.value = Math.max(5, parseInt(shapeScaleInput.value, 10) - 10);
             shapeScaleInput.dispatchEvent(new Event('input'));
             shapeScaleInput.dispatchEvent(new Event('change'));
         });
         btnShapeScaleInc?.addEventListener('click', () => {
             if (!shapeScaleInput) return;
-            shapeScaleInput.value = Math.min(300, parseInt(shapeScaleInput.value, 10) + 10);
+            shapeScaleInput.value = Math.min(800, parseInt(shapeScaleInput.value, 10) + 10);
             shapeScaleInput.dispatchEvent(new Event('input'));
             shapeScaleInput.dispatchEvent(new Event('change'));
         });
@@ -1247,10 +1328,10 @@ export class DecalSystem {
                     const hitObj = handleIntersects[0].object;
                     const hType = hitObj.userData.handleType || hitObj.parent?.userData?.handleType;
                     if (hType === 'move') {
-                        this.isDragging3D = true;
-                        this.isLocked = false;
-                        this.drag3DStart = { x: e.clientX, y: e.clientY };
-                        this.raycastSurface(e);
+                        // Iniciar preparación de movimiento conservando el offset exacto entre el clic y el centro de la figura (sin dar saltos)
+                        this.isDragging3D = false;
+                        this.isLocked = true;
+                        this.record3DDragOffset(e, rect);
                         view3d.style.cursor = 'grabbing';
                         try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
                         e.stopPropagation();
@@ -1261,18 +1342,35 @@ export class DecalSystem {
                         this.isDraggingGizmo = true;
                         this.gizmoHandleType = hType;
                         this.gizmoStartMouse = { x: e.clientX, y: e.clientY };
-                        this.gizmoInitialScale = this.projectorScale;
-                        this.gizmoInitialRotation = this.projectorRotation;
+                        this.gizmoInitialScale = this.projectorScale || 100;
+                        this.gizmoInitialRotation = this.projectorRotation || 0;
+                        this.gizmoInitialWidth = this.decal2D ? this.decal2D.width : 100;
+                        this.gizmoInitialHeight = this.decal2D ? this.decal2D.height : 100;
+                        this.gizmoInitialBaseWidth = this.decal2D ? this.decal2D.baseWidth : 100;
+                        this.gizmoInitialBaseHeight = this.decal2D ? this.decal2D.baseHeight : 100;
+                        this.gizmoInitialPoints = (this.decal2D?.shapeOptions?.points)
+                            ? JSON.parse(JSON.stringify(this.decal2D.shapeOptions.points))
+                            : null;
 
                         const projScreen = this.projectorPosition.clone().project(this.camera);
                         this.gizmoScreenCenter = {
                             x: ((projScreen.x + 1) / 2) * rect.width + rect.left,
                             y: ((-projScreen.y + 1) / 2) * rect.height + rect.top
                         };
-                        this.gizmoInitialDist = Math.hypot(e.clientX - this.gizmoScreenCenter.x, e.clientY - this.gizmoScreenCenter.y);
-                        this.gizmoInitialAngle = Math.atan2(e.clientY - this.gizmoScreenCenter.y, e.clientX - this.gizmoScreenCenter.x);
+                        const dx0 = e.clientX - this.gizmoScreenCenter.x;
+                        const dy0 = e.clientY - this.gizmoScreenCenter.y;
+                        this.gizmoInitialDist = Math.hypot(dx0, dy0);
+                        this.gizmoInitialAngle = Math.atan2(dy0, dx0);
+                        this.gizmoAxisDir = this.gizmoInitialDist > 1
+                            ? { x: dx0 / this.gizmoInitialDist, y: dy0 / this.gizmoInitialDist }
+                            : { x: 1, y: 0 };
 
-                        view3d.style.cursor = (hType === 'rotate') ? 'crosshair' : 'nwse-resize';
+                        if (hType === 'rotate') view3d.style.cursor = 'crosshair';
+                        else if (['e', 'w'].includes(hType)) view3d.style.cursor = 'ew-resize';
+                        else if (['n', 's'].includes(hType)) view3d.style.cursor = 'ns-resize';
+                        else if (['ne', 'sw'].includes(hType)) view3d.style.cursor = 'nesw-resize';
+                        else view3d.style.cursor = 'nwse-resize';
+
                         try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
                         e.stopPropagation();
                         e.stopImmediatePropagation();
@@ -1283,7 +1381,7 @@ export class DecalSystem {
 
             // 2. Raycast a la superficie del modelo 3D
             const intersects = this.mesh ? this.raycaster.intersectObject(this.mesh, true) : [];
-            const hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
+            const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv && i.face);
 
             if (hit) {
                 const clickedDecal = this.findDecalAt3D(hit);
@@ -1291,7 +1389,7 @@ export class DecalSystem {
                     this.selectDecal(clickedDecal, '3d');
                     this.isLocked = true;
                     this.isDragging3D = false;
-                    this.drag3DStart = { x: e.clientX, y: e.clientY };
+                    this.record3DDragOffset(e, rect, hit);
                     view3d.style.cursor = 'grab';
                     try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
                     e.stopPropagation();
@@ -1299,16 +1397,16 @@ export class DecalSystem {
                 } else if (clickedDecal && clickedDecal.id === this.selectedDecalId) {
                     this.isLocked = true;
                     this.isDragging3D = false;
-                    this.drag3DStart = { x: e.clientX, y: e.clientY };
+                    this.record3DDragOffset(e, rect, hit);
                     view3d.style.cursor = 'grab';
                     try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
                     e.stopPropagation();
                     return;
                 } else if (this.isActive && currentBrushMode !== 'select') {
                     this.setMode('3d');
-                    this.isLocked = false;
-                    this.isDragging3D = true;
-                    this.raycastSurface(e);
+                    this.isLocked = true;
+                    this.isDragging3D = false;
+                    this.record3DDragOffset(e, rect, hit);
                     view3d.style.cursor = 'grabbing';
                     try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
                     e.stopPropagation();
@@ -1324,7 +1422,7 @@ export class DecalSystem {
         });
 
         view3d.addEventListener('pointermove', (e) => {
-            // A. Manipulación con nodos 3D (Escalado / Rotación)
+            // A. Manipulación con nodos 3D (Escalado Proporcional, Ancho/Alto Independiente y Rotación)
             if (this.isDraggingGizmo) {
                 const activeLayer = this.layerManager?.getActiveLayer();
                 const decal = activeLayer?.getDecal(this.selectedDecalId);
@@ -1360,47 +1458,99 @@ export class DecalSystem {
                         this.update3DUnwrapForDecal(decal, true);
                     }
                     view3d.style.cursor = 'crosshair';
+                } else if (['e', 'w'].includes(this.gizmoHandleType)) {
+                    // Variar solo el ANCHO (Eje horizontal local de la forma/calca)
+                    const dx = e.clientX - this.gizmoScreenCenter.x;
+                    const dy = e.clientY - this.gizmoScreenCenter.y;
+                    const projDist = Math.abs(dx * this.gizmoAxisDir.x + dy * this.gizmoAxisDir.y);
+                    const ratioX = Math.max(0.05, projDist / Math.max(5, this.gizmoInitialDist));
+
+                    this.decal2D.width = Math.max(8, Math.round(this.gizmoInitialWidth * ratioX));
+                    this.decal2D.height = this.gizmoInitialHeight;
+
+                    const curScaleFactor = Math.max(0.05, (this.projectorScale || 100) / 100);
+                    this.decal2D.baseWidth = Math.max(8, Math.round(this.decal2D.width / curScaleFactor));
+
+                    if (decal) {
+                        decal.width = this.decal2D.width;
+                        decal.height = this.decal2D.height;
+                        decal.baseWidth = this.decal2D.baseWidth;
+                        this.regenerateVectorShapeCanvas(decal, this.decal2D.width, this.decal2D.height, this.gizmoInitialPoints, this.gizmoInitialWidth, this.gizmoInitialHeight);
+                    }
+                    this._doUpdatePreviewTransform();
+                    if (decal) {
+                        this.update3DUnwrapForDecal(decal, true);
+                    }
+                    view3d.style.cursor = 'ew-resize';
+                } else if (['n', 's'].includes(this.gizmoHandleType)) {
+                    // Variar solo la ALTURA (Eje vertical local de la forma/calca)
+                    const dx = e.clientX - this.gizmoScreenCenter.x;
+                    const dy = e.clientY - this.gizmoScreenCenter.y;
+                    const projDist = Math.abs(dx * this.gizmoAxisDir.x + dy * this.gizmoAxisDir.y);
+                    const ratioY = Math.max(0.05, projDist / Math.max(5, this.gizmoInitialDist));
+
+                    this.decal2D.height = Math.max(8, Math.round(this.gizmoInitialHeight * ratioY));
+                    this.decal2D.width = this.gizmoInitialWidth;
+
+                    const curScaleFactor = Math.max(0.05, (this.projectorScale || 100) / 100);
+                    this.decal2D.baseHeight = Math.max(8, Math.round(this.decal2D.height / curScaleFactor));
+
+                    if (decal) {
+                        decal.width = this.decal2D.width;
+                        decal.height = this.decal2D.height;
+                        decal.baseHeight = this.decal2D.baseHeight;
+                        this.regenerateVectorShapeCanvas(decal, this.decal2D.width, this.decal2D.height, this.gizmoInitialPoints, this.gizmoInitialWidth, this.gizmoInitialHeight);
+                    }
+                    this._doUpdatePreviewTransform();
+                    if (decal) {
+                        this.update3DUnwrapForDecal(decal, true);
+                    }
+                    view3d.style.cursor = 'ns-resize';
                 } else {
+                    // Esquinas (nw, ne, sw, se): Escalado proporcional sin tope de 300%
                     const curDist = Math.hypot(e.clientX - this.gizmoScreenCenter.x, e.clientY - this.gizmoScreenCenter.y);
-                    if (this.gizmoInitialDist > 5) {
-                        const ratio = curDist / this.gizmoInitialDist;
-                        const newScale = Math.max(10, Math.min(300, Math.round(this.gizmoInitialScale * ratio)));
+                    if (this.gizmoInitialDist > 4) {
+                        const ratio = Math.max(0.05, curDist / this.gizmoInitialDist);
+                        const newScale = Math.max(5, Math.min(2000, Math.round(this.gizmoInitialScale * ratio)));
                         this.projectorScale = newScale;
 
                         const scaleInput = document.getElementById('decal-scale');
-                        if (scaleInput) scaleInput.value = newScale;
+                        if (scaleInput) scaleInput.value = Math.min(800, newScale);
                         const shapeScale = document.getElementById('shape-scale');
                         const shapeScaleVal = document.getElementById('shape-scale-val');
-                        if (shapeScale) shapeScale.value = newScale;
+                        if (shapeScale) shapeScale.value = Math.min(800, newScale);
                         if (shapeScaleVal) shapeScaleVal.textContent = `${newScale}%`;
 
-                        this._doUpdatePreviewTransform();
-                        const scale = this.projectorScale / 100;
-                        this.decal2D.width = Math.round(this.decal2D.baseWidth * scale);
-                        this.decal2D.height = Math.round(this.decal2D.baseHeight * scale);
+                        this.decal2D.width = Math.max(8, Math.round(this.gizmoInitialWidth * ratio));
+                        this.decal2D.height = Math.max(8, Math.round(this.gizmoInitialHeight * ratio));
+
                         if (decal) {
                             decal.projectorScale = this.projectorScale;
                             decal.width = this.decal2D.width;
                             decal.height = this.decal2D.height;
+                            this.regenerateVectorShapeCanvas(decal, this.decal2D.width, this.decal2D.height, this.gizmoInitialPoints, this.gizmoInitialWidth, this.gizmoInitialHeight);
+                        }
+                        this._doUpdatePreviewTransform();
+                        if (decal) {
                             this.update3DUnwrapForDecal(decal, true);
                         }
                     }
-                    view3d.style.cursor = 'nwse-resize';
+                    view3d.style.cursor = ['ne', 'sw'].includes(this.gizmoHandleType) ? 'nesw-resize' : 'nwse-resize';
                 }
                 return;
             }
 
-            // B. Arrastre de la pegatina sobre la superficie 3D (solo si se arrastra intencionalmente > 5px)
+            // B. Arrastre de la pegatina sobre la superficie 3D (solo si se arrastra intencionalmente > 3px)
             if (this.drag3DStart && !this.isDraggingGizmo) {
                 const dist = Math.hypot(e.clientX - this.drag3DStart.x, e.clientY - this.drag3DStart.y);
-                if (dist > 5) {
+                if (dist > 3) {
                     this.isDragging3D = true;
                     this.isLocked = false;
                 }
             }
 
             if (this.isDragging3D && this.mode === '3d') {
-                this.raycastSurface(e);
+                this.raycastSurface(e, true);
                 view3d.style.cursor = 'grabbing';
                 return;
             }
@@ -1464,6 +1614,8 @@ export class DecalSystem {
             }
             if (this.drag3DStart) {
                 this.drag3DStart = null;
+                this.drag3DScreenOffset = null;
+                this.drag3DWorldOffset = null;
                 try { view3d.releasePointerCapture(e.pointerId); } catch (_) {}
             }
             if (this.isDragging3D) {
@@ -1798,25 +1950,38 @@ export class DecalSystem {
                         normal = new THREE.Vector3().crossVectors(e1, e2).normalize().transformDirection(m.matrixWorld).normalize();
                     }
 
-                    if (this.camera) {
-                        const camDir = new THREE.Vector3().subVectors(this.camera.position, point).normalize();
-                        if (normal.dot(camDir) < 0) normal.negate();
-                    }
+                    // La normal geométrica exterior de la superficie define la orientación natural del proyector.
+                    // No se invierte respecto a la cámara para evitar culling de caras válidas al orbitar la vista.
 
                     const du1 = uB - uA, dv1 = vB - vA;
                     const du2 = uC - uA, dv2 = vC - vA;
                     const detUV = du1 * dv2 - du2 * dv1;
                     let tangent = null;
+                    let bitangent = null;
+                    let worldUnitsPerU = 0;
+                    let worldUnitsPerV = 0;
                     if (Math.abs(detUV) > 1e-9) {
-                        tangent = new THREE.Vector3()
+                        const originWorld = new THREE.Vector3().setFromMatrixPosition(m.matrixWorld);
+                        const dPdu = new THREE.Vector3()
                             .addScaledVector(e1, dv2)
                             .addScaledVector(e2, -dv1)
                             .multiplyScalar(1 / detUV)
-                            .transformDirection(m.matrixWorld)
-                            .normalize();
+                            .applyMatrix4(m.matrixWorld)
+                            .sub(originWorld);
+                        worldUnitsPerU = dPdu.length();
+                        tangent = dPdu.clone().normalize();
+
+                        const dPdv = new THREE.Vector3()
+                            .addScaledVector(e1, -du2)
+                            .addScaledVector(e2, du1)
+                            .multiplyScalar(1 / detUV)
+                            .applyMatrix4(m.matrixWorld)
+                            .sub(originWorld);
+                        worldUnitsPerV = dPdv.length();
+                        bitangent = dPdv.clone().normalize();
                     }
 
-                    return { point, normal, tangent, mesh: m };
+                    return { point, normal, tangent, bitangent, worldUnitsPerU, worldUnitsPerV, mesh: m };
                 }
             }
         }
@@ -1869,34 +2034,64 @@ export class DecalSystem {
     }
 
     findDecalAt3D(hit) {
-        if (!hit) return null;
-        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-        if (!activeLayer || !activeLayer.decals || activeLayer.decals.length === 0) return null;
+        if (!hit || !this.layerManager) return null;
 
-        // 1. Comprobación exacta por UV sobre el lienzo y máscaras desempaquetadas
-        if (hit.uv) {
-            const uvX = hit.uv.x * this.canvas.width;
-            const uvY = (1 - hit.uv.y) * this.canvas.height;
-            const byUV = this.findDecalAt(uvX, uvY);
-            if (byUV) return byUV;
-        }
+        const checkLayerDecals3D = (layer) => {
+            if (!layer || !layer.decals || layer.decals.length === 0) return null;
 
-        // 2. Respaldo por distancia 3D al proyector
-        if (hit.point) {
-            const baseSize = this.getModelBaseSize();
-            for (let i = activeLayer.decals.length - 1; i >= 0; i--) {
-                const d = activeLayer.decals[i];
-                if (d.visible === false) continue;
-                if (d.projectorPosition) {
-                    const radius = baseSize * ((d.projectorScale || 100) / 100) * 0.5;
-                    if (hit.point.distanceTo(d.projectorPosition) <= radius) {
+            // 1. Comprobación exacta por UV sobre el lienzo y máscaras desempaquetadas
+            if (hit.uv) {
+                const uvX = hit.uv.x * this.canvas.width;
+                const uvY = (1 - hit.uv.y) * this.canvas.height;
+                const hitPad = 8;
+                for (let i = layer.decals.length - 1; i >= 0; i--) {
+                    const d = layer.decals[i];
+                    if (d.visible === false) continue;
+                    if (d.mode === '3d' && d.unwrappedCanvas && d.unwrappedCtx && d.hasValidUnwrap !== false) {
+                        const px = Math.floor(uvX);
+                        const py = Math.floor(uvY);
+                        if (px >= 0 && px < d.unwrappedCanvas.width && py >= 0 && py < d.unwrappedCanvas.height) {
+                            try {
+                                const pixel = d.unwrappedCtx.getImageData(px, py, 1, 1).data;
+                                if (pixel[3] > 10) return d;
+                            } catch (_) {}
+                        }
+                    }
+                    const dx = uvX - d.x;
+                    const dy = uvY - d.y;
+                    const cos = Math.cos(-d.rotation);
+                    const sin = Math.sin(-d.rotation);
+                    const lx = dx * cos - dy * sin;
+                    const ly = dx * sin + dy * cos;
+                    const halfW = (d.width || 20) / 2 + hitPad;
+                    const halfH = (d.height || 20) / 2 + hitPad;
+                    if (Math.abs(lx) <= halfW && Math.abs(ly) <= halfH) {
                         return d;
                     }
                 }
             }
-        }
 
-        return null;
+            // 2. Respaldo por distancia 3D al proyector
+            if (hit.point) {
+                const baseSize = this.getModelBaseSize();
+                for (let i = layer.decals.length - 1; i >= 0; i--) {
+                    const d = layer.decals[i];
+                    if (d.visible === false) continue;
+                    if (d.projectorPosition) {
+                        const radius = baseSize * ((d.projectorScale || 100) / 100) * 0.5;
+                        if (hit.point.distanceTo(d.projectorPosition) <= radius) {
+                            return d;
+                        }
+                    }
+                }
+            }
+            return null;
+        };
+
+        // Aislamiento estricto de capas: solo seleccionar/detectar objetos de la capa activa.
+        // El cambio de capa siempre lo hace el usuario manualmente desde el panel de capas.
+        const activeLayer = this.layerManager.getActiveLayer();
+        return checkLayerDecals3D(activeLayer);
     }
 
     selectDecal(decal, preferredMode = null) {
@@ -1979,6 +2174,9 @@ export class DecalSystem {
             if (decal.surfaceTangent) {
                 this.surfaceTangent = decal.surfaceTangent.clone();
             }
+            if (decal.surfaceBitangent) {
+                this.surfaceBitangent = decal.surfaceBitangent.clone();
+            }
         } else if (this.mesh) {
             const u = decal.x / this.canvas.width;
             const v = 1 - (decal.y / this.canvas.height);
@@ -1990,21 +2188,21 @@ export class DecalSystem {
                     this.surfaceTangent = pt3D.tangent.clone();
                     decal.surfaceTangent = this.surfaceTangent.clone();
                 }
+                if (pt3D.bitangent) {
+                    this.surfaceBitangent = pt3D.bitangent.clone();
+                    decal.surfaceBitangent = this.surfaceBitangent.clone();
+                }
+                if (!decal.worldPerPixelX && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
+                    decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
+                    decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
+                }
                 this.projectorScale = Math.round((decal.width / (decal.baseWidth || decal.width)) * 100) || 100;
                 this.projectorRotation = decal.rotation || 0;
             }
         }
 
-        // Asegurar que projectorNormal apunte hacia la cara visible de la cámara
-        if (this.camera && this.projectorPosition && this.projectorNormal) {
-            const camDir = new THREE.Vector3().subVectors(this.camera.position, this.projectorPosition).normalize();
-            if (this.projectorNormal.dot(camDir) < 0) {
-                this.projectorNormal.negate();
-                if (decal) decal.projectorNormal = this.projectorNormal.clone();
-            }
-        }
-
-        this.setMode(this.mode);
+        // La normal del proyector permanece fija a la superficie natural para garantizar coherencia en todas las vistas
+        this.setMode(this.mode, !!decal.projectorPosition);
         this.allowPassthrough = decal.allowPassthrough !== undefined ? !!decal.allowPassthrough : false;
         this.syncPassthroughUI();
 
@@ -2082,7 +2280,7 @@ export class DecalSystem {
             const rotLabel = document.getElementById('decal-rot-label');
             if (scaleInput && decal.baseWidth) {
                 const scalePct = Math.round((decal.width / decal.baseWidth) * 100);
-                scaleInput.value = Math.min(300, Math.max(10, scalePct));
+                scaleInput.value = Math.min(800, Math.max(10, scalePct));
             }
             if (rotInput && rotLabel) {
                 const deg = Math.round((decal.rotation * 180 / Math.PI) % 360);
@@ -2185,7 +2383,7 @@ export class DecalSystem {
                 }
                 if (shapeScaleInput && decal.baseWidth) {
                     const scalePct = Math.round((decal.width / decal.baseWidth) * 100);
-                    shapeScaleInput.value = Math.min(300, Math.max(10, scalePct));
+                    shapeScaleInput.value = Math.min(800, Math.max(10, scalePct));
                     const scaleVal = document.getElementById('shape-scale-val');
                     if (scaleVal) scaleVal.textContent = `${shapeScaleInput.value}%`;
                 }
@@ -2415,7 +2613,7 @@ export class DecalSystem {
             return null;
         };
 
-        // Aislamiento estricto de capas: solo seleccionar objetos de la capa activa.
+        // Aislamiento estricto de capas: solo seleccionar/detectar objetos de la capa activa.
         // El cambio de capa siempre lo hace el usuario manualmente desde el panel de capas.
         const activeLayer = this.layerManager.getActiveLayer();
         return checkLayerDecals(activeLayer);
@@ -2610,6 +2808,28 @@ export class DecalSystem {
         if (opts) Object.assign(this.textOptions, opts);
         const o = this.textOptions;
 
+        // Vía rápida instantánea cuando solo se modifica el giro (slider o botones +/-)
+        if (opts && Object.keys(opts).length === 1 && opts.rotation !== undefined && this.selectedDecalId && this.decal2D) {
+            const rad = (o.rotation * Math.PI) / 180;
+            this.decal2D.rotation = rad;
+            this.projectorRotation = rad;
+            const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+            const textObj = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+            if (textObj) {
+                textObj.rotation = rad;
+                textObj.projectorRotation = rad;
+                if (textObj.textOptions) textObj.textOptions.rotation = o.rotation;
+            }
+            if (this.mode === '3d') {
+                this._doUpdatePreviewTransform();
+                if (textObj) this.update3DUnwrapForDecal(textObj, true);
+            } else {
+                this.syncCurrentDecalToObject(true);
+                this.render2DPreview();
+            }
+            return;
+        }
+
         // Renderizado vectorial de texto en canvas offscreen de alta fidelidad
         const offscreen = document.createElement('canvas');
         const ctx = offscreen.getContext('2d');
@@ -2712,6 +2932,7 @@ export class DecalSystem {
                     baseWidth: target2DWidth,
                     baseHeight: target2DHeight,
                     rotation: (o.rotation * Math.PI) / 180,
+                    projectorRotation: (o.rotation * Math.PI) / 180,
                     flipH: this.decal2D ? !!this.decal2D.flipH : false,
                     flipV: this.decal2D ? !!this.decal2D.flipV : false,
                     opacity: 1.0,
@@ -2730,6 +2951,7 @@ export class DecalSystem {
                 textObj.baseWidth = target2DWidth;
                 textObj.baseHeight = target2DHeight;
                 textObj.rotation = (o.rotation * Math.PI) / 180;
+                textObj.projectorRotation = (o.rotation * Math.PI) / 180;
                 if (this.decal2D) {
                     textObj.x = this.decal2D.x;
                     textObj.y = this.decal2D.y;
@@ -2774,7 +2996,7 @@ export class DecalSystem {
 
         // Posicionamiento 3D inicial SOLO si estamos en modo 3D y aún no se ha proyectado
         if (this.mode === '3d') {
-            if (!this.lastHit && this.mesh) {
+            if (!this.lastHit && (!textObj || !textObj.projectorPosition) && this.mesh) {
                 const box = new THREE.Box3().setFromObject(this.mesh);
                 const center = box.getCenter(new THREE.Vector3());
                 const size = box.getSize(new THREE.Vector3());
@@ -2814,7 +3036,7 @@ export class DecalSystem {
             }
         }
 
-        this.setMode(this.mode || '2d');
+        this.setMode(this.mode || '2d', true);
         this.updatePreviewTransform();
         this.updateFlipUI();
         this.render2DPreview();
@@ -2860,24 +3082,74 @@ export class DecalSystem {
         this.canvas.style.cursor = 'default';
     }
 
-    raycastSurface(event) {
+    record3DDragOffset(event, rect = null, existingHit = null) {
+        this.drag3DStart = { x: event.clientX, y: event.clientY };
+        const domRect = rect || this.renderer.domElement.getBoundingClientRect();
+        if (this.camera && this.projectorPosition) {
+            const projScreen = this.projectorPosition.clone().project(this.camera);
+            const centerScreenX = ((projScreen.x + 1) / 2) * domRect.width + domRect.left;
+            const centerScreenY = ((-projScreen.y + 1) / 2) * domRect.height + domRect.top;
+            this.drag3DScreenOffset = {
+                x: centerScreenX - event.clientX,
+                y: centerScreenY - event.clientY
+            };
+        } else {
+            this.drag3DScreenOffset = { x: 0, y: 0 };
+        }
+
+        let hit = existingHit;
+        if (!hit && this.mesh && this.camera) {
+            this.mouse.x = ((event.clientX - domRect.left) / domRect.width) * 2 - 1;
+            this.mouse.y = -((event.clientY - domRect.top) / domRect.height) * 2 + 1;
+            this.raycaster.setFromCamera(this.mouse, this.camera);
+            const intersects = this.raycaster.intersectObject(this.mesh, true);
+            hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv && i.face);
+        }
+        this.drag3DWorldOffset = (hit && this.projectorPosition)
+            ? this.projectorPosition.clone().sub(hit.point)
+            : new THREE.Vector3();
+    }
+
+    raycastSurface(event, useDragOffset = false) {
         if (!this.mesh) return;
 
         const rect = this.renderer.domElement.getBoundingClientRect();
-        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        const offX = (useDragOffset && this.drag3DScreenOffset) ? this.drag3DScreenOffset.x : 0;
+        const offY = (useDragOffset && this.drag3DScreenOffset) ? this.drag3DScreenOffset.y : 0;
+        const targetClientX = event.clientX + offX;
+        const targetClientY = event.clientY + offY;
+
+        this.mouse.x = ((targetClientX - rect.left) / rect.width) * 2 - 1;
+        this.mouse.y = -((targetClientY - rect.top) / rect.height) * 2 + 1;
 
         this.raycaster.setFromCamera(this.mouse, this.camera);
-        const intersects = this.raycaster.intersectObject(this.mesh, true);
-        const hit = intersects.find(i => i.object.isMesh && i.uv && i.face);
+        let intersects = this.raycaster.intersectObject(this.mesh, true);
+        let hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv && i.face);
+        let usedFallbackOffset = false;
+
+        // Si el centro de la figura sale ligeramente del borde de la malla pero el cursor sigue sobre el modelo, usar offset 3D
+        if (!hit && useDragOffset) {
+            this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            this.raycaster.setFromCamera(this.mouse, this.camera);
+            intersects = this.raycaster.intersectObject(this.mesh, true);
+            hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv && i.face);
+            usedFallbackOffset = !!hit;
+        }
 
         if (hit) {
             this.lastHit = hit;
-            const tangent = this.getSurfaceTangentFromHit(hit);
-            if (tangent) {
-                this.surfaceTangent = tangent;
+            if (!useDragOffset || !this.surfaceTangent) {
+                const tangent = this.getSurfaceTangentFromHit(hit);
+                if (tangent) {
+                    this.surfaceTangent = tangent;
+                }
             }
-            this.projectorPosition.copy(hit.point);
+            if (usedFallbackOffset && this.drag3DWorldOffset) {
+                this.projectorPosition.copy(hit.point).add(this.drag3DWorldOffset);
+            } else {
+                this.projectorPosition.copy(hit.point);
+            }
             let normal = hit.face.normal.clone();
             if (hit.object.geometry && hit.object.geometry.attributes.normal) {
                 const normAttr = hit.object.geometry.attributes.normal;
@@ -2929,9 +3201,11 @@ export class DecalSystem {
         this.decal2D.x = hit.uv.x * w;
         this.decal2D.y = (1 - hit.uv.y) * h;
 
-        const scale = (this.projectorScale || 100) / 100;
-        this.decal2D.width = Math.round(this.decal2D.baseWidth * scale);
-        this.decal2D.height = Math.round(this.decal2D.baseHeight * scale);
+        if (!this.decal2D.width || !this.decal2D.height) {
+            const scale = (this.projectorScale || 100) / 100;
+            this.decal2D.width = Math.round(this.decal2D.baseWidth * scale);
+            this.decal2D.height = Math.round(this.decal2D.baseHeight * scale);
+        }
         this.decal2D.rotation = this.projectorRotation || 0;
 
         if (this.mode === '2d') {
@@ -2995,28 +3269,47 @@ export class DecalSystem {
         const angleQuat = new THREE.Quaternion().setFromAxisAngle(zAxis, -this.projectorRotation);
         const finalQuat = angleQuat.multiply(baseQuat);
 
-        // 2. Escala con relación de aspecto
+        // 2. Escala exacta 1:1 en unidades del mundo 3D con soporte independiente de ancho y alto
         const baseSize = this.getModelBaseSize();
-        const finalScale = baseSize * (this.projectorScale / 100);
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        const activeDecal = (activeLayer && this.selectedDecalId) ? activeLayer.getDecal(this.selectedDecalId) : null;
 
-        let aspect = 1;
-        if (this.currentDecalImage && this.currentDecalImage.height > 0) {
-            aspect = this.currentDecalImage.width / this.currentDecalImage.height;
-        }
+        let scaleX = baseSize;
+        let scaleY = baseSize;
 
-        let scaleX = finalScale;
-        let scaleY = finalScale;
-        if (aspect >= 1) {
-            scaleY = finalScale / aspect;
+        if (activeDecal && activeDecal.worldPerPixelX > 0 && activeDecal.worldPerPixelY > 0 && this.decal2D && this.decal2D.width > 0 && this.decal2D.height > 0) {
+            scaleX = this.decal2D.width * activeDecal.worldPerPixelX;
+            scaleY = this.decal2D.height * activeDecal.worldPerPixelY;
+        } else if (this.decal2D && this.decal2D.width > 0 && this.decal2D.height > 0) {
+            if (activeDecal && !activeDecal.initialBaseMax) {
+                activeDecal.initialBaseMax = Math.max(1, this.decal2D.baseWidth || this.decal2D.width, this.decal2D.baseHeight || this.decal2D.height);
+            }
+            const initMax = (activeDecal && activeDecal.initialBaseMax)
+                ? activeDecal.initialBaseMax
+                : Math.max(1, this.decal2D.baseWidth || this.decal2D.width, this.decal2D.baseHeight || this.decal2D.height);
+            const wpp = baseSize / initMax;
+            scaleX = this.decal2D.width * wpp;
+            scaleY = this.decal2D.height * wpp;
         } else {
-            scaleX = finalScale * aspect;
+            const finalScale = baseSize * (this.projectorScale / 100);
+            let aspect = 1;
+            if (this.currentDecalImage && this.currentDecalImage.height > 0) {
+                aspect = this.currentDecalImage.width / this.currentDecalImage.height;
+            }
+            scaleX = finalScale;
+            scaleY = finalScale;
+            if (aspect >= 1) {
+                scaleY = finalScale / aspect;
+            } else {
+                scaleX = finalScale * aspect;
+            }
         }
 
-        // Profundidad óptima: suficiente para abrazar la curvatura del fuselaje sin atravesar el objeto.
-        // Si allowPassthrough es false, limitamos estrictamente la caja para no invadir el grosor del modelo.
+        // Profundidad generosa para abrazar la curvatura completa del fuselaje/góndola sin recortar los extremos;
+        // el backface culling por normal en el shader ya garantiza que nunca atraviese caras opuestas si allowPassthrough es false.
         const depth = this.allowPassthrough
-            ? Math.max(scaleX, scaleY) * 3.0
-            : Math.max(Math.min(scaleX, scaleY) * 0.45, Math.max(scaleX, scaleY) * 0.15);
+            ? Math.max(scaleX, scaleY, baseSize) * 4.0
+            : Math.max(scaleX, scaleY, baseSize) * 1.5;
         const size = new THREE.Vector3(scaleX, scaleY, depth);
         const orientation = new THREE.Euler().setFromQuaternion(finalQuat);
 
@@ -3191,18 +3484,12 @@ export class DecalSystem {
                 void main() {
                     // Modo 1 cara (Profesional / Sin traspasar):
                     if (uAllowPassthrough < 0.5) {
-                        // 1. Backface culling estricto: descartar caras que miran hacia atrás, opuestas o perpendiculares
-                        if (dot(vWorldNormal, uProjectorNormal) < 0.05) discard;
+                        // Descartar caras netamente opuestas (en la espalda de la superficie)
+                        if (dot(vWorldNormal, uProjectorNormal) < -0.1) discard;
                     }
 
                     vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
                     if (abs(p.x) > 0.5 || abs(p.y) > 0.5 || abs(p.z) > 0.5) discard;
-
-                    // 2. Control de penetración en profundidad (Z-Culling superficial):
-                    // p.z = 0 es la superficie exterior; p.z < 0 es hacia el interior del modelo.
-                    if (uAllowPassthrough < 0.5) {
-                        if (p.z < -0.25) discard;
-                    }
 
                     vec2 decalUV = vec2(p.x + 0.5, p.y + 0.5);
                     vec4 col = texture2D(uDecalTexture, decalUV);
@@ -3235,6 +3522,14 @@ export class DecalSystem {
         if (!decal || !decal.img || !this.renderer || !this.mesh) return;
 
         this.initPreviewBake();
+
+        // Asegurar que this.decalTexture apunte a la imagen del decal y esté sincronizada en GPU
+        if (!this.decalTexture || this.decalTexture.image !== decal.img) {
+            if (this.decalTexture) this.decalTexture.dispose();
+            this.decalTexture = new THREE.Texture(decal.img);
+            this.decalTexture.colorSpace = THREE.SRGBColorSpace;
+        }
+        this.decalTexture.needsUpdate = true;
 
         const w = this.canvas ? this.canvas.width : 2048;
         const h = this.canvas ? this.canvas.height : 2048;
@@ -3289,8 +3584,23 @@ export class DecalSystem {
         }
 
         this.renderer.readRenderTargetPixels(this.previewRenderTarget, 0, 0, w, h, this.previewPixelBuffer);
-        const imgData = new ImageData(new Uint8ClampedArray(this.previewPixelBuffer.buffer), w, h);
-        decal.unwrappedCtx.putImageData(imgData, 0, 0);
+
+        let hasPixels = false;
+        const buf = this.previewPixelBuffer;
+        for (let i = 3; i < buf.length; i += 4) {
+            if (buf[i] > 10) {
+                hasPixels = true;
+                break;
+            }
+        }
+
+        if (hasPixels) {
+            const imgData = new ImageData(new Uint8ClampedArray(this.previewPixelBuffer.buffer), w, h);
+            decal.unwrappedCtx.putImageData(imgData, 0, 0);
+            decal.hasValidUnwrap = true;
+        } else {
+            decal.hasValidUnwrap = false;
+        }
 
         decal.mode = '3d';
         decal.projectorPosition = this.projectorPosition.clone();
@@ -3384,8 +3694,8 @@ export class DecalSystem {
             handleRadius = 5.5;
         }
 
-        // Solo mostrar los 4 nodos intermedios (n, s, w, e) si la calca es grande (>= 70px) y NO es curva Bézier
-        const showEdgeHandles = d.type !== 'curve' && d.width >= 70 && d.height >= 70;
+        // Mostrar siempre los 4 nodos intermedios (n, s, w, e) para variar ancho/alto independientemente (salvo en curvas Bézier)
+        const showEdgeHandles = d.type !== 'curve';
 
         const drawHandle = (hx, hy, isRotate = false) => {
             if (isRotate) {
@@ -3603,14 +3913,22 @@ export class DecalSystem {
             }
         }
 
-        // 6. Esquinas (nw, ne, sw, se) - Escala proporcional
+        // 6. Nodos del medio (n, s, w, e) para variar ancho/alto independientemente (evaluados antes que las esquinas si está en el centro del borde)
+        if (d.type !== 'curve') {
+            if (Math.hypot(lx, ly - (-halfH)) <= handleHitTol && Math.abs(lx) < Math.max(8, halfW * 0.6)) return 'n';
+            if (Math.hypot(lx, ly - ( halfH)) <= handleHitTol && Math.abs(lx) < Math.max(8, halfW * 0.6)) return 's';
+            if (Math.hypot(lx - (-halfW), ly) <= handleHitTol && Math.abs(ly) < Math.max(8, halfH * 0.6)) return 'w';
+            if (Math.hypot(lx - ( halfW), ly) <= handleHitTol && Math.abs(ly) < Math.max(8, halfH * 0.6)) return 'e';
+        }
+
+        // 7. Esquinas (nw, ne, sw, se) - Escala proporcional
         if (Math.hypot(lx - (-halfW), ly - (-halfH)) <= handleHitTol) return 'nw';
         if (Math.hypot(lx - ( halfW), ly - (-halfH)) <= handleHitTol) return 'ne';
         if (Math.hypot(lx - (-halfW), ly - ( halfH)) <= handleHitTol) return 'sw';
         if (Math.hypot(lx - ( halfW), ly - ( halfH)) <= handleHitTol) return 'se';
 
-        // 7. Nodos del medio (n, s, w, e) - Solo si la calca es amplia y NO es curva
-        if (d.type !== 'curve' && d.width >= 70 && d.height >= 70) {
+        // 7b. Fallback para nodos del medio en figuras muy delgadas
+        if (d.type !== 'curve') {
             if (Math.hypot(lx, ly - (-halfH)) <= handleHitTol) return 'n';
             if (Math.hypot(lx, ly - ( halfH)) <= handleHitTol) return 's';
             if (Math.hypot(lx - (-halfW), ly) <= handleHitTol) return 'w';
@@ -3640,6 +3958,7 @@ export class DecalSystem {
     onPointerDown2D(e) {
         if (e.button !== 0) return;
         const currentBrushMode = document.getElementById('brush-mode')?.value;
+        const isShapeCreationTool = ['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'vector_container'].includes(currentBrushMode);
         const { x, y } = this.getCanvas2DCoords(e);
 
         // 1. Si hay una calca seleccionada, verificar manipulación (nodos o mover)
@@ -3648,6 +3967,12 @@ export class DecalSystem {
             const isForceMove = e.altKey || e.spaceKey;
             const hit = isForceMove ? 'move' : this.hitTest2D(x, y);
             if (hit) {
+                // Si el usuario tiene una herramienta de dibujo activa y hace clic para dibujar en el lienzo (no en un tirador):
+                if (isShapeCreationTool && hit === 'move' && !isForceMove) {
+                    this.deselectDecal();
+                    return; // Dejar pasar el evento a painter.js para trazar la nueva figura
+                }
+
                 if (this.mode !== '2d') {
                     this.setMode('2d');
                 }
@@ -3691,7 +4016,13 @@ export class DecalSystem {
             }
         }
 
-        // 2. Buscar si se hizo clic sobre una pegatina o contenedor (priorizando la calca superior bajo el cursor)
+        // Si hay una herramienta de creación activa (rect, circle, etc.), no interceptar calcas existentes bajo el cursor para permitir trazar
+        if (isShapeCreationTool) {
+            if (this.selectedDecalId) this.deselectDecal();
+            return;
+        }
+
+        // 2. Buscar si se hizo clic sobre una pegatina o forma de la capa activa
         const clickedDecal = this.findDecalAt(x, y);
         if (clickedDecal) {
             if (clickedDecal.id !== this.selectedDecalId || this.mode !== '2d') {
@@ -3710,8 +4041,8 @@ export class DecalSystem {
             return;
         }
 
-        // 3. Clic en espacio vacío: deseleccionar para dejar el lienzo despejado si estamos en modo select
-        if (this.selectedDecalId && currentBrushMode === 'select') {
+        // 3. Clic en espacio vacío: deseleccionar para dejar el lienzo despejado
+        if (this.selectedDecalId) {
             this.deselectDecal();
         }
     }
@@ -3921,7 +4252,7 @@ export class DecalSystem {
             const lx = dx * cos - dy * sin;
             const ly = dx * sin + dy * cos;
 
-            const aspect = init.baseWidth / init.baseHeight;
+            const aspect = (init.width > 0 && init.height > 0) ? (init.width / init.height) : (init.baseWidth / init.baseHeight);
             let newHalfW = Math.abs(lx);
             let newHalfH = newHalfW / aspect;
             if (Math.abs(ly) * aspect > newHalfW) {
@@ -3932,41 +4263,17 @@ export class DecalSystem {
             d.width = Math.max(8, Math.round(newHalfW * 2));
             d.height = Math.max(8, Math.round(newHalfH * 2));
 
-            // Si es vector_container, re-escalar proporcionalmente los puntos vectoriales y regenerar canvas
-            if (d.type === 'vector_container' && d.shapeOptions && init.points && init.width > 0 && init.height > 0) {
-                const s = d.shapeOptions;
-                const sx = d.width / init.width;
-                const sy = d.height / init.height;
-                s.points = init.points.map(p => ({
-                    x: Math.round(p.x * sx),
-                    y: Math.round(p.y * sy)
-                }));
-                if (window.painter && window.painter.createShapeCanvas) {
-                    const newCanvas = window.painter.createShapeCanvas(s);
-                    if (newCanvas) {
-                        d.img = newCanvas;
-                        this.currentDecalImage = newCanvas;
-                    }
-                }
-            } else if (d.shapeOptions && d.shapeOptions.type !== 'curve' && d.type !== 'text') {
-                // Figuras estándar (rect, circle, triangle, etc.): re-renderizar vectorialmente para máxima nitidez a 4096
-                const s = d.shapeOptions;
-                s.width = d.width;
-                s.height = d.height;
-                s.x1 = 0; s.y1 = 0;
-                s.x2 = d.width; s.y2 = d.height;
-                if (window.painter && window.painter.createShapeCanvas) {
-                    const newCanvas = window.painter.createShapeCanvas(s);
-                    if (newCanvas) {
-                        d.img = newCanvas;
-                        this.currentDecalImage = newCanvas;
-                    }
-                }
-            }
+            this.regenerateVectorShapeCanvas(d, d.width, d.height, init.points, init.width, init.height);
 
             const scalePct = Math.round((d.width / d.baseWidth) * 100);
             const scaleInput = document.getElementById('decal-scale');
-            if (scaleInput) scaleInput.value = Math.min(300, Math.max(10, scalePct));
+            if (scaleInput) scaleInput.value = Math.min(800, Math.max(10, scalePct));
+            const shapeScaleInput = document.getElementById('shape-scale');
+            if (shapeScaleInput) {
+                shapeScaleInput.value = Math.min(800, Math.max(10, scalePct));
+                const shapeScaleVal = document.getElementById('shape-scale-val');
+                if (shapeScaleVal) shapeScaleVal.textContent = `${scalePct}%`;
+            }
 
             if (this.isTextMode) {
                 const textFontSize = document.getElementById('text-font-size');
@@ -3984,35 +4291,10 @@ export class DecalSystem {
             const ly = dx * sin + dy * cos;
             d.height = Math.max(8, Math.round(Math.abs(ly) * 2));
             d.width = init.width; // Estira únicamente en sentido vertical
+            d.baseWidth = d.width;
+            d.baseHeight = d.height;
 
-            if (d.type === 'vector_container' && d.shapeOptions && init.points && init.height > 0) {
-                const s = d.shapeOptions;
-                const sy = d.height / init.height;
-                s.points = init.points.map(p => ({
-                    x: p.x,
-                    y: Math.round(p.y * sy)
-                }));
-                if (window.painter && window.painter.createShapeCanvas) {
-                    const newCanvas = window.painter.createShapeCanvas(s);
-                    if (newCanvas) {
-                        d.img = newCanvas;
-                        this.currentDecalImage = newCanvas;
-                    }
-                }
-            } else if (d.shapeOptions && d.shapeOptions.type !== 'curve' && d.type !== 'text') {
-                const s = d.shapeOptions;
-                s.width = d.width;
-                s.height = d.height;
-                s.x1 = 0; s.y1 = 0;
-                s.x2 = d.width; s.y2 = d.height;
-                if (window.painter && window.painter.createShapeCanvas) {
-                    const newCanvas = window.painter.createShapeCanvas(s);
-                    if (newCanvas) {
-                        d.img = newCanvas;
-                        this.currentDecalImage = newCanvas;
-                    }
-                }
-            }
+            this.regenerateVectorShapeCanvas(d, d.width, d.height, init.points, init.width, init.height);
         } else if (['e', 'w'].includes(h)) {
             const dx = x - init.x;
             const dy = y - init.y;
@@ -4021,35 +4303,10 @@ export class DecalSystem {
             const lx = dx * cos - dy * sin;
             d.width = Math.max(8, Math.round(Math.abs(lx) * 2));
             d.height = init.height; // Estira únicamente en sentido horizontal
+            d.baseWidth = d.width;
+            d.baseHeight = d.height;
 
-            if (d.type === 'vector_container' && d.shapeOptions && init.points && init.width > 0) {
-                const s = d.shapeOptions;
-                const sx = d.width / init.width;
-                s.points = init.points.map(p => ({
-                    x: Math.round(p.x * sx),
-                    y: p.y
-                }));
-                if (window.painter && window.painter.createShapeCanvas) {
-                    const newCanvas = window.painter.createShapeCanvas(s);
-                    if (newCanvas) {
-                        d.img = newCanvas;
-                        this.currentDecalImage = newCanvas;
-                    }
-                }
-            } else if (d.shapeOptions && d.shapeOptions.type !== 'curve' && d.type !== 'text') {
-                const s = d.shapeOptions;
-                s.width = d.width;
-                s.height = d.height;
-                s.x1 = 0; s.y1 = 0;
-                s.x2 = d.width; s.y2 = d.height;
-                if (window.painter && window.painter.createShapeCanvas) {
-                    const newCanvas = window.painter.createShapeCanvas(s);
-                    if (newCanvas) {
-                        d.img = newCanvas;
-                        this.currentDecalImage = newCanvas;
-                    }
-                }
-            }
+            this.regenerateVectorShapeCanvas(d, d.width, d.height, init.points, init.width, init.height);
         }
 
         const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
@@ -4059,7 +4316,11 @@ export class DecalSystem {
             dObj.y = d.y;
             dObj.width = d.width;
             dObj.height = d.height;
+            dObj.baseWidth = d.baseWidth;
+            dObj.baseHeight = d.baseHeight;
             dObj.rotation = d.rotation;
+            if (d.img) dObj.img = d.img;
+            if (d.shapeOptions) dObj.shapeOptions = { ...d.shapeOptions };
         }
 
         this.render2DPreview();
@@ -4175,7 +4436,10 @@ export class DecalSystem {
         const projectorWorldMatrix = new THREE.Matrix4();
         projectorWorldMatrix.makeRotationFromEuler(orientation);
         projectorWorldMatrix.setPosition(this.projectorPosition);
-        projectorWorldMatrix.multiply(new THREE.Matrix4().makeScale(size.x, size.y, size.z));
+        const activeDecal3D = (activeLayer && this.selectedDecalId) ? activeLayer.getDecal(this.selectedDecalId) : this.decal2D;
+        const bakeScaleX = (activeDecal3D && activeDecal3D.flipH ? -1 : 1) * size.x;
+        const bakeScaleY = (activeDecal3D && activeDecal3D.flipV ? -1 : 1) * size.y;
+        projectorWorldMatrix.multiply(new THREE.Matrix4().makeScale(bakeScaleX, bakeScaleY, size.z));
         const inverseProjectorMatrix = projectorWorldMatrix.clone().invert();
 
         // 3. Mallas objetivo a proyectar
@@ -4183,6 +4447,14 @@ export class DecalSystem {
         if (meshesToBake.length === 0) return;
 
         // 4. Shader de Despliegue UV por Hardware (RTX)
+        const bakeImg = (activeDecal3D && activeDecal3D.img) ? activeDecal3D.img : this.currentDecalImage;
+        if (bakeImg && (!this.decalTexture || this.decalTexture.image !== bakeImg)) {
+            if (this.decalTexture) this.decalTexture.dispose();
+            this.decalTexture = new THREE.Texture(bakeImg);
+            this.decalTexture.colorSpace = THREE.SRGBColorSpace;
+        }
+        if (this.decalTexture) this.decalTexture.needsUpdate = true;
+
         const bakeMaterial = new THREE.ShaderMaterial({
             uniforms: {
                 uProjectorMatrix: { value: inverseProjectorMatrix },
@@ -4217,20 +4489,14 @@ export class DecalSystem {
                 void main() {
                     // Modo 1 cara (Profesional / Sin traspasar):
                     if (uAllowPassthrough < 0.5) {
-                        // 1. Backface culling estricto: descartar caras que miran hacia atrás, opuestas o perpendiculares
-                        if (dot(vWorldNormal, uProjectorNormal) < 0.05) discard;
+                        // Descartar caras netamente opuestas (en la espalda de la superficie)
+                        if (dot(vWorldNormal, uProjectorNormal) < -0.1) discard;
                     }
 
                     vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
 
                     // Verificar límites de la caja proyectora [-0.5, 0.5]
                     if (abs(p.x) > 0.5 || abs(p.y) > 0.5 || abs(p.z) > 0.5) discard;
-
-                    // 2. Control de penetración en profundidad (Z-Culling superficial):
-                    // p.z = 0 es la superficie exterior; p.z < 0 es hacia el interior del modelo.
-                    if (uAllowPassthrough < 0.5) {
-                        if (p.z < -0.25) discard;
-                    }
 
                     // Muestrear textura de la calca
                     vec2 decalUV = vec2(p.x + 0.5, p.y + 0.5);

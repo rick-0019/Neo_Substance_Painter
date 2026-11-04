@@ -624,7 +624,7 @@ export class Painter {
                 this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
                 this.raycaster.setFromCamera(this.mouse, this.camera);
                 const intersects = this.raycaster.intersectObject(this.mesh, true);
-                const hit = intersects.find(i => i.object.isMesh && i.uv);
+                const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
                 if (hit) {
                     const uv = hit.uv;
                     const x = uv.x * this.canvas.width;
@@ -647,6 +647,10 @@ export class Painter {
                         if (worldNormal.dot(camDir) < 0) worldNormal.negate();
                     }
                     this.shape3DHit = {
+                        point: hit.point.clone(),
+                        normal: worldNormal.clone()
+                    };
+                    this.shape3DEndHit = {
                         point: hit.point.clone(),
                         normal: worldNormal.clone()
                     };
@@ -771,8 +775,11 @@ export class Painter {
                 this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
                 this.raycaster.setFromCamera(this.mouse, this.camera);
                 const intersects = this.raycaster.intersectObject(this.mesh, true);
-                const hit = intersects.find(i => i.object.isMesh && i.uv);
+                const hit = intersects.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay && i.uv);
                 if (hit) {
+                    this.shape3DEndHit = {
+                        point: hit.point.clone()
+                    };
                     const uv = hit.uv;
                     const curX = uv.x * this.canvas.width;
                     const curY = (1 - uv.y) * this.canvas.height;
@@ -1081,7 +1088,7 @@ export class Painter {
             if (['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge'].includes(mode)) {
                 if (window.decalSystem && window.decalSystem.selectedDecalId) {
                     const hit = window.decalSystem.hitTest2D(x, y);
-                    if (hit) {
+                    if (hit && hit !== 'move') {
                         return; // Dejar que decalSystem gestione el arrastre de tiradores del objeto
                     }
                     window.decalSystem.deselectDecal();
@@ -1653,23 +1660,51 @@ export class Painter {
                     allowPassthrough: passthroughActive
                 };
 
-                if (targetMode === '3d') {
-                    if (window.decalSystem && this.canvas) {
-                        const u = cx / this.canvas.width;
-                        const v = 1 - (cy / this.canvas.height);
-                        const pt3D = window.decalSystem.find3DPointFromUV(u, v);
-                        if (pt3D) {
+                if (window.decalSystem && this.canvas) {
+                    const u = cx / this.canvas.width;
+                    const v = 1 - (cy / this.canvas.height);
+                    const pt3D = window.decalSystem.find3DPointFromUV(u, v);
+                    if (pt3D) {
+                        if (targetMode === '3d') {
                             createdShapeObj.projectorPosition = pt3D.point.clone();
                             createdShapeObj.projectorNormal = pt3D.normal.clone();
-                            if (pt3D.tangent) createdShapeObj.surfaceTangent = pt3D.tangent.clone();
+                        }
+                        if (pt3D.tangent) createdShapeObj.surfaceTangent = pt3D.tangent.clone();
+                        if (pt3D.bitangent) createdShapeObj.surfaceBitangent = pt3D.bitangent.clone();
+
+                        const uvWppX = (pt3D.worldUnitsPerU > 0) ? (pt3D.worldUnitsPerU / this.canvas.width) : 0;
+                        const uvWppY = (pt3D.worldUnitsPerV > 0) ? (pt3D.worldUnitsPerV / this.canvas.height) : 0;
+
+                        let dragWppX = 0;
+                        let dragWppY = 0;
+                        if (targetMode === '3d' && this.shape3DHit && this.shape3DEndHit) {
+                            const delta3D = this.shape3DEndHit.point.clone().sub(this.shape3DHit.point);
+                            const drawnW = Math.max(10, Math.round(Math.abs(s.x2 - s.x1)));
+                            const drawnH = Math.max(10, Math.round(Math.abs(s.y2 - s.y1)));
+                            if (pt3D.tangent && drawnW > 12) {
+                                const spanX = Math.abs(delta3D.dot(pt3D.tangent));
+                                if (spanX > 1e-4) dragWppX = spanX / drawnW;
+                            }
+                            if (pt3D.bitangent && drawnH > 12) {
+                                const spanY = Math.abs(delta3D.dot(pt3D.bitangent));
+                                if (spanY > 1e-4) dragWppY = spanY / drawnH;
+                            }
+                        }
+
+                        const finalWppX = Math.max(uvWppX, dragWppX);
+                        const finalWppY = Math.max(uvWppY, dragWppY) || finalWppX;
+                        if (finalWppX > 0) {
+                            createdShapeObj.worldPerPixelX = finalWppX;
+                            createdShapeObj.worldPerPixelY = finalWppY;
                         }
                     }
-                    if (!createdShapeObj.projectorPosition && this.shape3DHit) {
-                        createdShapeObj.projectorPosition = this.shape3DHit.point.clone();
-                        createdShapeObj.projectorNormal = this.shape3DHit.normal.clone();
-                    }
+                }
+                if (targetMode === '3d' && !createdShapeObj.projectorPosition && this.shape3DHit) {
+                    createdShapeObj.projectorPosition = this.shape3DHit.point.clone();
+                    createdShapeObj.projectorNormal = this.shape3DHit.normal.clone();
                 }
                 this.shape3DHit = null;
+                this.shape3DEndHit = null;
 
                 activeLayer.addDecal(createdShapeObj);
             }

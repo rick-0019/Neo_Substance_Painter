@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=9.8';
-import { DecalSystem } from './decals.js?v=9.8';
-import { LayerManager } from './layers.js?v=9.8';
+import { Painter } from './painter.js?v=12.0';
+import { DecalSystem } from './decals.js?v=12.1';
+import { LayerManager } from './layers.js?v=12.0';
 import { PapercraftEngine } from './papercraft.js?v=11.4';
 import { SelectionManager } from './selection.js?v=9.8';
 import { ColorPickerManager } from './colorPicker.js?v=9.8';
@@ -3364,7 +3364,8 @@ toolButtons.forEach(btn => {
                 if (!window.decalSystem.mode) {
                     window.decalSystem.setMode('2d');
                 }
-            } else if (!isShape) {
+            } else {
+                // Al activar cualquier herramienta de dibujo (formas, pincel, borrador, etc.), deseleccionar para dejar el lienzo libre para dibujar
                 window.decalSystem.deselectDecal();
                 window.decalSystem.isActive = false;
             }
@@ -4152,7 +4153,17 @@ function getProjectNSPData() {
                     flipH: !!d.flipH,
                     flipV: !!d.flipV,
                     opacity: d.opacity,
-                    visible: d.visible
+                    visible: d.visible,
+                    mode: d.mode || '2d',
+                    worldPerPixelX: d.worldPerPixelX,
+                    worldPerPixelY: d.worldPerPixelY,
+                    projectorScale: d.projectorScale,
+                    projectorRotation: d.projectorRotation,
+                    allowPassthrough: !!d.allowPassthrough,
+                    projectorPosition: d.projectorPosition ? { x: d.projectorPosition.x, y: d.projectorPosition.y, z: d.projectorPosition.z } : null,
+                    projectorNormal: d.projectorNormal ? { x: d.projectorNormal.x, y: d.projectorNormal.y, z: d.projectorNormal.z } : null,
+                    surfaceTangent: d.surfaceTangent ? { x: d.surfaceTangent.x, y: d.surfaceTangent.y, z: d.surfaceTangent.z } : null,
+                    surfaceBitangent: d.surfaceBitangent ? { x: d.surfaceBitangent.x, y: d.surfaceBitangent.y, z: d.surfaceBitangent.z } : null
                 };
             }) : []
         }));
@@ -4450,7 +4461,17 @@ async function loadProjectNSP(fileOrData, silent = false) {
                                         flipH: !!d.flipH,
                                         flipV: !!d.flipV,
                                         opacity: d.opacity !== undefined ? d.opacity : 1.0,
-                                        visible: d.visible !== undefined ? d.visible : true
+                                        visible: d.visible !== undefined ? d.visible : true,
+                                        mode: d.mode || '2d',
+                                        worldPerPixelX: d.worldPerPixelX,
+                                        worldPerPixelY: d.worldPerPixelY,
+                                        projectorScale: d.projectorScale,
+                                        projectorRotation: d.projectorRotation,
+                                        allowPassthrough: !!d.allowPassthrough,
+                                        projectorPosition: d.projectorPosition ? new THREE.Vector3(d.projectorPosition.x, d.projectorPosition.y, d.projectorPosition.z) : null,
+                                        projectorNormal: d.projectorNormal ? new THREE.Vector3(d.projectorNormal.x, d.projectorNormal.y, d.projectorNormal.z) : null,
+                                        surfaceTangent: d.surfaceTangent ? new THREE.Vector3(d.surfaceTangent.x, d.surfaceTangent.y, d.surfaceTangent.z) : null,
+                                        surfaceBitangent: d.surfaceBitangent ? new THREE.Vector3(d.surfaceBitangent.x, d.surfaceBitangent.y, d.surfaceBitangent.z) : null
                                     });
                                     resolve();
                                 };

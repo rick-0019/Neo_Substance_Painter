@@ -60,9 +60,12 @@ export class Layer {
             targetCtx.imageSmoothingQuality = 'high';
             targetCtx.globalAlpha = (d.opacity !== undefined ? d.opacity : 1.0);
 
-            if (d.mode === '3d' && d.unwrappedCanvas) {
+            let drawn3D = false;
+            if (d.mode === '3d' && d.unwrappedCanvas && d.hasValidUnwrap !== false) {
                 targetCtx.drawImage(d.unwrappedCanvas, 0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
-            } else {
+                drawn3D = true;
+            }
+            if (!drawn3D) {
                 const x = d.x * scaleX;
                 const y = d.y * scaleY;
                 const w = d.width * scaleX;
@@ -99,9 +102,12 @@ export class Layer {
             this.ctx.imageSmoothingQuality = 'high';
             this.ctx.globalAlpha = (d.opacity !== undefined ? d.opacity : 1.0);
 
-            if (d.mode === '3d' && d.unwrappedCanvas) {
+            let baked3D = false;
+            if (d.mode === '3d' && d.unwrappedCanvas && d.hasValidUnwrap !== false) {
                 this.ctx.drawImage(d.unwrappedCanvas, 0, 0, this.canvas.width, this.canvas.height);
-            } else {
+                baked3D = true;
+            }
+            if (!baked3D) {
                 this.ctx.translate(d.x, d.y);
                 this.ctx.rotate(d.rotation || 0);
                 if (d.flipH || d.flipV) {
@@ -122,7 +128,7 @@ export class Layer {
     unmaskDecal(d) {
         if (!this.maskCtx || !d || !d.img) return;
         try {
-            if (d.mode === '3d' && d.unwrappedCanvas) {
+            if (d.mode === '3d' && d.unwrappedCanvas && d.hasValidUnwrap !== false) {
                 const tempCanvas = document.createElement('canvas');
                 tempCanvas.width = this.width;
                 tempCanvas.height = this.height;
@@ -329,11 +335,11 @@ export class LayerManager {
         calcasLayer.ctx.clearRect(0, 0, this.width, this.height);
         this.layers.push(calcasLayer);
 
-        // Seleccionar Fondo Blanco por defecto tal como en la captura
-        this.activeLayerId = baseLayer.id;
+        // Seleccionar Color Base por defecto para pintar y dibujar calcas/formas directamente sobre la capa de trabajo
+        this.activeLayerId = colorBaseLayer.id;
 
         this.recomposite();
-        if (this.onMaskModeChange) this.onMaskModeChange(false, baseLayer);
+        if (this.onMaskModeChange) this.onMaskModeChange(false, colorBaseLayer);
     }
 
     getActiveLayer() {
@@ -558,8 +564,14 @@ export class LayerManager {
         const index = this.layers.findIndex(l => l.id === id);
         if (index === -1) return;
 
+        // La capa de fondo no se puede mover
+        if (this.layers[index].isBackground) return;
+
         const targetIndex = index + direction;
         if (targetIndex < 0 || targetIndex >= this.layers.length) return;
+
+        // No permitir mover una capa por debajo de la capa de fondo
+        if (this.layers[targetIndex].isBackground) return;
 
         const temp = this.layers[index];
         this.layers[index] = this.layers[targetIndex];
@@ -568,6 +580,13 @@ export class LayerManager {
         this.recomposite();
         this.renderUI();
         if (this.onUpdate) this.onUpdate();
+        if (window.painter) {
+            window.painter.needsUpdate = true;
+            window.painter.forceUpdate = true;
+        }
+        if (window.state && window.state.texture) {
+            window.state.texture.needsUpdate = true;
+        }
     }
 
     setLayerOpacity(id, opacity) {
@@ -1288,6 +1307,11 @@ export class LayerManager {
                             const curMode = window.decalSystem.mode || '2d';
                             window.decalSystem.selectDecal(decal, curMode);
                         }
+                        // Activar herramienta de selección para permitir manipular la forma en 2D/3D sin pintar por error
+                        const brushModeInput = document.getElementById('brush-mode');
+                        if (brushModeInput) brushModeInput.value = 'select';
+                        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+                        document.querySelector('.tool-btn[data-mode="select"]')?.classList.add('active');
                         this.renderUI();
                     });
 
