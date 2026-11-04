@@ -1313,6 +1313,38 @@ export class DecalSystem {
         view3d.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
             const currentBrushMode = document.getElementById('brush-mode')?.value;
+            const isShapeCreationTool = ['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'vector_container'].includes(currentBrushMode);
+            const isPaintOrDrawTool = isShapeCreationTool || ['paint', 'eraser', 'fill', 'eyedropper', 'gradient'].includes(currentBrushMode);
+
+            // Si el usuario tiene activa una herramienta de dibujo o pintura (no selección):
+            if (isPaintOrDrawTool) {
+                // Solo si hace clic exactamente en un tirador específico de redimensionado o rotación permitimos interactuar con el gizmo
+                let clickedHandle = false;
+                if (this.isActive && this.mode === '3d' && this.selectionGizmo3D?.visible && this.gizmoHandleMeshes?.length) {
+                    const rect = view3d.getBoundingClientRect();
+                    this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                    this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                    this.raycaster.setFromCamera(this.mouse, this.camera);
+                    const handleIntersects = this.raycaster.intersectObjects(this.gizmoHandleMeshes, true);
+                    if (handleIntersects.length > 0) {
+                        const hType = handleIntersects[0].object.userData?.handleType || handleIntersects[0].object.parent?.userData?.handleType;
+                        if (hType && hType !== 'move') {
+                            clickedHandle = true;
+                        }
+                    }
+                }
+
+                if (!clickedHandle) {
+                    // Clic en la superficie 3D o en espacio vacío con herramienta de trazo:
+                    // Deseleccionar calca previa para liberar completamente el modelo y permitir trazar la nueva figura
+                    if (this.selectedDecalId) {
+                        this.deselectDecal();
+                    }
+                    this.isActive = false;
+                    return; // Permitir que el evento pase intacto a painter.js para iniciar el nuevo trazo
+                }
+            }
+
             const isSelectOrDecal = (currentBrushMode === 'select') || this.isActive || (currentBrushMode === 'text');
             if (!isSelectOrDecal && !this.mesh) return;
 
@@ -1399,15 +1431,6 @@ export class DecalSystem {
                     this.isDragging3D = false;
                     this.record3DDragOffset(e, rect, hit);
                     view3d.style.cursor = 'grab';
-                    try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
-                    e.stopPropagation();
-                    return;
-                } else if (this.isActive && currentBrushMode !== 'select') {
-                    this.setMode('3d');
-                    this.isLocked = true;
-                    this.isDragging3D = false;
-                    this.record3DDragOffset(e, rect, hit);
-                    view3d.style.cursor = 'grabbing';
                     try { view3d.setPointerCapture(e.pointerId); } catch (_) {}
                     e.stopPropagation();
                     return;
@@ -3959,6 +3982,7 @@ export class DecalSystem {
         if (e.button !== 0) return;
         const currentBrushMode = document.getElementById('brush-mode')?.value;
         const isShapeCreationTool = ['line', 'curve', 'rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'vector_container'].includes(currentBrushMode);
+        const isPaintOrDrawTool = isShapeCreationTool || ['paint', 'eraser', 'fill', 'eyedropper', 'gradient'].includes(currentBrushMode);
         const { x, y } = this.getCanvas2DCoords(e);
 
         // 1. Si hay una calca seleccionada, verificar manipulación (nodos o mover)
@@ -3967,8 +3991,9 @@ export class DecalSystem {
             const isForceMove = e.altKey || e.spaceKey;
             const hit = isForceMove ? 'move' : this.hitTest2D(x, y);
             if (hit) {
-                // Si el usuario tiene una herramienta de dibujo activa y hace clic para dibujar en el lienzo (no en un tirador):
-                if (isShapeCreationTool && hit === 'move' && !isForceMove) {
+                // Si el usuario tiene una herramienta de dibujo activa y hace clic para dibujar en el lienzo (no en un tirador explícito de redimensionado/rotación):
+                const isExplicitTransformHandle = ['rotate', 'nw', 'se', 'ne', 'sw', 'n', 's', 'e', 'w', 'vnode_', 'curve_mid', 'curve_p1', 'curve_p2'].some(t => String(hit).startsWith(t));
+                if (isPaintOrDrawTool && (!isExplicitTransformHandle || hit === 'move') && !isForceMove) {
                     this.deselectDecal();
                     return; // Dejar pasar el evento a painter.js para trazar la nueva figura
                 }
@@ -4016,8 +4041,8 @@ export class DecalSystem {
             }
         }
 
-        // Si hay una herramienta de creación activa (rect, circle, etc.), no interceptar calcas existentes bajo el cursor para permitir trazar
-        if (isShapeCreationTool) {
+        // Si hay una herramienta de creación o pintura activa, no interceptar calcas existentes bajo el cursor para permitir trazar
+        if (isPaintOrDrawTool) {
             if (this.selectedDecalId) this.deselectDecal();
             return;
         }

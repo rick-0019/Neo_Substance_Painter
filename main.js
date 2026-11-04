@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=12.0';
-import { DecalSystem } from './decals.js?v=12.1';
-import { LayerManager } from './layers.js?v=12.0';
+import { Painter } from './painter.js?v=12.2';
+import { DecalSystem } from './decals.js?v=12.2';
+import { LayerManager } from './layers.js?v=12.2';
 import { PapercraftEngine } from './papercraft.js?v=11.4';
 import { SelectionManager } from './selection.js?v=9.8';
 import { ColorPickerManager } from './colorPicker.js?v=9.8';

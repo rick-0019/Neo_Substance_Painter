@@ -465,8 +465,13 @@ export class Painter {
                 if (this.editingShape) this.commitShape();
                 return;
             }
-            if (window.decalSystem && window.decalSystem.isActive && window.decalSystem.mode === '3d') {
-                return;
+            if (window.decalSystem && window.decalSystem.isActive) {
+                if (mode !== 'select' && mode !== 'text') {
+                    window.decalSystem.deselectDecal();
+                    window.decalSystem.isActive = false;
+                } else if (window.decalSystem.mode === '3d') {
+                    return;
+                }
             }
             if (this.editingShape) this.commitShape();
             if (!this.mesh) return; // Must have a mesh loaded
