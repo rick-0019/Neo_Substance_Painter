@@ -2659,17 +2659,8 @@ document.getElementById('btn-unfold-zoom-reset')?.addEventListener('click', () =
 
 // Botones Auto-Acomodar, Rotar, Duplicar, Espejo, +Hoja A4
 function handleAutoPack() {
-    if (isAssemblyWorkbenchActive() && window.modelAssembler) {
-        let targetPiece = currentHitInfo?.piece;
-        if (targetPiece && targetPiece.papercraft) {
-            targetPiece.papercraft.autoPackA4();
-        } else {
-            window.modelAssembler.pieces.forEach(p => {
-                if (p.papercraft) p.papercraft.autoPackA4();
-            });
-        }
-        updatePapercraftUI();
-        renderUnfoldWorkbench();
+    if (isAssemblyWorkbenchActive() && window.modelAssembler && window.modelAssembler.pieces.length > 0) {
+        window.modelAssembler.autoPackAllPieces();
         return;
     }
     papercraft.autoPackA4();
@@ -2947,6 +2938,11 @@ const ribbonCheckFlaps = document.getElementById('ribbon-toggle-flaps');
 const unfoldCheckFlaps = document.getElementById('unfold-check-flaps');
 function syncFlaps(val) {
     papercraft.showFlaps = val;
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) p.papercraft.showFlaps = val;
+        });
+    }
     if (ribbonCheckFlaps) ribbonCheckFlaps.checked = val;
     if (unfoldCheckFlaps) unfoldCheckFlaps.checked = val;
     drawUVWireframe();
@@ -2960,6 +2956,11 @@ const ribbonCheckSmooth = document.getElementById('ribbon-toggle-hide-smooth');
 const unfoldCheckSmooth = document.getElementById('unfold-check-hide-smooth');
 function syncHideSmooth(val) {
     papercraft.hideSmoothLines = val;
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) p.papercraft.hideSmoothLines = val;
+        });
+    }
     if (ribbonCheckSmooth) ribbonCheckSmooth.checked = val;
     if (unfoldCheckSmooth) unfoldCheckSmooth.checked = val;
     drawUVWireframe();
@@ -2973,6 +2974,11 @@ const ribbonCheckA4 = document.getElementById('ribbon-toggle-a4-guide');
 const unfoldCheckA4 = document.getElementById('unfold-check-a4-guide');
 function syncA4Guide(val) {
     papercraft.showA4Guide = val;
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) p.papercraft.showA4Guide = val;
+        });
+    }
     if (ribbonCheckA4) ribbonCheckA4.checked = val;
     if (unfoldCheckA4) unfoldCheckA4.checked = val;
     drawUVWireframe();
@@ -2994,6 +3000,15 @@ function syncNumbers(enabled, mode = currentNumberMode) {
     currentNumberMode = mode;
     papercraft.showTabNumbers = enabled;
     papercraft.numberPlacement = enabled ? mode : 'none';
+
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) {
+                p.papercraft.showTabNumbers = enabled;
+                p.papercraft.numberPlacement = enabled ? mode : 'none';
+            }
+        });
+    }
 
     if (ribbonCheckNumbers) ribbonCheckNumbers.checked = enabled;
     if (unfoldCheckNumbers) unfoldCheckNumbers.checked = enabled;
@@ -3031,6 +3046,16 @@ function updateTabHeight(val) {
     } else if (state.mesh) {
         papercraft.analyzeMesh(state.mesh, TEX_SIZE);
     }
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) {
+                p.papercraft.tabHeightMm = clamped;
+                if (p.papercraft.parts && p.papercraft.parts.length > 0) {
+                    p.papercraft.rebuildAllTabs();
+                }
+            }
+        });
+    }
     drawUVWireframe();
     renderUnfoldWorkbench();
 }
@@ -3049,6 +3074,16 @@ tabAngleSlider?.addEventListener('input', (e) => {
         papercraft.rebuildAllTabs();
     } else if (state.mesh) {
         papercraft.analyzeMesh(state.mesh, TEX_SIZE);
+    }
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) {
+                p.papercraft.tabAngleDeg = val;
+                if (p.papercraft.parts && p.papercraft.parts.length > 0) {
+                    p.papercraft.rebuildAllTabs();
+                }
+            }
+        });
     }
     drawUVWireframe();
     renderUnfoldWorkbench();
@@ -3254,6 +3289,11 @@ function setWireframeMode(newMode) {
     if (toggleWireframeCheck) toggleWireframeCheck.checked = state.uvWireframeVisible;
     if (window.papercraft) {
         window.papercraft.lineMode = newMode;
+    }
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) p.papercraft.lineMode = newMode;
+        });
     }
     drawUVWireframe();
     update3DWireframe();

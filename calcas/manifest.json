@@ -214,5 +214,13 @@
     "src": "./calcas/mis_calcas/botones%20panel.png",
     "filename": "botones panel.png",
     "isUser": true
+  },
+  {
+    "id": "mis_calcas_valvula-circulo-blanca",
+    "name": "Valvula Circulo Blanca",
+    "category": "mis_calcas",
+    "src": "./calcas/mis_calcas/valvula-circulo-Blanca.png",
+    "filename": "valvula-circulo-Blanca.png",
+    "isUser": true
   }
 ]

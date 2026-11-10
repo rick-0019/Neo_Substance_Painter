@@ -8,6 +8,7 @@ export class PapercraftEngine {
     constructor() {
         this.active = false;
         this.showFlaps = true;
+        this.showA4Guide = true;
         this.tabHeightMm = 5.0;
         this.tabAngleDeg = 45.0;
         this.showTabNumbers = false; // Desactivado por defecto para que las piezas se impriman 100% limpias
@@ -560,8 +561,8 @@ export class PapercraftEngine {
     /**
      * Algoritmo de empaquetado automático de piezas en hojas A4 (Bin-Packing sin solapamientos)
      */
-    autoPackA4(gapMm = 8) {
-        if (!this.parts || this.parts.length === 0) return;
+    autoPackA4(gapMm = 8, startPage = 0) {
+        if (!this.parts || this.parts.length === 0) return 0;
 
         const margin = this.A4_MARGIN; // 5 mm
         const printableW = this.A4_W - margin * 2; // 200 mm
@@ -570,7 +571,7 @@ export class PapercraftEngine {
         // Ordenar piezas de mayor a menor para empaquetado eficiente
         const sorted = [...this.parts].sort((a, b) => Math.max(b.wMm, b.hMm) - Math.max(a.wMm, a.hMm));
 
-        let currentPage = 0;
+        let currentPage = startPage;
         let curX = margin + 4;
         let curY = margin + 18; // Dejar espacio para cartela superior
         let rowMaxH = 0;
@@ -610,8 +611,10 @@ export class PapercraftEngine {
             if (h > rowMaxH) rowMaxH = h;
         }
 
-        this.pagesCount = currentPage + 1;
+        const sheetsNeeded = (currentPage - startPage) + 1;
+        this.pagesCount = sheetsNeeded;
         this.notifyChange();
+        return sheetsNeeded;
     }
 
     /**
@@ -1979,6 +1982,9 @@ export class PapercraftEngine {
         ctx.fillRect(pageX_px, pageY_px, pageW_px, pageH_px);
         ctx.shadowColor = 'transparent';
 
+        // Si la Guía A4 está desactivada, no dibujar marco técnico, encabezado, márgenes ni regla
+        if (this.showA4Guide === false) return;
+
         // 3. Encabezado de página
         ctx.font = 'bold 12px sans-serif';
         ctx.fillStyle = '#0288d1';
@@ -2182,7 +2188,7 @@ export class PapercraftEngine {
         }
 
         // A) Recorte y textura de la pieza en la mesa de trabajo A4 (renderizado instantáneo GPU)
-        if (canvas2d && part.localTriangles && part.localTriangles.length > 0) {
+        if (part.localTriangles && part.localTriangles.length > 0) {
             try {
                 ctx.save();
                 ctx.beginPath();
@@ -2193,16 +2199,21 @@ export class PapercraftEngine {
                     ctx.lineTo(tri[2].x * mmToPx, tri[2].y * mmToPx);
                 }
                 ctx.closePath();
-                ctx.clip();
+                // Base blanca sólida de papel (imprescindible cuando la guía A4 esté oculta o la textura tenga transparencia)
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fill();
 
-                const partDrawSize = (part.islandMmPerUV || this.uvSheetSizeMm || 210.0) * mmToPx;
-                ctx.drawImage(
-                    canvas2d,
-                    -part.centerU * partDrawSize,
-                    -(1 - part.centerV) * partDrawSize,
-                    partDrawSize,
-                    partDrawSize
-                );
+                if (canvas2d) {
+                    ctx.clip();
+                    const partDrawSize = (part.islandMmPerUV || this.uvSheetSizeMm || 210.0) * mmToPx;
+                    ctx.drawImage(
+                        canvas2d,
+                        -part.centerU * partDrawSize,
+                        -(1 - part.centerV) * partDrawSize,
+                        partDrawSize,
+                        partDrawSize
+                    );
+                }
                 ctx.restore();
             } catch (drawErr) {
                 console.warn('Error dibujando textura de pieza en canvas:', drawErr);
@@ -2522,8 +2533,8 @@ export class PapercraftEngine {
             ? ` • (ÁLBUM: PÁGINA ${pageInfo.globalPageIndex} DE ${pageInfo.totalGlobalPages})` 
             : '';
 
-        // Cartela técnica y regla en cada página (se omite si la hoja ya fue iniciada por otra pieza)
-        if (!pageInfo.skipHeader) {
+        // Cartela técnica y regla en cada página (se omite si la hoja ya fue iniciada por otra pieza o si la guía A4 está desactivada)
+        if (!pageInfo.skipHeader && this.showA4Guide !== false) {
             doc.saveGraphicsState();
             doc.setDrawColor(0, 120, 215);
             doc.setLineWidth(0.3);
