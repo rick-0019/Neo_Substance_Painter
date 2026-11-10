@@ -621,6 +621,118 @@ function highlightPartIn3D(part, targetRoot) {
 }
 window.highlightPartIn3D = highlightPartIn3D;
 
+// =========================================================================
+// Visualización de Líneas de Doblez / Pliegue en 3D (para texturizado)
+// =========================================================================
+const foldLines3DGeometry = new THREE.BufferGeometry();
+const foldLines3DMaterial = new THREE.LineBasicMaterial({
+    color: 0x00e676, // Verde vivo estilo Blender
+    linewidth: 3,
+    transparent: true,
+    opacity: 0.95,
+    depthTest: true,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3
+});
+const foldLines3D = new THREE.LineSegments(foldLines3DGeometry, foldLines3DMaterial);
+foldLines3D.renderOrder = 101;
+foldLines3D.visible = false;
+scene.add(foldLines3D);
+
+function update3DFoldLines() {
+    if (!scene) return;
+
+    const coords = [];
+    let activeRoot = state.mesh;
+
+    const collectFromEngine = (engine, mesh) => {
+        if (!engine || !engine.parts) return;
+        if (mesh) activeRoot = mesh;
+        for (const part of engine.parts) {
+            if (!part.internalEdges) continue;
+            for (const edge of part.internalEdges) {
+                if (edge.isFold && edge.pos3dA && edge.pos3dB) {
+                    coords.push(
+                        edge.pos3dA[0], edge.pos3dA[1], edge.pos3dA[2],
+                        edge.pos3dB[0], edge.pos3dB[1], edge.pos3dB[2]
+                    );
+                }
+            }
+        }
+    };
+
+    if (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.visible !== false && p.papercraft) {
+                collectFromEngine(p.papercraft, p.mesh);
+            }
+        });
+        if (window.modelAssembler.group) activeRoot = window.modelAssembler.group;
+    } else if (papercraft) {
+        collectFromEngine(papercraft, state.mesh);
+    }
+
+    if (coords.length === 0) {
+        foldLines3D.visible = false;
+        return;
+    }
+
+    foldLines3DGeometry.setAttribute('position', new THREE.Float32BufferAttribute(coords, 3));
+
+    if (activeRoot) {
+        foldLines3D.matrixAutoUpdate = false;
+        activeRoot.updateWorldMatrix(true, false);
+        foldLines3D.matrix.copy(activeRoot.matrixWorld);
+    }
+
+    if (papercraft && papercraft.foldLineColor) {
+        const hex = papercraft.foldLineColor;
+        if (hex === '#2e7d32' || hex === '#c62828' || hex === '#0288d1' || hex === '#0055bb') {
+            foldLines3DMaterial.color.set(hex);
+        } else {
+            foldLines3DMaterial.color.setHex(0x00e676);
+        }
+    }
+
+    foldLines3D.visible = true;
+}
+window.update3DFoldLines = update3DFoldLines;
+
+// Arista 3D interactiva bajo el cursor (Hover amarillo brillante)
+const hoveredFold3DGeometry = new THREE.BufferGeometry();
+const hoveredFold3DMaterial = new THREE.LineBasicMaterial({
+    color: 0xffff00, // Amarillo brillante para hover
+    linewidth: 4,
+    transparent: true,
+    opacity: 0.98,
+    depthTest: false, // Máxima visibilidad por encima de la superficie del modelo
+    depthWrite: false
+});
+const hoveredFold3DMesh = new THREE.LineSegments(hoveredFold3DGeometry, hoveredFold3DMaterial);
+hoveredFold3DMesh.renderOrder = 9999;
+hoveredFold3DMesh.visible = false;
+scene.add(hoveredFold3DMesh);
+
+let current3DHoveredEdge = null;
+let is3DMouseDownPos = null;
+
+function distToSegment3D(p, a, b) {
+    const abx = b[0] - a[0], aby = b[1] - a[1], abz = b[2] - a[2];
+    const apx = p.x - a[0], apy = p.y - a[1], apz = p.z - a[2];
+    const lenSq = abx * abx + aby * aby + abz * abz;
+    if (lenSq < 1e-8) {
+        return Math.hypot(apx, apy, apz);
+    }
+    let t = (apx * abx + apy * aby + apz * abz) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    const projX = a[0] + t * abx;
+    const projY = a[1] + t * aby;
+    const projZ = a[2] + t * abz;
+    return Math.hypot(p.x - projX, p.y - projY, p.z - projZ);
+}
+
 // Control de Activación / Desactivación de Rastreo 3D <-> 2D
 let is3DTrackerEnabled = false;
 
@@ -661,7 +773,136 @@ document.getElementById('btn-unfold-toggle-tracker')?.addEventListener('click', 
 const raycasterTracker = new THREE.Raycaster();
 let lastHoveredFaceIdx = null;
 
+renderer.domElement.addEventListener('mousedown', (e) => {
+    is3DMouseDownPos = { x: e.clientX, y: e.clientY };
+});
+
 renderer.domElement.addEventListener('mousemove', (e) => {
+    const isFoldEditMode = (state.uvWireframeMode === 'blender' || papercraft?.lineMode === 'blender' || papercraft?.activeAnnotationTool === 'fold');
+
+    // 1. Detección interactiva de aristas 3D en Modo Blender / Pliegues (Hover amarillo y cursor pointer)
+    if (isFoldEditMode && e.buttons === 0 && (!painter || !painter.isPainting) && (!decalSystem || !decalSystem.selectedDecal)) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+            const mouse = new THREE.Vector2(
+                ((e.clientX - rect.left) / rect.width) * 2 - 1,
+                -((e.clientY - rect.top) / rect.height) * 2 + 1
+            );
+            raycasterTracker.setFromCamera(mouse, camera);
+
+            let targetRoot = state.mesh;
+            if (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler?.group) {
+                targetRoot = window.modelAssembler.group;
+            }
+
+            const rawIntersects = targetRoot ? raycasterTracker.intersectObject(targetRoot, true) : [];
+            const validHits = rawIntersects.filter(h =>
+                h.object && h.object.isMesh &&
+                !h.object.userData?.isSelectionOverlay &&
+                !h.object.userData?.isWireframeOverlay &&
+                h.faceIndex !== undefined && h.faceIndex !== null
+            );
+
+            if (validHits.length > 0) {
+                const hit = validHits[0];
+                const hitMesh = hit.object;
+                const baseFaceOffset = hitMesh.userData?._papercraftBaseFaceIdx || 0;
+                const globalFaceIdx = baseFaceOffset + hit.faceIndex;
+                lastHoveredFaceIdx = globalFaceIdx;
+
+                let targetEngine = papercraft;
+                if (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler?.pieces) {
+                    let rootObj = hitMesh;
+                    while (rootObj && rootObj.parent && rootObj.parent !== window.modelAssembler.group) {
+                        rootObj = rootObj.parent;
+                    }
+                    const hitPiece = window.modelAssembler.pieces.find(p => p.mesh === rootObj);
+                    if (hitPiece && hitPiece.papercraft) {
+                        targetEngine = hitPiece.papercraft;
+                    }
+                } else if (typeof getActivePartEngine === 'function') {
+                    targetEngine = getActivePartEngine();
+                }
+
+                let part = targetEngine?.getPartByFaceIndex ? targetEngine.getPartByFaceIndex(globalFaceIdx) : null;
+                if (!part && hit.uv && targetEngine?.getPartAtUV) {
+                    part = targetEngine.getPartAtUV(hit.uv.x, hit.uv.y);
+                }
+                if (!part && targetEngine?.parts) {
+                    part = targetEngine.parts.find(p => p.faceIndices && p.faceIndices.includes(globalFaceIdx));
+                }
+
+                if (part && part.internalEdges && part.internalEdges.length > 0) {
+                    const localPt = hit.point.clone();
+                    hitMesh.worldToLocal(localPt);
+
+                    let closest = null;
+                    let minDist = Infinity;
+                    for (const ed of part.internalEdges) {
+                        if (ed.pos3dA && ed.pos3dB && (ed.faceA === globalFaceIdx || ed.faceB === globalFaceIdx)) {
+                            const d = distToSegment3D(localPt, ed.pos3dA, ed.pos3dB);
+                            if (d < minDist) {
+                                minDist = d;
+                                closest = ed;
+                            }
+                        }
+                    }
+
+                    if (!closest) {
+                        for (const ed of part.internalEdges) {
+                            if (ed.pos3dA && ed.pos3dB) {
+                                const d = distToSegment3D(localPt, ed.pos3dA, ed.pos3dB);
+                                if (d < minDist) {
+                                    minDist = d;
+                                    closest = ed;
+                                }
+                            }
+                        }
+                    }
+
+                    if (closest) {
+                        current3DHoveredEdge = { edge: closest, part, mesh: hitMesh, engine: targetEngine };
+                        const posArr = new Float32Array([
+                            closest.pos3dA[0], closest.pos3dA[1], closest.pos3dA[2],
+                            closest.pos3dB[0], closest.pos3dB[1], closest.pos3dB[2]
+                        ]);
+                        hoveredFold3DGeometry.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+                        hoveredFold3DGeometry.attributes.position.needsUpdate = true;
+
+                        hoveredFold3DMesh.matrixAutoUpdate = false;
+                        hitMesh.updateWorldMatrix(true, false);
+                        hoveredFold3DMesh.matrix.copy(hitMesh.matrixWorld);
+                        hoveredFold3DMesh.visible = true;
+
+                        renderer.domElement.style.cursor = 'pointer';
+
+                        if (targetEngine.hoveredFoldEdgeKey !== closest.key) {
+                            targetEngine.hoveredFoldEdgeKey = closest.key;
+                            renderUnfoldWorkbench();
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+        if (hoveredFold3DMesh.visible) {
+            hoveredFold3DMesh.visible = false;
+            renderer.domElement.style.cursor = 'default';
+        }
+        if (current3DHoveredEdge) {
+            current3DHoveredEdge = null;
+        }
+        if (papercraft.hoveredFoldEdgeKey) {
+            papercraft.hoveredFoldEdgeKey = null;
+            renderUnfoldWorkbench();
+        }
+    } else {
+        if (hoveredFold3DMesh.visible) {
+            hoveredFold3DMesh.visible = false;
+        }
+        current3DHoveredEdge = null;
+    }
+
     // Si la función de rastreo está desactivada por el usuario, o si se está pintando / orbitando / usando calcas, no resaltar
     if (!is3DTrackerEnabled || e.buttons !== 0 || (painter && painter.isPainting) || (decalSystem && decalSystem.selectedDecal)) {
         if (tracker3DGroup.visible) {
@@ -765,6 +1006,15 @@ renderer.domElement.addEventListener('mousemove', (e) => {
 });
 
 renderer.domElement.addEventListener('mouseleave', () => {
+    if (hoveredFold3DMesh.visible) {
+        hoveredFold3DMesh.visible = false;
+        renderer.domElement.style.cursor = 'default';
+    }
+    current3DHoveredEdge = null;
+    if (papercraft.hoveredFoldEdgeKey) {
+        papercraft.hoveredFoldEdgeKey = null;
+        renderUnfoldWorkbench();
+    }
     if (papercraft.hoveredSource === '3d') {
         lastHoveredFaceIdx = null;
         papercraft.setHoveredPart(null);
@@ -775,8 +1025,32 @@ renderer.domElement.addEventListener('mouseleave', () => {
     }
 });
 
-// Al hacer clic en una pieza en la vista 3D, seleccionarla en la Mesa A4
-renderer.domElement.addEventListener('click', () => {
+// Al hacer clic en una pieza en la vista 3D, alternar pliegue o seleccionarla
+renderer.domElement.addEventListener('click', (e) => {
+    // Si el usuario estaba arrastrando para rotar u orbitar la cámara 3D, no disparar clic
+    if (is3DMouseDownPos) {
+        const dist = Math.hypot(e.clientX - is3DMouseDownPos.x, e.clientY - is3DMouseDownPos.y);
+        if (dist > 5) return;
+    }
+
+    // Si se hizo clic sobre una arista en modo Blender / Pliegues, alternarla directamente
+    if (current3DHoveredEdge) {
+        const { edge, part, engine } = current3DHoveredEdge;
+        edge.isFold = !edge.isFold;
+        if (!part.customFolds) part.customFolds = new Set();
+        if (edge.isFold) {
+            part.customFolds.add(edge.key);
+            showWorkbenchToast('🟢 <b>Pliegue activado</b> (en Vista 3D)');
+        } else {
+            part.customFolds.delete(edge.key);
+            showWorkbenchToast('⚪ <b>Pliegue ocultado</b> (en Vista 3D)');
+        }
+        if (engine && typeof engine.notifyChange === 'function') engine.notifyChange();
+        update3DFoldLines();
+        renderUnfoldWorkbench();
+        return;
+    }
+
     if (papercraft.active && papercraft.hoveredPart && papercraft.hoveredSource === '3d') {
         papercraft.selectedPart = papercraft.hoveredPart;
         updateSelectedPartCard();
@@ -984,6 +1258,14 @@ function updatePapercraftUI() {
     if (cutWidthSel && papercraft.cutLineWidthMm !== undefined) {
         cutWidthSel.value = Number(papercraft.cutLineWidthMm).toFixed(2);
     }
+    const foldColorSel = document.getElementById('unfold-fold-color');
+    if (foldColorSel && papercraft.foldLineColor) foldColorSel.value = papercraft.foldLineColor;
+    const foldWidthSel = document.getElementById('unfold-fold-width');
+    if (foldWidthSel && papercraft.foldLineWidthMm !== undefined) {
+        foldWidthSel.value = Number(papercraft.foldLineWidthMm).toFixed(2);
+    }
+    const foldStyleSel = document.getElementById('unfold-fold-style');
+    if (foldStyleSel && papercraft.foldLineStyle) foldStyleSel.value = papercraft.foldLineStyle;
     const bleedSel = document.getElementById('unfold-bleed-margin');
     if (bleedSel && papercraft.bleedMm !== undefined) {
         bleedSel.value = Number(papercraft.bleedMm).toFixed(1);
@@ -1953,6 +2235,17 @@ function getWorkbenchTabOrEdgeAt(canvasX, canvasY) {
 }
 window.getWorkbenchTabOrEdgeAt = getWorkbenchTabOrEdgeAt;
 
+function getWorkbenchInternalEdgeAt(canvasX, canvasY) {
+    if (isAssemblyWorkbenchActive() && window.modelAssembler && typeof window.modelAssembler.getInternalEdgeAt === 'function') {
+        return window.modelAssembler.getInternalEdgeAt(canvasX, canvasY);
+    }
+    if (papercraft && typeof papercraft.getInternalEdgeAt === 'function') {
+        return papercraft.getInternalEdgeAt(canvasX, canvasY);
+    }
+    return null;
+}
+window.getWorkbenchInternalEdgeAt = getWorkbenchInternalEdgeAt;
+
 function showWorkbenchToast(msg, durationMs = 2000) {
     const el = document.getElementById('unfold-toast');
     if (!el) return;
@@ -1988,6 +2281,7 @@ function setUnfoldAnnotationTool(tool) {
 
     const toolBtns = [
         { id: 'btn-unfold-tool-select', name: 'select' },
+        { id: 'btn-unfold-tool-fold', name: 'fold' },
         { id: 'btn-unfold-tool-text', name: 'text' },
         { id: 'btn-unfold-tool-arrow', name: 'arrow' },
         { id: 'btn-unfold-tool-badge', name: 'badge' },
@@ -2003,11 +2297,22 @@ function setUnfoldAnnotationTool(tool) {
         }
     });
 
+    if (tool === 'fold') {
+        if (typeof setWireframeMode === 'function') setWireframeMode('blender');
+    } else if (state.uvWireframeMode === 'blender' && tool === 'select') {
+        const selVal = document.getElementById('unfold-wireframe-mode')?.value;
+        if (selVal !== 'blender' && typeof setWireframeMode === 'function') {
+            setWireframeMode('outlines');
+        }
+    }
+
     if (canvasUnfold) {
         if (tool === 'select') canvasUnfold.style.cursor = 'default';
         else if (tool === 'text') canvasUnfold.style.cursor = 'text';
+        else if (tool === 'fold') canvasUnfold.style.cursor = 'pointer';
         else canvasUnfold.style.cursor = 'crosshair';
     }
+    renderUnfoldWorkbench();
 }
 window.setUnfoldAnnotationTool = setUnfoldAnnotationTool;
 
@@ -2257,6 +2562,32 @@ canvasUnfold?.addEventListener('mousedown', (e) => {
             return;
         }
 
+        // 5.5 Modo Edición de Pliegues (Estilo Blender / Tool Fold): Conmutar Mostrar/Ocultar Arista de Doblez
+        const isFoldEditMode = (papercraft.lineMode === 'blender' || activeTool === 'fold');
+        if (isFoldEditMode) {
+            const hitFoldEdge = getWorkbenchInternalEdgeAt(mouseCanvasX, mouseCanvasY);
+            if (hitFoldEdge) {
+                const edge = hitFoldEdge.edge;
+                const part = hitFoldEdge.part;
+                edge.isFold = !edge.isFold;
+                if (!part.customFolds) part.customFolds = new Set();
+                if (edge.isFold) {
+                    part.customFolds.add(edge.key);
+                    showWorkbenchToast('🟢 <b>Pliegue activado</b> (Línea de doblez)');
+                } else {
+                    part.customFolds.delete(edge.key);
+                    showWorkbenchToast('⚪ <b>Pliegue ocultado</b>');
+                }
+                if (hitFoldEdge.part) {
+                    papercraft.selectedPart = hitFoldEdge.part;
+                    updateSelectedPartCard();
+                }
+                update3DFoldLines();
+                renderUnfoldWorkbench();
+                return;
+            }
+        }
+
         // 6. Modo SELECT / MOVER:
         // Fase 2: Comprobar clic sobre solapa o arista de costura (Flip Flap / Asignar solapa)
         const hitTabEdge = getWorkbenchTabOrEdgeAt(mouseCanvasX, mouseCanvasY);
@@ -2497,7 +2828,46 @@ window.addEventListener('mousemove', (e) => {
     } else {
         if (mouseCanvasX >= 0 && mouseCanvasX <= rect.width && mouseCanvasY >= 0 && mouseCanvasY <= rect.height) {
             const activeTool = papercraft.activeAnnotationTool || 'select';
-            if (activeTool !== 'select') {
+            const isFoldEditMode = (state.uvWireframeMode === 'blender' || papercraft.lineMode === 'blender' || activeTool === 'fold');
+
+            if (isFoldEditMode) {
+                const hitFold = getWorkbenchInternalEdgeAt(mouseCanvasX, mouseCanvasY);
+                if (hitFold) {
+                    canvasUnfold.style.cursor = 'pointer';
+                    if (papercraft.hoveredFoldEdgeKey !== hitFold.edge.key) {
+                        papercraft.hoveredFoldEdgeKey = hitFold.edge.key;
+                        renderUnfoldWorkbench();
+                    }
+                    // Reflejar arista resaltada en 3D simultáneamente
+                    if (hitFold.edge.pos3dA && hitFold.edge.pos3dB) {
+                        const targetMesh = (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && hitFold.part?._parentPiece?.mesh)
+                            ? hitFold.part._parentPiece.mesh
+                            : (state.mesh?.children?.find(c => c.isMesh) || state.mesh);
+                        if (targetMesh) {
+                            hoveredFold3DGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+                                hitFold.edge.pos3dA[0], hitFold.edge.pos3dA[1], hitFold.edge.pos3dA[2],
+                                hitFold.edge.pos3dB[0], hitFold.edge.pos3dB[1], hitFold.edge.pos3dB[2]
+                            ]), 3));
+                            hoveredFold3DGeometry.attributes.position.needsUpdate = true;
+                            hoveredFold3DMesh.matrixAutoUpdate = false;
+                            targetMesh.updateWorldMatrix(true, false);
+                            hoveredFold3DMesh.matrix.copy(targetMesh.matrixWorld);
+                            hoveredFold3DMesh.visible = true;
+                        }
+                    }
+                    return;
+                } else if (papercraft.hoveredFoldEdgeKey) {
+                    papercraft.hoveredFoldEdgeKey = null;
+                    if (hoveredFold3DMesh.visible) hoveredFold3DMesh.visible = false;
+                    renderUnfoldWorkbench();
+                }
+            } else if (papercraft.hoveredFoldEdgeKey) {
+                papercraft.hoveredFoldEdgeKey = null;
+                if (hoveredFold3DMesh.visible) hoveredFold3DMesh.visible = false;
+                renderUnfoldWorkbench();
+            }
+
+            if (activeTool !== 'select' && activeTool !== 'fold') {
                 canvasUnfold.style.cursor = (activeTool === 'text') ? 'text' : 'crosshair';
             } else {
                 // Fase 2: Detectar hover sobre solapas y aristas de costura
@@ -2558,6 +2928,13 @@ window.addEventListener('mousemove', (e) => {
 
 canvasUnfold?.addEventListener('mouseleave', () => {
     let needsRedraw = false;
+    if (hoveredFold3DMesh.visible) {
+        hoveredFold3DMesh.visible = false;
+    }
+    if (papercraft.hoveredFoldEdgeKey !== null) {
+        papercraft.hoveredFoldEdgeKey = null;
+        needsRedraw = true;
+    }
     if (papercraft.hoveredSeamNumber !== null || papercraft.hoveredJunctionKey !== null) {
         papercraft.hoveredSeamNumber = null;
         papercraft.hoveredJunctionKey = null;
@@ -2818,6 +3195,9 @@ document.getElementById('btn-unfold-sel-center')?.addEventListener('click', () =
 
 // --- Event Listeners para Barra de Herramientas de Anotaciones Unfold ---
 document.getElementById('btn-unfold-tool-select')?.addEventListener('click', () => setUnfoldAnnotationTool('select'));
+document.getElementById('btn-unfold-tool-fold')?.addEventListener('click', () => {
+    setUnfoldAnnotationTool(papercraft.activeAnnotationTool === 'fold' ? 'select' : 'fold');
+});
 document.getElementById('btn-unfold-tool-text')?.addEventListener('click', () => setUnfoldAnnotationTool('text'));
 document.getElementById('btn-unfold-tool-arrow')?.addEventListener('click', () => setUnfoldAnnotationTool('arrow'));
 document.getElementById('btn-unfold-tool-badge')?.addEventListener('click', () => setUnfoldAnnotationTool('badge'));
@@ -3116,6 +3496,46 @@ unfoldCutWidth?.addEventListener('change', (e) => {
     renderUnfoldWorkbench();
 });
 
+// Control de estilo de líneas de pliegue (Color, Grosor y Trazo)
+const unfoldFoldColor = document.getElementById('unfold-fold-color');
+unfoldFoldColor?.addEventListener('change', (e) => {
+    const val = e.target.value;
+    papercraft.foldLineColor = val;
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) p.papercraft.foldLineColor = val;
+        });
+    }
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
+const unfoldFoldWidth = document.getElementById('unfold-fold-width');
+unfoldFoldWidth?.addEventListener('change', (e) => {
+    const val = parseFloat(e.target.value) || 0.08;
+    papercraft.foldLineWidthMm = val;
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) p.papercraft.foldLineWidthMm = val;
+        });
+    }
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
+const unfoldFoldStyle = document.getElementById('unfold-fold-style');
+unfoldFoldStyle?.addEventListener('change', (e) => {
+    const val = e.target.value;
+    papercraft.foldLineStyle = val;
+    if (window.modelAssembler && window.modelAssembler.pieces) {
+        window.modelAssembler.pieces.forEach(p => {
+            if (p.papercraft) p.papercraft.foldLineStyle = val;
+        });
+    }
+    drawUVWireframe();
+    renderUnfoldWorkbench();
+});
+
 const unfoldBleedMargin = document.getElementById('unfold-bleed-margin');
 unfoldBleedMargin?.addEventListener('change', (e) => {
     const val = parseFloat(e.target.value) || 0;
@@ -3257,22 +3677,64 @@ document.getElementById('unfold-a4-orient')?.addEventListener('change', (e) => {
 
 // Control unificado de visualización de aristas 3D, UV y Papercraft
 function update3DWireframe() {
-    const mode = state.uvWireframeMode || 'clean';
-    const isVisible = state.uvWireframeVisible && (mode !== 'none') && (mode !== 'outlines');
+    const mode = state.uvWireframeMode || (papercraft?.lineMode) || 'clean';
+    const isBlenderOrFold = (mode === 'blender' || papercraft?.activeAnnotationTool === 'fold');
+    const isVisible = state.uvWireframeVisible && (mode !== 'none') && ((mode !== 'outlines') || isBlenderOrFold);
 
-    const updateTarget = (root) => {
+    const updateMeshWireframe = (root) => {
         if (!root) return;
         root.traverse(child => {
-            if (child.isLineSegments && child.userData?.isWireframeOverlay) {
-                child.visible = isVisible;
+            if (!child.isMesh || child.userData?.isSelectionOverlay) return;
+
+            let overlay = child.children.find(c => c.isLineSegments && c.userData?.isWireframeOverlay);
+
+            if (!isVisible) {
+                if (overlay) overlay.visible = false;
+                return;
+            }
+
+            const targetType = isBlenderOrFold ? 'blender' : (mode === 'full' ? 'full' : 'edges');
+            if (!overlay) {
+                const geo = (targetType === 'blender' || targetType === 'full')
+                    ? new THREE.WireframeGeometry(child.geometry)
+                    : new THREE.EdgesGeometry(child.geometry, 15);
+                const mat = new THREE.LineBasicMaterial({
+                    color: targetType === 'blender' ? 0x00d2ff : 0x555555,
+                    opacity: targetType === 'blender' ? 0.65 : 0.35,
+                    transparent: true,
+                    polygonOffset: true,
+                    polygonOffsetFactor: -1,
+                    polygonOffsetUnits: -2
+                });
+                overlay = new THREE.LineSegments(geo, mat);
+                overlay.userData = { isWireframeOverlay: true, wireframeType: targetType };
+                overlay.renderOrder = 95;
+                child.add(overlay);
+            } else {
+                if (overlay.userData?.wireframeType !== targetType) {
+                    if (overlay.geometry) overlay.geometry.dispose();
+                    overlay.geometry = (targetType === 'blender' || targetType === 'full')
+                        ? new THREE.WireframeGeometry(child.geometry)
+                        : new THREE.EdgesGeometry(child.geometry, 15);
+                    overlay.userData.wireframeType = targetType;
+                }
+                overlay.material.color.setHex(targetType === 'blender' ? 0x00d2ff : 0x555555);
+                overlay.material.opacity = targetType === 'blender' ? 0.65 : 0.35;
+                overlay.material.transparent = true;
+                overlay.material.polygonOffset = true;
+                overlay.material.polygonOffsetFactor = -1;
+                overlay.material.polygonOffsetUnits = -2;
+                overlay.renderOrder = 95;
+                overlay.visible = true;
             }
         });
     };
 
-    updateTarget(state.mesh);
+    updateMeshWireframe(state.mesh);
     if (window.modelAssembler && window.modelAssembler.group) {
-        updateTarget(window.modelAssembler.group);
+        updateMeshWireframe(window.modelAssembler.group);
     }
+    update3DFoldLines();
 }
 window.update3DWireframe = update3DWireframe;
 
@@ -4240,12 +4702,14 @@ function getProjectNSPData() {
                 bleedMm: papercraft.bleedMm,
                 foldLineColor: papercraft.foldLineColor,
                 foldLineWidthMm: papercraft.foldLineWidthMm,
-                lineMode: state.uvWireframeMode || papercraft.lineMode || 'clean',
+                foldLineStyle: papercraft.foldLineStyle || 'dashed',
+                lineMode: state.uvWireframeMode || papercraft.lineMode || 'outlines',
                 a4Orientation: papercraft.a4Orientation,
                 pagesCount: papercraft.pagesCount,
                 partsLayout: papercraft.parts.map(p => ({
                     id: p.id,
-                    layout: { ...p.layout }
+                    layout: { ...p.layout },
+                    customFolds: p.customFolds ? Array.from(p.customFolds) : (p.internalEdges || []).filter(e => e.isFold).map(e => e.key)
                 })),
                 seamOverrides: papercraft.seamOverrides ? Array.from(papercraft.seamOverrides.entries()) : [],
                 junctionOverrides: papercraft.junctionOverrides ? Array.from(papercraft.junctionOverrides.entries()) : [],
@@ -4565,6 +5029,21 @@ async function loadProjectNSP(fileOrData, silent = false) {
                 const sel = document.getElementById('unfold-cut-width');
                 if (sel) sel.value = Number(pp.cutLineWidthMm).toFixed(2);
             }
+            if (pp.foldLineColor) {
+                papercraft.foldLineColor = pp.foldLineColor;
+                const sel = document.getElementById('unfold-fold-color');
+                if (sel) sel.value = pp.foldLineColor;
+            }
+            if (pp.foldLineWidthMm) {
+                papercraft.foldLineWidthMm = pp.foldLineWidthMm;
+                const sel = document.getElementById('unfold-fold-width');
+                if (sel) sel.value = Number(pp.foldLineWidthMm).toFixed(2);
+            }
+            if (pp.foldLineStyle) {
+                papercraft.foldLineStyle = pp.foldLineStyle;
+                const sel = document.getElementById('unfold-fold-style');
+                if (sel) sel.value = pp.foldLineStyle;
+            }
             if (pp.bleedMm !== undefined) {
                 papercraft.bleedMm = pp.bleedMm;
                 const sel = document.getElementById('unfold-bleed-margin');
@@ -4585,8 +5064,16 @@ async function loadProjectNSP(fileOrData, silent = false) {
             if (pp.partsLayout && Array.isArray(pp.partsLayout)) {
                 pp.partsLayout.forEach(pl => {
                     const part = papercraft.parts.find(p => p.id === pl.id);
-                    if (part && pl.layout) {
-                        Object.assign(part.layout, pl.layout);
+                    if (part) {
+                        if (pl.layout) Object.assign(part.layout, pl.layout);
+                        if (pl.customFolds && Array.isArray(pl.customFolds)) {
+                            part.customFolds = new Set(pl.customFolds);
+                            if (part.internalEdges) {
+                                part.internalEdges.forEach(e => {
+                                    e.isFold = part.customFolds.has(e.key);
+                                });
+                            }
+                        }
                     }
                 });
             }
@@ -5547,6 +6034,19 @@ function animate(time) {
         }
     }
     
+    // Sincronizar posición de las líneas de pliegue 3D con la rotación/escala de la malla
+    if (typeof foldLines3D !== 'undefined' && foldLines3D.visible) {
+        const activeRoot = (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler?.group) ? window.modelAssembler.group : state.mesh;
+        if (activeRoot) {
+            activeRoot.updateWorldMatrix(true, false);
+            foldLines3D.matrix.copy(activeRoot.matrixWorld);
+        }
+    }
+    if (typeof hoveredFold3DMesh !== 'undefined' && hoveredFold3DMesh.visible && current3DHoveredEdge?.mesh) {
+        current3DHoveredEdge.mesh.updateWorldMatrix(true, false);
+        hoveredFold3DMesh.matrix.copy(current3DHoveredEdge.mesh.matrixWorld);
+    }
+
     renderer.render(scene, camera);
 }
 requestAnimationFrame(animate);

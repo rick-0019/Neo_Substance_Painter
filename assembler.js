@@ -1154,6 +1154,26 @@ export class ModelAssembler {
     }
 
     /**
+     * Detecta si el cursor está sobre una arista interna en cualquiera de las piezas activas (Modo Blender / Pliegues)
+     */
+    getInternalEdgeAt(canvasX, canvasY, viewScale = 4.0) {
+        const activePieces = this.pieces.filter(p => p.visible !== false);
+        if (activePieces.length === 0) return null;
+
+        for (let pi = activePieces.length - 1; pi >= 0; pi--) {
+            const piece = activePieces[pi];
+            if (piece.papercraft && typeof piece.papercraft.getInternalEdgeAt === 'function') {
+                const hit = piece.papercraft.getInternalEdgeAt(canvasX, canvasY, viewScale);
+                if (hit) {
+                    hit.piece = piece;
+                    return hit;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * Renderiza todas las hojas A4 de todas las piezas ensambladas en la Mesa de Trabajo 2D
      */
     renderWorkbench(ctx, canvasW, canvasH) {
@@ -1200,6 +1220,7 @@ export class ModelAssembler {
                         piece.papercraft.cutLineWidthMm = src.cutLineWidthMm;
                         piece.papercraft.foldLineColor = src.foldLineColor;
                         piece.papercraft.foldLineWidthMm = src.foldLineWidthMm;
+                        piece.papercraft.foldLineStyle = src.foldLineStyle;
                         piece.papercraft.showTabNumbers = src.showTabNumbers;
                         piece.papercraft.numberPlacement = src.numberPlacement;
                     }
@@ -2054,6 +2075,7 @@ export class ModelAssembler {
                         p.papercraft.cutLineWidthMm = src.cutLineWidthMm;
                         p.papercraft.foldLineColor = src.foldLineColor;
                         p.papercraft.foldLineWidthMm = src.foldLineWidthMm;
+                        p.papercraft.foldLineStyle = src.foldLineStyle;
                         p.papercraft.showTabNumbers = src.showTabNumbers;
                         p.papercraft.numberPlacement = src.numberPlacement;
                     }
@@ -2168,13 +2190,15 @@ export class ModelAssembler {
                         bleedMm: piece.papercraft.bleedMm,
                         foldLineColor: piece.papercraft.foldLineColor,
                         foldLineWidthMm: piece.papercraft.foldLineWidthMm,
+                        foldLineStyle: piece.papercraft.foldLineStyle || 'dashed',
                         hideSmoothLines: piece.papercraft.hideSmoothLines,
-                        lineMode: piece.papercraft.lineMode || window.state?.uvWireframeMode || 'clean',
+                        lineMode: piece.papercraft.lineMode || window.state?.uvWireframeMode || 'outlines',
                         showTabNumbers: piece.papercraft.showTabNumbers,
                         numberPlacement: piece.papercraft.numberPlacement,
                         partsLayout: (piece.papercraft.parts || []).map(p => ({
                             id: p.id,
-                            layout: { ...p.layout }
+                            layout: { ...p.layout },
+                            customFolds: p.customFolds ? Array.from(p.customFolds) : (p.internalEdges || []).filter(e => e.isFold).map(e => e.key)
                         }))
                     } : null
                 };
@@ -2289,6 +2313,7 @@ export class ModelAssembler {
                     if (ps.bleedMm !== undefined) piecePapercraft.bleedMm = ps.bleedMm;
                     if (ps.foldLineColor) piecePapercraft.foldLineColor = ps.foldLineColor;
                     if (ps.foldLineWidthMm) piecePapercraft.foldLineWidthMm = ps.foldLineWidthMm;
+                    if (ps.foldLineStyle) piecePapercraft.foldLineStyle = ps.foldLineStyle;
                     if (ps.hideSmoothLines !== undefined) piecePapercraft.hideSmoothLines = ps.hideSmoothLines;
                     if (ps.lineMode) piecePapercraft.lineMode = ps.lineMode;
                     if (ps.showTabNumbers !== undefined) piecePapercraft.showTabNumbers = ps.showTabNumbers;
@@ -2307,8 +2332,16 @@ export class ModelAssembler {
                 if (ps && Array.isArray(ps.partsLayout)) {
                     ps.partsLayout.forEach(savedPart => {
                         const part = piecePapercraft.parts.find(pt => pt.id === savedPart.id);
-                        if (part && savedPart.layout) {
-                            Object.assign(part.layout, savedPart.layout);
+                        if (part) {
+                            if (savedPart.layout) Object.assign(part.layout, savedPart.layout);
+                            if (savedPart.customFolds && Array.isArray(savedPart.customFolds)) {
+                                part.customFolds = new Set(savedPart.customFolds);
+                                if (part.internalEdges) {
+                                    part.internalEdges.forEach(e => {
+                                        e.isFold = part.customFolds.has(e.key);
+                                    });
+                                }
+                            }
                         }
                     });
                 }

@@ -1308,6 +1308,7 @@
                             <!-- Grupo 3: Herramientas de Anotación y Montaje -->
                             <div id="unfold-annotation-tools" class="unfold-tool-group">
                                 <button type="button" id="btn-unfold-tool-select" class="size-step-btn active" style="width: auto; padding: 0 6px; font-size: 0.82em; font-weight: bold; white-space: nowrap;" title="Modo Mover: Seleccionar y mover piezas o anotaciones">👆 Mover</button>
+                                <button type="button" id="btn-unfold-tool-fold" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap; color: #69f0ae; font-weight: bold;" title="Modo Blender / Pliegues: Ver aristas y hacer clic para mostrar u ocultar líneas de doblez">📐 Pliegues</button>
                                 <button type="button" id="btn-unfold-tool-text" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Añadir Nota de Texto">🏷️ Texto</button>
                                 <button type="button" id="btn-unfold-tool-arrow" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Flecha Indicativa">↗️ Flecha</button>
                                 <button type="button" id="btn-unfold-tool-badge" class="size-step-btn" style="width: auto; padding: 0 6px; font-size: 0.82em; white-space: nowrap;" title="Paso Numerado (①, ②, ③...)">🔢 Nº</button>
@@ -1699,9 +1700,10 @@
                             </div>
                             <div class="unfold-row">
                                 <label>Líneas de pieza:</label>
-                                <select id="unfold-wireframe-mode" class="ribbon-select" style="width: 125px;" title="Modo de líneas: Limpias (pliegues vivos), Solo Contornos (sin pliegues interiores), Malla Completa u Ocultar">
-                                    <option value="clean" selected>Limpias (Pliegues)</option>
-                                    <option value="outlines">Solo Contornos</option>
+                                <select id="unfold-wireframe-mode" class="ribbon-select" style="width: 125px;" title="Modo de líneas: Solo Contornos, Malla (Estilo Blender / Editar Pliegues), Pliegues Marcados, Malla Completa u Ocultar">
+                                    <option value="outlines" selected>Solo Contornos</option>
+                                    <option value="blender">Malla (Estilo Blender)</option>
+                                    <option value="clean">Pliegues marcados</option>
                                     <option value="full">Malla completa</option>
                                     <option value="none">Ocultar</option>
                                 </select>
@@ -1725,6 +1727,35 @@
                                 </select>
                             </div>
                             <div class="unfold-row">
+                                <label>Línea de pliegue:</label>
+                                <select id="unfold-fold-color" class="ribbon-select" style="width: 125px;" title="Color de las líneas de doblado/pliegue">
+                                    <option value="#999999" selected>Gris tenue (Pro)</option>
+                                    <option value="#555555">Gris oscuro</option>
+                                    <option value="#000000">Negro clásico</option>
+                                    <option value="#2e7d32">Verde guía</option>
+                                    <option value="#c62828">Rojo guía</option>
+                                    <option value="#0288d1">Azul técnico</option>
+                                </select>
+                            </div>
+                            <div class="unfold-row">
+                                <label>Grosor pliegue:</label>
+                                <select id="unfold-fold-width" class="ribbon-select" style="width: 125px;" title="Grosor de la línea de pliegue en PDF">
+                                    <option value="0.05">0.05 mm (Ultrafino)</option>
+                                    <option value="0.08" selected>0.08 mm (Hairline)</option>
+                                    <option value="0.12">0.12 mm (Medio)</option>
+                                    <option value="0.18">0.18 mm (Grueso)</option>
+                                </select>
+                            </div>
+                            <div class="unfold-row">
+                                <label>Trazo pliegue:</label>
+                                <select id="unfold-fold-style" class="ribbon-select" style="width: 125px;" title="Estilo de trazo para las líneas de pliegue">
+                                    <option value="dashed" selected>Discontinuo (- - -)</option>
+                                    <option value="solid">Continuo (Línea sólida)</option>
+                                    <option value="dashdot">Punto y raya (- · - ·)</option>
+                                    <option value="dotted">Punteado (· · · ·)</option>
+                                </select>
+                            </div>
+                            <div class="unfold-row">
                                 <label title="Extiende la textura 1 a 2 mm hacia afuera del corte y hacia las solapas para evitar bordes blancos al cortar">Sangrado (Bleed):</label>
                                 <select id="unfold-bleed-margin" class="ribbon-select" style="width: 125px;" title="Sangrado perimetral (Texture Bleed / Padding) para corte limpio sin líneas blancas">
                                     <option value="0">Sin sangrado (0 mm)</option>
@@ -1732,11 +1763,6 @@
                                     <option value="1.5" selected>1.5 mm (Museo / Pro)</option>
                                     <option value="2.0">2.0 mm (Amplio)</option>
                                 </select>
-                            </div>
-                            <div class="unfold-row">
-                                <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;" title="Elimina las líneas punteadas feas dentro de conos y cilindros">
-                                    <input type="checkbox" id="unfold-check-hide-smooth" checked> Limpiar curvas (&lt; 25°)
-                                </label>
                             </div>
                         </div>
 

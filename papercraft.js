@@ -15,7 +15,7 @@ export class PapercraftEngine {
         this.numberPlacement = 'flaps'; // 'flaps' (solo en solapas ocultas bajo pegamento), 'outside' (fuera en descarte), 'none' (limpio)
         this.hideSmoothLines = true;
         this.creaseThresholdDeg = 25.0;
-        this.lineMode = 'clean'; // 'clean' (pliegues vivos), 'outlines' (solo contornos), 'full' (malla), 'none' (ocultar)
+        this.lineMode = 'outlines'; // 'outlines' (solo contornos + pliegues marcados), 'blender' (malla alámbrica editable), 'clean' (pliegues vivos), 'full' (malla), 'none' (ocultar)
 
         // Fase 2: Gestión de Costuras y Solapas Dinámicas (Flip Flap + Edge Matching)
         this.seams = [];
@@ -27,6 +27,9 @@ export class PapercraftEngine {
         this.hoveredSeamNumber = null;
         this.hoveredJunctionKey = null;
 
+        // Gestión de Pliegues Manuales (Modo Blender / Pliegues)
+        this.hoveredFoldEdgeKey = null;
+
         // Fase 3: Rastreo Interactivo 3D <-> 2D (Hover Tracker)
         this.hoveredPart = null;
         this.hoveredSource = null; // '3d' o '2d'
@@ -37,6 +40,7 @@ export class PapercraftEngine {
         this.cutLineColor = '#666666'; // Gris tenue profesional
         this.foldLineWidthMm = 0.08;
         this.foldLineColor = '#999999';
+        this.foldLineStyle = 'dashed'; // 'dashed' (- - -), 'solid', 'dashdot' (- · - ·), 'dotted' (· · · ·)
 
         // Acabado de Museo: Sangrado de Color Perimetral (Texture Bleed / Padding)
         this.bleedMm = 1.5; // 1.5 mm de dilatación hacia los márgenes y solapas para evitar bordes blancos al cortar
@@ -473,11 +477,23 @@ export class PapercraftEngine {
                     } else {
                         const twin = uvHalfEdges.get(twinKey);
                         if (fIdx < twin.faceIdx) {
-                            const d = Math.max(-1, Math.min(1, dot(faceNormals[fIdx], faceNormals[twin.faceIdx])));
-                            const angleDeg = Math.acos(d) * (180 / Math.PI);
-                            if (angleDeg >= this.creaseThresholdDeg) {
-                                islandInternalEdges.push({ p1, p2, angleDeg });
-                            }
+                            const k1 = `${p1.x.toFixed(2)},${p1.y.toFixed(2)}`;
+                            const k2 = `${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
+                            const key = k1 < k2 ? `${k1}->${k2}` : `${k2}->${k1}`;
+                            const prevPart = this.parts ? this.parts.find(p => p.id === islandIdx) : null;
+                            const isFold = (prevPart && prevPart.customFolds && prevPart.customFolds.has(key)) || false;
+                            const v3dA = positions[faces[fIdx][i]];
+                            const v3dB = positions[faces[fIdx][next]];
+                            islandInternalEdges.push({
+                                p1: { x: p1.x, y: p1.y },
+                                p2: { x: p2.x, y: p2.y },
+                                pos3dA: v3dA ? [v3dA[0], v3dA[1], v3dA[2]] : null,
+                                pos3dB: v3dB ? [v3dB[0], v3dB[1], v3dB[2]] : null,
+                                key,
+                                faceA: fIdx,
+                                faceB: twin.faceIdx,
+                                isFold
+                            });
                         }
                     }
                 }
@@ -496,6 +512,13 @@ export class PapercraftEngine {
             const wMm = Math.max(1, bMaxX - bMinX);
             const hMm = Math.max(1, bMaxY - bMinY);
 
+            // Conjunto de pliegues personalizados para persistencia de la pieza
+            const prevPart = this.parts ? this.parts.find(p => p.id === islandIdx) : null;
+            const customFolds = prevPart && prevPart.customFolds ? new Set(prevPart.customFolds) : new Set();
+            islandInternalEdges.forEach(e => {
+                if (e.isFold) customFolds.add(e.key);
+            });
+
             return {
                 id: islandIdx,
                 faceIndices,
@@ -505,6 +528,7 @@ export class PapercraftEngine {
                 localTriangles,
                 boundaryEdges: islandBoundaryEdges,
                 internalEdges: islandInternalEdges,
+                customFolds,
                 tabs: [],
                 bounds: { minX: bMinX, maxX: bMaxX, minY: bMinY, maxY: bMaxY },
                 wMm,
@@ -709,7 +733,9 @@ export class PapercraftEngine {
         const clonedInternalEdges = (src.internalEdges || []).map(e => ({
             ...e,
             p1: { ...e.p1 },
-            p2: { ...e.p2 }
+            p2: { ...e.p2 },
+            pos3dA: e.pos3dA ? [...e.pos3dA] : null,
+            pos3dB: e.pos3dB ? [...e.pos3dB] : null
         }));
         const clonedTabs = (src.tabs || []).map(t => ({
             ...t,
@@ -1372,6 +1398,42 @@ export class PapercraftEngine {
             if (lx >= b.minX - 3 && lx <= b.maxX + 3 && ly >= b.minY - 3 && ly <= b.maxY + 3) {
                 return { part, pageIndex: p, localX: lx, localY: ly };
             }
+        }
+        return null;
+    }
+
+    /**
+     * Detecta si el cursor está sobre una arista interna de la pieza en modo Blender / Pliegues
+     */
+    getInternalEdgeAt(canvasX, canvasY, viewScale = 4.0) {
+        if (!this.parts || this.parts.length === 0) return null;
+
+        const hit = this.getPartAt(canvasX, canvasY, viewScale);
+        if (!hit || !hit.part) return null;
+
+        const part = hit.part;
+        if (!part.internalEdges || part.internalEdges.length === 0) return null;
+
+        const lx = hit.localX;
+        const ly = hit.localY;
+
+        const zoom = this.zoom || 1.0;
+        // Holgura adaptada al zoom (aprox 8-10px en pantalla)
+        const tolMm = Math.max(1.8, 9.0 / (zoom * viewScale));
+
+        let closestEdge = null;
+        let minDist = tolMm;
+
+        for (const edge of part.internalEdges) {
+            const d = this._distToSegment(lx, ly, edge.p1.x, edge.p1.y, edge.p2.x, edge.p2.y);
+            if (d < minDist) {
+                minDist = d;
+                closestEdge = edge;
+            }
+        }
+
+        if (closestEdge) {
+            return { part, edge: closestEdge, dist: minDist, pageIndex: hit.pageIndex };
         }
         return null;
     }
@@ -2221,8 +2283,9 @@ export class PapercraftEngine {
         }
 
         // B) Líneas de pliegue interiores
-        const lineMode = this.lineMode || (window.state && window.state.uvWireframeMode) || 'clean';
-        const showInternalFolds = (lineMode !== 'outlines' && lineMode !== 'none');
+        const lineMode = this.lineMode || (window.state && window.state.uvWireframeMode) || 'outlines';
+        const isBlenderMode = (lineMode === 'blender' || this.activeAnnotationTool === 'fold');
+
         if (lineMode === 'full' && part.localTriangles && part.localTriangles.length > 0) {
             ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
             ctx.lineWidth = 0.5;
@@ -2236,16 +2299,76 @@ export class PapercraftEngine {
                 ctx.lineTo(tri[0].x * mmToPx, tri[0].y * mmToPx);
             }
             ctx.stroke();
-        } else if (showInternalFolds && part.internalEdges && part.internalEdges.length > 0) {
-            ctx.strokeStyle = this.foldLineColor || 'rgba(120, 120, 120, 0.7)';
-            ctx.lineWidth = 0.6;
-            ctx.setLineDash([]);
-            ctx.beginPath();
-            for (const edge of part.internalEdges) {
-                ctx.moveTo(edge.p1.x * mmToPx, edge.p1.y * mmToPx);
-                ctx.lineTo(edge.p2.x * mmToPx, edge.p2.y * mmToPx);
+        } else if (isBlenderMode) {
+            // 1. Malla completa estilo Blender (Cyan tenue de fondo)
+            if (part.internalEdges && part.internalEdges.length > 0) {
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.42)';
+                ctx.lineWidth = 0.85;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                for (const edge of part.internalEdges) {
+                    ctx.moveTo(edge.p1.x * mmToPx, edge.p1.y * mmToPx);
+                    ctx.lineTo(edge.p2.x * mmToPx, edge.p2.y * mmToPx);
+                }
+                ctx.stroke();
             }
-            ctx.stroke();
+
+            // 2. Líneas de pliegue activas (Verde vivo continuo estilo Blender, como en la imagen del usuario)
+            const foldEdges = (part.internalEdges || []).filter(e => e.isFold);
+            if (foldEdges.length > 0) {
+                ctx.strokeStyle = '#00e676';
+                ctx.lineWidth = 2.4;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                for (const edge of foldEdges) {
+                    ctx.moveTo(edge.p1.x * mmToPx, edge.p1.y * mmToPx);
+                    ctx.lineTo(edge.p2.x * mmToPx, edge.p2.y * mmToPx);
+                }
+                ctx.stroke();
+            }
+
+            // 3. Arista interactiva bajo el cursor (Hover luminoso)
+            const hoveredKey = this.hoveredFoldEdgeKey;
+            if (hoveredKey && part.internalEdges) {
+                const hEdge = part.internalEdges.find(e => e.key === hoveredKey);
+                if (hEdge) {
+                    ctx.strokeStyle = '#ffff00';
+                    ctx.lineWidth = 3.6;
+                    ctx.setLineDash([]);
+                    ctx.beginPath();
+                    ctx.moveTo(hEdge.p1.x * mmToPx, hEdge.p1.y * mmToPx);
+                    ctx.lineTo(hEdge.p2.x * mmToPx, hEdge.p2.y * mmToPx);
+                    ctx.stroke();
+                }
+            }
+        } else if (lineMode !== 'none') {
+            // Modos estándar ('outlines', 'clean'): Dibujar ÚNICAMENTE las aristas marcadas por el usuario
+            const foldEdges = (part.internalEdges || []).filter(e => e.isFold);
+            if (foldEdges.length > 0) {
+                ctx.strokeStyle = this.foldLineColor || '#999999';
+                const wMm = parseFloat(this.foldLineWidthMm) || 0.08;
+                ctx.lineWidth = Math.max(0.6, wMm * mmToPx);
+
+                // Configurar trazo según selección (Discontinuo, Continuo, Punto y raya, Punteado)
+                const style = this.foldLineStyle || 'dashed';
+                if (style === 'dashed') {
+                    ctx.setLineDash([4, 3]);
+                } else if (style === 'dashdot') {
+                    ctx.setLineDash([6, 2, 1.5, 2]);
+                } else if (style === 'dotted') {
+                    ctx.setLineDash([1.5, 2.5]);
+                } else {
+                    ctx.setLineDash([]); // solid
+                }
+
+                ctx.beginPath();
+                for (const edge of foldEdges) {
+                    ctx.moveTo(edge.p1.x * mmToPx, edge.p1.y * mmToPx);
+                    ctx.lineTo(edge.p2.x * mmToPx, edge.p2.y * mmToPx);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
         }
 
         // C) Solapas (Flaps)
@@ -2684,12 +2807,12 @@ export class PapercraftEngine {
             }
 
             // B) Pliegues vivos interiores
-            const lineMode = this.lineMode || (window.state && window.state.uvWireframeMode) || 'clean';
-            const showInternalFolds = (lineMode !== 'outlines' && lineMode !== 'none');
+            const lineMode = this.lineMode || (window.state && window.state.uvWireframeMode) || 'outlines';
             if (lineMode === 'full' && part.localTriangles && part.localTriangles.length > 0) {
                 doc.setDrawColor(120, 120, 120);
                 doc.setLineWidth(0.08);
-                doc.setLineDash([], 0);
+                if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([], 0);
+                else if (typeof doc.setLineDash === 'function') doc.setLineDash([], 0);
                 for (const tri of part.localTriangles) {
                     if (!tri || tri.length < 3) continue;
                     const p1 = toPageMm(tri[0]);
@@ -2699,14 +2822,40 @@ export class PapercraftEngine {
                     doc.line(p2.x, p2.y, p3.x, p3.y);
                     doc.line(p3.x, p3.y, p1.x, p1.y);
                 }
-            } else if (showInternalFolds && part.internalEdges && part.internalEdges.length > 0) {
-                doc.setDrawColor(80, 80, 80);
-                doc.setLineWidth(0.12);
-                doc.setLineDash([], 0);
-                for (const edge of part.internalEdges) {
-                    const pA = toPageMm(edge.p1);
-                    const pB = toPageMm(edge.p2);
-                    doc.line(pA.x, pA.y, pB.x, pB.y);
+            } else if (lineMode !== 'none') {
+                // Dibujar aristas marcadas como pliegue por el usuario con su color, grosor y trazo configurados
+                const foldEdges = (part.internalEdges || []).filter(e => e.isFold);
+                if (foldEdges.length > 0) {
+                    const fHex = this.foldLineColor || '#999999';
+                    const fr = parseInt(fHex.slice(1, 3), 16) || 120;
+                    const fg = parseInt(fHex.slice(3, 5), 16) || 120;
+                    const fb = parseInt(fHex.slice(5, 7), 16) || 120;
+                    doc.setDrawColor(fr, fg, fb);
+                    doc.setLineWidth(parseFloat(this.foldLineWidthMm || 0.08) || 0.08);
+
+                    const style = this.foldLineStyle || 'dashed';
+                    if (style === 'dashed') {
+                        if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([1.8, 1.2], 0);
+                        else if (typeof doc.setLineDash === 'function') doc.setLineDash([1.8, 1.2], 0);
+                    } else if (style === 'dashdot') {
+                        if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([2.2, 0.9, 0.6, 0.9], 0);
+                        else if (typeof doc.setLineDash === 'function') doc.setLineDash([2.2, 0.9, 0.6, 0.9], 0);
+                    } else if (style === 'dotted') {
+                        if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([0.5, 0.9], 0);
+                        else if (typeof doc.setLineDash === 'function') doc.setLineDash([0.5, 0.9], 0);
+                    } else {
+                        if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([], 0);
+                        else if (typeof doc.setLineDash === 'function') doc.setLineDash([], 0);
+                    }
+
+                    for (const edge of foldEdges) {
+                        const pA = toPageMm(edge.p1);
+                        const pB = toPageMm(edge.p2);
+                        doc.line(pA.x, pA.y, pB.x, pB.y);
+                    }
+
+                    if (typeof doc.setLineDashPattern === 'function') doc.setLineDashPattern([], 0);
+                    else if (typeof doc.setLineDash === 'function') doc.setLineDash([], 0);
                 }
             }
 
