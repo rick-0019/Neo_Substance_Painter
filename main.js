@@ -1670,6 +1670,10 @@ function loadOBJContents(contents, mtlContents = null) {
 
         state.mesh = object;
         scene.add(state.mesh);
+        state.mesh.userData.initialPosition = state.mesh.position.clone();
+        state.mesh.userData.initialQuaternion = state.mesh.quaternion.clone();
+        state.mesh.userData.modelRotation = { x: 0, y: 0, z: 0 };
+        if (typeof update3DRotationUI === 'function') update3DRotationUI();
         state.rawOBJText = contents;
         try {
             localStorage.setItem('nsp_last_model_obj', contents);
@@ -4682,6 +4686,11 @@ function getProjectNSPData() {
             date: new Date().toISOString(),
             resolution: TEX_SIZE,
             modelOBJ: state.rawOBJText || null,
+            modelTransform: state.mesh ? {
+                position: [state.mesh.position.x, state.mesh.position.y, state.mesh.position.z],
+                quaternion: [state.mesh.quaternion.x, state.mesh.quaternion.y, state.mesh.quaternion.z, state.mesh.quaternion.w],
+                rotationDeg: state.mesh.userData?.modelRotation || { x: 0, y: 0, z: 0 }
+            } : null,
             backgroundColor: bgPresetSelect?.value || '#222222',
             quickColors: slots,
             layers: layersData,
@@ -4893,6 +4902,26 @@ async function loadProjectNSP(fileOrData, silent = false) {
         // 0. Si el proyecto incluye su propio modelo 3D (OBJ), cargarlo primero
         if (project.modelOBJ) {
             loadOBJContents(project.modelOBJ);
+        }
+
+        // 0.5 Restaurar orientación 3D personalizada del modelo
+        if (project.modelTransform && state.mesh) {
+            if (project.modelTransform.position && Array.isArray(project.modelTransform.position)) {
+                state.mesh.position.fromArray(project.modelTransform.position);
+            }
+            if (project.modelTransform.quaternion && Array.isArray(project.modelTransform.quaternion)) {
+                state.mesh.quaternion.fromArray(project.modelTransform.quaternion);
+            }
+            if (project.modelTransform.rotationDeg) {
+                state.mesh.userData.modelRotation = { ...project.modelTransform.rotationDeg };
+            }
+            state.mesh.updateMatrixWorld(true);
+            if (window.painter && typeof window.painter.buildTrianglesCache === 'function') {
+                window.painter.buildTrianglesCache();
+            }
+            if (typeof update3DFoldLines === 'function') update3DFoldLines();
+            if (typeof update3DWireframe === 'function') update3DWireframe();
+            if (typeof update3DRotationUI === 'function') update3DRotationUI();
         }
 
         // 1. Restaurar resolución si cambió
@@ -5590,6 +5619,180 @@ document.querySelectorAll('.btn-v3d-view').forEach(btn => {
         const view = btn.getAttribute('data-view');
         if (view) setOrthogonalView(view);
     });
+});
+
+// =========================================================================
+// SISTEMA DE ROTACIÓN Y ORIENTACIÓN 3D DEL MODELO
+// =========================================================================
+
+function rotate3DModel(axis, angleDeg) {
+    const target = (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler?.group)
+        ? window.modelAssembler.group
+        : state.mesh;
+    if (!target) return;
+
+    const angleRad = THREE.MathUtils.degToRad(angleDeg);
+
+    // Calcular centro geométrico en coordenadas mundiales para rotar exactamente sobre su centro
+    const box = new THREE.Box3().setFromObject(target);
+    const center = box.getCenter(new THREE.Vector3());
+
+    // Vector de eje en espacio mundial
+    const axisVec = axis === 'x' ? new THREE.Vector3(1, 0, 0)
+                  : axis === 'y' ? new THREE.Vector3(0, 1, 0)
+                  : new THREE.Vector3(0, 0, 1);
+
+    // Rotar alrededor del centro geométrico
+    const q = new THREE.Quaternion().setFromAxisAngle(axisVec, angleRad);
+    target.position.sub(center);
+    target.position.applyQuaternion(q);
+    target.position.add(center);
+    target.quaternion.premultiply(q);
+    target.updateMatrixWorld(true);
+
+    // Guardar rotación acumulada
+    if (!target.userData.modelRotation) {
+        target.userData.modelRotation = { x: 0, y: 0, z: 0 };
+    }
+    target.userData.modelRotation[axis] = (target.userData.modelRotation[axis] + angleDeg) % 360;
+
+    // Actualizar cachés de triángulos para pintor 3D
+    if (window.painter && typeof window.painter.buildTrianglesCache === 'function') {
+        window.painter.buildTrianglesCache();
+    }
+    if (typeof update3DFoldLines === 'function') {
+        update3DFoldLines();
+    }
+    if (typeof update3DWireframe === 'function') {
+        update3DWireframe();
+    }
+
+    // Actualizar cámara ortogonal si está activa
+    if (isOrthographic && currentOrthoView && currentOrthoView !== 'user_ortho') {
+        setOrthogonalView(currentOrthoView);
+    } else if (typeof controls !== 'undefined') {
+        const newBox = new THREE.Box3().setFromObject(target);
+        controls.target.copy(newBox.getCenter(new THREE.Vector3()));
+        controls.update();
+    }
+
+    // Actualizar Planos de Referencia si están visibles
+    if (window.referenceManager) {
+        window.referenceManager.onViewChanged(currentOrthoView, isOrthographic);
+    }
+
+    update3DRotationUI();
+    const sign = angleDeg > 0 ? '+' : '';
+    showWorkbenchToast(`🔄 <b>Modelo 3D rotado ${sign}${angleDeg}°</b> en eje ${axis.toUpperCase()}`);
+}
+window.rotate3DModel = rotate3DModel;
+
+function reset3DModelOrientation() {
+    const target = (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler?.group)
+        ? window.modelAssembler.group
+        : state.mesh;
+    if (!target) return;
+
+    if (target.userData.initialPosition) target.position.copy(target.userData.initialPosition);
+    else target.position.set(0, 0, 0);
+
+    if (target.userData.initialQuaternion) target.quaternion.copy(target.userData.initialQuaternion);
+    else target.quaternion.identity();
+
+    target.userData.modelRotation = { x: 0, y: 0, z: 0 };
+    target.updateMatrixWorld(true);
+
+    if (window.painter && typeof window.painter.buildTrianglesCache === 'function') {
+        window.painter.buildTrianglesCache();
+    }
+    if (typeof update3DFoldLines === 'function') update3DFoldLines();
+    if (typeof update3DWireframe === 'function') update3DWireframe();
+
+    if (isOrthographic && currentOrthoView && currentOrthoView !== 'user_ortho') {
+        setOrthogonalView(currentOrthoView);
+    } else if (typeof controls !== 'undefined') {
+        const box = new THREE.Box3().setFromObject(target);
+        controls.target.copy(box.getCenter(new THREE.Vector3()));
+        controls.update();
+    }
+
+    if (window.referenceManager) {
+        window.referenceManager.onViewChanged(currentOrthoView, isOrthographic);
+    }
+
+    update3DRotationUI();
+    showWorkbenchToast('⏮️ <b>Orientación 3D restablecida</b>');
+}
+window.reset3DModelOrientation = reset3DModelOrientation;
+
+function update3DRotationUI() {
+    const target = (typeof isAssemblyWorkbenchActive === 'function' && isAssemblyWorkbenchActive() && window.modelAssembler?.group)
+        ? window.modelAssembler.group
+        : state.mesh;
+    const rot = target?.userData?.modelRotation || { x: 0, y: 0, z: 0 };
+    const norm = (deg) => {
+        let d = Math.round(deg) % 360;
+        if (d < 0) d += 360;
+        return d;
+    };
+    const str = `X: ${norm(rot.x)}° | Y: ${norm(rot.y)}° | Z: ${norm(rot.z)}°`;
+    const label = document.getElementById('label-3d-rot-status');
+    if (label) label.textContent = str;
+}
+window.update3DRotationUI = update3DRotationUI;
+
+function toggle3DRotationPanel(show) {
+    const panel = document.getElementById('view3d-rot-panel');
+    const btn = document.getElementById('btn-view3d-toggle-rot-panel');
+    if (!panel) return;
+    const willShow = (show !== undefined) ? !!show : (panel.style.display === 'none');
+    panel.style.display = willShow ? 'block' : 'none';
+    if (btn) {
+        btn.classList.toggle('active', willShow);
+        btn.style.borderColor = willShow ? '#69f0ae' : '';
+    }
+
+    // Si el panel de planos de referencia está abierto, posicionar el panel de rotación a su izquierda
+    const refPanel = document.getElementById('view3d-ref-panel');
+    if (refPanel && refPanel.style.display !== 'none') {
+        panel.style.right = '315px';
+    } else {
+        panel.style.right = '12px';
+    }
+}
+window.toggle3DRotationPanel = toggle3DRotationPanel;
+
+document.getElementById('btn-view3d-toggle-rot-panel')?.addEventListener('click', () => {
+    toggle3DRotationPanel();
+});
+document.getElementById('btn-rot-panel-close')?.addEventListener('click', () => {
+    toggle3DRotationPanel(false);
+});
+document.getElementById('btn-ref-open-rot-panel')?.addEventListener('click', () => {
+    toggle3DRotationPanel(true);
+});
+document.getElementById('btn-unfold-open-rot-panel')?.addEventListener('click', () => {
+    toggle3DRotationPanel(true);
+});
+document.getElementById('btn-rot-preset-blender')?.addEventListener('click', () => {
+    rotate3DModel('x', -90);
+});
+document.getElementById('btn-rot-preset-inv-y')?.addEventListener('click', () => {
+    rotate3DModel('y', 180);
+});
+document.getElementById('btn-rot-reset')?.addEventListener('click', () => {
+    reset3DModelOrientation();
+});
+document.getElementById('btn-unfold-rot-reset')?.addEventListener('click', () => {
+    reset3DModelOrientation();
+});
+
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-3d-rot');
+    if (!btn) return;
+    const axis = btn.getAttribute('data-axis') || 'y';
+    const angle = parseFloat(btn.getAttribute('data-angle')) || 90;
+    rotate3DModel(axis, angle);
 });
 
 window.addEventListener('keydown', (e) => {

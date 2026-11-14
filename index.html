@@ -1369,6 +1369,8 @@
 
                 <!-- Barra de Vistas Ortogonales estilo Blender (Top-Right) -->
                 <div class="view3d-nav-toolbar">
+                    <button type="button" id="btn-view3d-toggle-rot-panel" class="btn-v3d" style="color: #69f0ae; font-weight: bold;" title="Rotar y Orientar Modelo 3D (Ejes X, Y, Z)">🔄 Girar 3D</button>
+                    <span class="v3d-sep"></span>
                     <button type="button" id="btn-view3d-toggle-ref-img" class="btn-v3d" style="color: #bbb;" title="Imágenes de Referencia y Planos en 3D (Estilo Blender)">🖼️ Planos: OFF</button>
                     <span class="v3d-sep"></span>
                     <button type="button" id="btn-view3d-toggle-tracker" class="btn-v3d" style="color: #888;" title="Activar o Desactivar Resalte de Caras (Rastreo 3D ⇄ 2D)">🧩 Rastreo: OFF</button>
@@ -1383,6 +1385,68 @@
                     <button type="button" class="btn-v3d btn-v3d-view" data-view="bottom" title="Vista Inferior (Ctrl + 7)">Inferior</button>
                 </div>
 
+                <!-- Panel Flotante de Orientación y Rotación 3D del Modelo -->
+                <div id="view3d-rot-panel" class="v3d-ref-panel" style="display: none; top: 42px; right: 12px; width: 315px; z-index: 45;">
+                    <div class="v3d-ref-header">
+                        <span class="v3d-ref-title">🔄 Orientar Modelo 3D</span>
+                        <button type="button" id="btn-rot-panel-close" class="btn-ref-icon" title="Cerrar panel">✖</button>
+                    </div>
+                    <div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 11px;">
+                        <div style="color: #aaa; line-height: 1.35;">
+                            Gira la pieza 3D para alinearla con las vistas ortogonales (Frente, Superior, Lateral) y los planos de referencia.
+                        </div>
+
+                        <!-- Indicador de rotación actual -->
+                        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 5px 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.08);">
+                            <span style="color: #888;">Rotación acumulada:</span>
+                            <span id="label-3d-rot-status" style="font-family: monospace; font-weight: bold; color: #69f0ae;">X: 0° | Y: 0° | Z: 0°</span>
+                        </div>
+
+                        <!-- Presets rápidos de 1 clic -->
+                        <div style="display: flex; gap: 5px;">
+                            <button type="button" id="btn-rot-preset-blender" class="size-step-btn" style="flex: 1; padding: 5px; font-size: 10px; color: #00e5ff; font-weight: bold;" title="Convierte modelos con eje Z vertical (Blender) a Y vertical (Three.js/NSP)">✈️ Blender Z-Up (-90° X)</button>
+                            <button type="button" id="btn-rot-preset-inv-y" class="size-step-btn" style="flex: 1; padding: 5px; font-size: 10px; color: #ffb74d;" title="Gira 180° horizontalmente (invierte Frente / Atrás)">🔄 Invertir 180°</button>
+                            <button type="button" id="btn-rot-reset" class="size-step-btn" style="padding: 5px 8px; font-size: 10px; color: #ff5252;" title="Restablecer rotación original">⏮️ Reset</button>
+                        </div>
+
+                        <!-- Controles individuales por Eje X, Y, Z -->
+                        <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 2px;">
+                            <!-- EJE X -->
+                            <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 4px; border: 1px solid rgba(255,82,82,0.15);">
+                                <span style="font-weight: bold; color: #ff5252; min-width: 50px;">Eje X <span style="font-size: 9px; color: #888;">(Inclinación)</span>:</span>
+                                <div style="display: flex; gap: 4px;">
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="x" data-angle="-90" style="padding: 3px 8px; font-size: 10px;" title="Girar -90° en X">↺ -90°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="x" data-angle="90" style="padding: 3px 8px; font-size: 10px;" title="Girar +90° en X">↻ +90°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="x" data-angle="-45" style="padding: 3px 5px; font-size: 10px; color: #aaa;" title="Girar -45° en X">-45°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="x" data-angle="45" style="padding: 3px 5px; font-size: 10px; color: #aaa;" title="Girar +45° en X">+45°</button>
+                                </div>
+                            </div>
+
+                            <!-- EJE Y -->
+                            <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 4px; border: 1px solid rgba(105,240,174,0.15);">
+                                <span style="font-weight: bold; color: #69f0ae; min-width: 50px;">Eje Y <span style="font-size: 9px; color: #888;">(Giro Horiz.)</span>:</span>
+                                <div style="display: flex; gap: 4px;">
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="y" data-angle="-90" style="padding: 3px 8px; font-size: 10px;" title="Girar -90° en Y">↺ -90°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="y" data-angle="90" style="padding: 3px 8px; font-size: 10px;" title="Girar +90° en Y">↻ +90°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="y" data-angle="-45" style="padding: 3px 5px; font-size: 10px; color: #aaa;" title="Girar -45° en Y">-45°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="y" data-angle="45" style="padding: 3px 5px; font-size: 10px; color: #aaa;" title="Girar +45° en Y">+45°</button>
+                                </div>
+                            </div>
+
+                            <!-- EJE Z -->
+                            <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 4px; border: 1px solid rgba(64,196,255,0.15);">
+                                <span style="font-weight: bold; color: #40c4ff; min-width: 50px;">Eje Z <span style="font-size: 9px; color: #888;">(Alabeo / Giro)</span>:</span>
+                                <div style="display: flex; gap: 4px;">
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="z" data-angle="-90" style="padding: 3px 8px; font-size: 10px;" title="Girar -90° en Z">↺ -90°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="z" data-angle="90" style="padding: 3px 8px; font-size: 10px;" title="Girar +90° en Z">↻ +90°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="z" data-angle="-45" style="padding: 3px 5px; font-size: 10px; color: #aaa;" title="Girar -45° en Z">-45°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="z" data-angle="45" style="padding: 3px 5px; font-size: 10px; color: #aaa;" title="Girar +45° en Z">+45°</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Panel Flotante de Imágenes de Referencia / Blueprints (Estilo Blender) -->
                 <div id="view3d-ref-panel" class="v3d-ref-panel" style="display: none;">
                     <div class="v3d-ref-header">
@@ -1390,6 +1454,17 @@
                         <div class="v3d-ref-header-actions">
                             <button type="button" id="btn-ref-lock" class="btn-ref-icon" title="Bloquear edición de posición/escala">🔓</button>
                             <button type="button" id="btn-ref-close" class="btn-ref-icon" title="Cerrar panel">✖</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Barra de acceso rápido para reorientar el modelo 3D con respecto al plano -->
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; background: rgba(0, 229, 255, 0.08); border-bottom: 1px solid rgba(0, 229, 255, 0.2); font-size: 10px;">
+                        <span style="color: #69f0ae; font-weight: bold;">🔄 Girar Modelo:</span>
+                        <div style="display: flex; gap: 3px;">
+                            <button type="button" class="btn-3d-rot size-step-btn" data-axis="x" data-angle="-90" style="padding: 2px 6px; font-size: 10px;" title="Girar -90° en X (Blender Z-Up ⇄ Y-Up)">X 90°</button>
+                            <button type="button" class="btn-3d-rot size-step-btn" data-axis="y" data-angle="90" style="padding: 2px 6px; font-size: 10px;" title="Girar 90° en Y">Y 90°</button>
+                            <button type="button" class="btn-3d-rot size-step-btn" data-axis="z" data-angle="90" style="padding: 2px 6px; font-size: 10px;" title="Girar 90° en Z">Z 90°</button>
+                            <button type="button" id="btn-ref-open-rot-panel" class="size-step-btn" style="padding: 2px 6px; font-size: 10px; color: #00e5ff;" title="Abrir panel completo de rotación 3D">⚙️</button>
                         </div>
                     </div>
                     
@@ -1611,6 +1686,20 @@
                                 </div>
                                 <div style="display: flex; align-items: center; justify-content: flex-end; gap: 4px; font-size: 0.72em; color: #888;">
                                     <span>🔒 Proporciones 3D automáticas</span>
+                                </div>
+                            </div>
+
+                            <!-- Orientación Rápida del Modelo 3D -->
+                            <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 6px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.76em; font-weight: bold; color: #69f0ae;">
+                                    <span>🔄 Orientar Modelo 3D</span>
+                                    <button type="button" id="btn-unfold-rot-reset" class="size-step-btn" style="padding: 1px 5px; font-size: 0.70em; color: #ff5252;" title="Restablecer rotación a 0°">Reset</button>
+                                </div>
+                                <div style="display: flex; gap: 3px;">
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="x" data-angle="-90" style="flex: 1; padding: 2px 4px; font-size: 0.72em;" title="Girar -90° en X (Blender Z-Up ⇄ Y-Up)">X 90°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="y" data-angle="90" style="flex: 1; padding: 2px 4px; font-size: 0.72em;" title="Girar 90° en Y">Y 90°</button>
+                                    <button type="button" class="btn-3d-rot size-step-btn" data-axis="z" data-angle="90" style="flex: 1; padding: 2px 4px; font-size: 0.72em;" title="Girar 90° en Z">Z 90°</button>
+                                    <button type="button" id="btn-unfold-open-rot-panel" class="size-step-btn" style="padding: 2px 6px; font-size: 0.72em; color: #00e5ff;" title="Abrir panel completo de rotación 3D">⚙️</button>
                                 </div>
                             </div>
                         </div>

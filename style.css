@@ -2448,6 +2448,16 @@ input[type=range]::-webkit-slider-runnable-track {
     color: #fff;
 }
 
+.btn-3d-rot {
+    transition: all 0.15s ease;
+}
+.btn-3d-rot:hover {
+    background: rgba(0, 229, 255, 0.22) !important;
+    border-color: #00e5ff !important;
+    color: #fff !important;
+    box-shadow: 0 0 6px rgba(0, 229, 255, 0.4);
+}
+
 .btn-ref-icon.locked {
     color: #ffaa00;
 }
