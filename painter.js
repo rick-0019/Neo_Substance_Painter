@@ -635,34 +635,47 @@ export class Painter {
                     const x = uv.x * this.canvas.width;
                     const y = (1 - uv.y) * this.canvas.height;
                     
-                    let normal = hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 0, 1);
-                    if (hit.face && hit.object.geometry && hit.object.geometry.attributes.normal) {
-                        const normAttr = hit.object.geometry.attributes.normal;
-                        const a = hit.face.a, b = hit.face.b, c = hit.face.c;
-                        if (a !== undefined && b !== undefined && c !== undefined) {
-                            const nA = new THREE.Vector3().fromBufferAttribute(normAttr, a);
-                            const nB = new THREE.Vector3().fromBufferAttribute(normAttr, b);
-                            const nC = new THREE.Vector3().fromBufferAttribute(normAttr, c);
-                            normal = new THREE.Vector3().add(nA).add(nB).add(nC).normalize();
-                        }
+                    let rawWorldNormal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : new THREE.Vector3(0, 0, 1);
+                    let worldNormal = rawWorldNormal.clone();
+                    if (window.decalSystem) {
+                        const geomNorm = window.decalSystem.getGeometricFaceNormalFromHit(hit);
+                        const stab = window.decalSystem.getStabilizedSurfaceNormal(hit.point, geomNorm);
+                        rawWorldNormal = stab.rawNormal.clone();
+                        worldNormal = stab.stabilizedNormal.clone();
                     }
-                    const rawWorldNormal = normal.clone().transformDirection(hit.object.matrixWorld).normalize();
-                    const worldNormal = rawWorldNormal.clone();
                     if (this.camera) {
                         const camDir = new THREE.Vector3().subVectors(this.camera.position, hit.point).normalize();
                         if (worldNormal.dot(camDir) < 0) worldNormal.negate();
                     }
-                    const surfTang = window.decalSystem
-                        ? (window.decalSystem.getSurfaceTangentFromHit(hit) || window.decalSystem.find3DPointFromUV(uv.x, uv.y))
-                        : null;
+                    let hitTangent = null;
+                    let hitBitangent = null;
+                    let hitWppU = 0;
+                    let hitWppV = 0;
+                    if (window.decalSystem) {
+                        const tVec = window.decalSystem.getSurfaceTangentFromHit(hit);
+                        if (tVec) {
+                            hitTangent = tVec.clone();
+                            hitBitangent = window.decalSystem.surfaceBitangent ? window.decalSystem.surfaceBitangent.clone() : null;
+                            hitWppU = window.decalSystem.lastHitWorldUnitsPerU || 0;
+                            hitWppV = window.decalSystem.lastHitWorldUnitsPerV || 0;
+                        } else {
+                            const pt3D = window.decalSystem.find3DPointFromUV(uv.x, uv.y);
+                            if (pt3D) {
+                                hitTangent = pt3D.tangent ? pt3D.tangent.clone() : null;
+                                hitBitangent = pt3D.bitangent ? pt3D.bitangent.clone() : null;
+                                hitWppU = pt3D.worldUnitsPerU || 0;
+                                hitWppV = pt3D.worldUnitsPerV || 0;
+                            }
+                        }
+                    }
                     this.shape3DHit = {
                         point: hit.point.clone(),
                         normal: worldNormal.clone(),
                         rawNormal: rawWorldNormal.clone(),
-                        tangent: surfTang?.tangent ? surfTang.tangent.clone() : null,
-                        bitangent: surfTang?.bitangent ? surfTang.bitangent.clone() : null,
-                        worldUnitsPerU: surfTang?.worldUnitsPerU || 0,
-                        worldUnitsPerV: surfTang?.worldUnitsPerV || 0,
+                        tangent: hitTangent,
+                        bitangent: hitBitangent,
+                        worldUnitsPerU: hitWppU,
+                        worldUnitsPerV: hitWppV,
                         startX: x,
                         startY: y
                     };

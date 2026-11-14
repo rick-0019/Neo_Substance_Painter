@@ -1856,29 +1856,22 @@ export class DecalSystem {
                     this.surfaceTangent = tangent;
                 }
                 this.projectorPosition.copy(hit.point);
-                let normal = hit.face.normal.clone();
-                if (hit.object.geometry && hit.object.geometry.attributes.normal) {
-                    const normAttr = hit.object.geometry.attributes.normal;
-                    const a = hit.face.a, b = hit.face.b, c = hit.face.c;
-                    if (a !== undefined && b !== undefined && c !== undefined) {
-                        const nA = new THREE.Vector3().fromBufferAttribute(normAttr, a);
-                        const nB = new THREE.Vector3().fromBufferAttribute(normAttr, b);
-                        const nC = new THREE.Vector3().fromBufferAttribute(normAttr, c);
-                        normal = new THREE.Vector3().add(nA).add(nB).add(nC).normalize();
-                    }
+                if (decalObj && this.lastHitWorldUnitsPerU > 0 && this.lastHitWorldUnitsPerV > 0 && this.canvas) {
+                    decalObj.worldPerPixelX = this.lastHitWorldUnitsPerU / this.canvas.width;
+                    decalObj.worldPerPixelY = this.lastHitWorldUnitsPerV / this.canvas.height;
                 }
-                const rawWorldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
-                this.projectorMeshNormal = rawWorldNormal.clone();
-                const worldNormal = rawWorldNormal.clone();
+                const geomNormal = this.getGeometricFaceNormalFromHit(hit);
+                const estSpan = (decalObj && decalObj.worldPerPixelX > 0 && decalObj.width > 0)
+                    ? decalObj.width * decalObj.worldPerPixelX
+                    : this.getModelBaseSize() * 0.35;
+                const { rawNormal, stabilizedNormal } = this.getStabilizedSurfaceNormal(hit.point, geomNormal, estSpan);
+                this.projectorMeshNormal = rawNormal.clone();
+                const worldNormal = stabilizedNormal.clone();
                 if (this.camera) {
                     const camDir = new THREE.Vector3().subVectors(this.camera.position, hit.point).normalize();
                     if (worldNormal.dot(camDir) < 0) worldNormal.negate();
                 }
                 this.projectorNormal.copy(worldNormal);
-                if (decalObj && this.lastHitWorldUnitsPerU > 0 && this.lastHitWorldUnitsPerV > 0 && this.canvas) {
-                    decalObj.worldPerPixelX = this.lastHitWorldUnitsPerU / this.canvas.width;
-                    decalObj.worldPerPixelY = this.lastHitWorldUnitsPerV / this.canvas.height;
-                }
                 this._doUpdatePreviewTransform(decalObj);
                 this.sync2DFrom3D(hit);
                 if (decalObj) {
@@ -1966,21 +1959,8 @@ export class DecalSystem {
 
                     const e1 = new THREE.Vector3().subVectors(pB, pA);
                     const e2 = new THREE.Vector3().subVectors(pC, pA);
-                    let normal;
-                    if (geom.attributes.normal) {
-                        const normAttr = geom.attributes.normal;
-                        const nA = new THREE.Vector3().fromBufferAttribute(normAttr, iA);
-                        const nB = new THREE.Vector3().fromBufferAttribute(normAttr, iB);
-                        const nC = new THREE.Vector3().fromBufferAttribute(normAttr, iC);
-                        normal = new THREE.Vector3()
-                            .addScaledVector(nA, Math.max(0, wA))
-                            .addScaledVector(nB, Math.max(0, wB))
-                            .addScaledVector(nC, Math.max(0, wC))
-                            .transformDirection(m.matrixWorld)
-                            .normalize();
-                    } else {
-                        normal = new THREE.Vector3().crossVectors(e1, e2).normalize().transformDirection(m.matrixWorld).normalize();
-                    }
+                    const rawNormal = new THREE.Vector3().crossVectors(e1, e2).normalize().transformDirection(m.matrixWorld).normalize();
+                    const { stabilizedNormal: normal } = this.getStabilizedSurfaceNormal(point, rawNormal);
 
                     // La normal geométrica exterior de la superficie define la orientación natural del proyector.
                     // No se invierte respecto a la cámara para evitar culling de caras válidas al orbitar la vista.
@@ -2013,7 +1993,7 @@ export class DecalSystem {
                         bitangent = dPdv.clone().normalize();
                     }
 
-                    return { point, normal, tangent, bitangent, worldUnitsPerU, worldUnitsPerV, mesh: m };
+                    return { point, normal, rawNormal, tangent, bitangent, worldUnitsPerU, worldUnitsPerV, mesh: m };
                 }
             }
         }
@@ -3204,6 +3184,7 @@ export class DecalSystem {
 
         if (hit) {
             this.lastHit = hit;
+            const prevNormal = this.projectorNormal ? this.projectorNormal.clone().normalize() : null;
             if (!useDragOffset || !this.surfaceTangent) {
                 const tangent = this.getSurfaceTangentFromHit(hit);
                 if (tangent) {
@@ -3215,30 +3196,43 @@ export class DecalSystem {
             } else {
                 this.projectorPosition.copy(hit.point);
             }
-            let normal = hit.face.normal.clone();
-            if (hit.object.geometry && hit.object.geometry.attributes.normal) {
-                const normAttr = hit.object.geometry.attributes.normal;
-                const a = hit.face.a, b = hit.face.b, c = hit.face.c;
-                if (a !== undefined && b !== undefined && c !== undefined) {
-                    const nA = new THREE.Vector3().fromBufferAttribute(normAttr, a);
-                    const nB = new THREE.Vector3().fromBufferAttribute(normAttr, b);
-                    const nC = new THREE.Vector3().fromBufferAttribute(normAttr, c);
-                    normal = new THREE.Vector3().add(nA).add(nB).add(nC).normalize();
-                }
-            }
-            const rawWorldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
-            this.projectorMeshNormal = rawWorldNormal.clone();
-            const worldNormal = rawWorldNormal.clone();
+            const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+            const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+            const geomNormal = this.getGeometricFaceNormalFromHit(hit);
+            const estSpan = this.currentProjectorSize
+                ? Math.max(this.currentProjectorSize.x, this.currentProjectorSize.y)
+                : this.getModelBaseSize() * 0.35;
+            const { rawNormal, stabilizedNormal } = this.getStabilizedSurfaceNormal(this.projectorPosition, geomNormal, estSpan);
+            this.projectorMeshNormal = rawNormal.clone();
+            const worldNormal = stabilizedNormal.clone();
             if (this.camera) {
                 const camDir = new THREE.Vector3().subVectors(this.camera.position, hit.point).normalize();
                 if (worldNormal.dot(camDir) < 0) worldNormal.negate();
             }
+            if (useDragOffset && this.surfaceTangent && prevNormal && prevNormal.lengthSq() > 0.01 && prevNormal.dot(worldNormal) > -0.99) {
+                const transportQuat = new THREE.Quaternion().setFromUnitVectors(prevNormal, worldNormal);
+                this.surfaceTangent.applyQuaternion(transportQuat);
+                this.surfaceTangent.addScaledVector(worldNormal, -this.surfaceTangent.dot(worldNormal));
+                if (this.surfaceTangent.lengthSq() > 1e-6) this.surfaceTangent.normalize();
+                if (this.surfaceBitangent) {
+                    this.surfaceBitangent.applyQuaternion(transportQuat);
+                    this.surfaceBitangent.addScaledVector(worldNormal, -this.surfaceBitangent.dot(worldNormal));
+                    if (this.surfaceBitangent.lengthSq() > 1e-6) this.surfaceBitangent.normalize();
+                }
+            }
             this.projectorNormal.copy(worldNormal);
-            const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-            const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
-            if (decal && (!decal.worldPerPixelX || !decal.worldPerPixelY) && this.lastHitWorldUnitsPerU > 0 && this.lastHitWorldUnitsPerV > 0 && this.canvas) {
-                decal.worldPerPixelX = this.lastHitWorldUnitsPerU / this.canvas.width;
-                decal.worldPerPixelY = this.lastHitWorldUnitsPerV / this.canvas.height;
+            if (decal && (!decal.worldPerPixelX || !decal.worldPerPixelY) && this.canvas) {
+                if (!(this.lastHitWorldUnitsPerU > 0 && this.lastHitWorldUnitsPerV > 0)) {
+                    const savedT = this.surfaceTangent ? this.surfaceTangent.clone() : null;
+                    const savedB = this.surfaceBitangent ? this.surfaceBitangent.clone() : null;
+                    this.getSurfaceTangentFromHit(hit);
+                    if (savedT) this.surfaceTangent = savedT;
+                    if (savedB) this.surfaceBitangent = savedB;
+                }
+                if (this.lastHitWorldUnitsPerU > 0 && this.lastHitWorldUnitsPerV > 0) {
+                    decal.worldPerPixelX = this.lastHitWorldUnitsPerU / this.canvas.width;
+                    decal.worldPerPixelY = this.lastHitWorldUnitsPerV / this.canvas.height;
+                }
             }
             this._doUpdatePreviewTransform(decal);
 
@@ -3356,6 +3350,13 @@ export class DecalSystem {
 
         // Giro del usuario alrededor de la normal alineado con el espacio UV (sin inversión de xAxis)
         const angleQuat = new THREE.Quaternion().setFromAxisAngle(basisZ, -refRot);
+        const rotX = xAxis.clone().applyQuaternion(angleQuat).normalize();
+        const rotY = yAxis.clone().applyQuaternion(angleQuat).normalize();
+        this.currentProjectorBasis = {
+            xAxis: rotX,
+            yAxis: rotY,
+            zAxis: basisZ.clone()
+        };
         const finalQuat = angleQuat.multiply(baseQuat);
 
         // 2. Escala exacta 1:1 en unidades del mundo 3D con soporte independiente de ancho y alto
@@ -3530,8 +3531,592 @@ export class DecalSystem {
     }
 
     // ==========================================
-    // PREVISUALIZACIÓN Y DESPLIEGUE MULTI-PIEZA 3D -> 2D (GPU)
+    // ENVOLTURA GEODÉSICA / BISAGRA 3D -> 2D (GPU)
     // ==========================================
+
+    getGeometricFaceNormalFromHit(hit) {
+        if (!hit || !hit.object || !hit.face) return new THREE.Vector3(0, 0, 1);
+        const geom = hit.object.geometry;
+        if (geom && geom.attributes && geom.attributes.position) {
+            const pos = geom.attributes.position;
+            const a = hit.face.a, b = hit.face.b, c = hit.face.c;
+            if (a !== undefined && b !== undefined && c !== undefined) {
+                const pA = new THREE.Vector3().fromBufferAttribute(pos, a).applyMatrix4(hit.object.matrixWorld);
+                const pB = new THREE.Vector3().fromBufferAttribute(pos, b).applyMatrix4(hit.object.matrixWorld);
+                const pC = new THREE.Vector3().fromBufferAttribute(pos, c).applyMatrix4(hit.object.matrixWorld);
+                const e1 = new THREE.Vector3().subVectors(pB, pA);
+                const e2 = new THREE.Vector3().subVectors(pC, pA);
+                const fn = new THREE.Vector3().crossVectors(e1, e2);
+                if (fn.lengthSq() > 1e-12) return fn.normalize();
+            }
+        }
+        return hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+    }
+
+    _closestPointOnTriangle3D(p, a, b, c, target) {
+        const ab = new THREE.Vector3().subVectors(b, a);
+        const ac = new THREE.Vector3().subVectors(c, a);
+        const ap = new THREE.Vector3().subVectors(p, a);
+        const d1 = ab.dot(ap);
+        const d2 = ac.dot(ap);
+        if (d1 <= 0 && d2 <= 0) return target.copy(a);
+
+        const bp = new THREE.Vector3().subVectors(p, b);
+        const d3 = ab.dot(bp);
+        const d4 = ac.dot(bp);
+        if (d3 >= 0 && d4 <= d3) return target.copy(b);
+
+        const vc = d1 * d4 - d3 * d2;
+        if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+            const v = d1 / (d1 - d3);
+            return target.copy(a).addScaledVector(ab, v);
+        }
+
+        const cp = new THREE.Vector3().subVectors(p, c);
+        const d5 = ab.dot(cp);
+        const d6 = ac.dot(cp);
+        if (d6 >= 0 && d5 <= d6) return target.copy(c);
+
+        const vb = d5 * d2 - d1 * d6;
+        if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+            const w = d2 / (d2 - d6);
+            return target.copy(a).addScaledVector(ac, w);
+        }
+
+        const va = d3 * d6 - d5 * d4;
+        if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+            const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+            return target.copy(b).addScaledVector(new THREE.Vector3().subVectors(c, b), w);
+        }
+
+        const denom = 1.0 / (va + vb + vc);
+        const v = vb * denom;
+        const w = vc * denom;
+        return target.copy(a).addScaledVector(ab, v).addScaledVector(ac, w);
+    }
+
+    getGeodesicGraph() {
+        const meshes = this.getMeshesToBake();
+        if (meshes.length === 0) return null;
+
+        let sig = '';
+        for (let i = 0; i < meshes.length; i++) {
+            const m = meshes[i];
+            m.updateWorldMatrix(true, false);
+            sig += m.geometry.uuid + ':' + m.matrixWorld.elements.map(v => v.toFixed(4)).join(',') + '|';
+        }
+        if (this._geodesicGraph && this._geodesicGraph.sig === sig) {
+            return this._geodesicGraph;
+        }
+
+        const worldVerts = [];
+        const vertMap = new Map();
+        const uvVerts = [];
+        const uvMap = new Map();
+        const faces = [];
+
+        const getWeldedVert = (vec) => {
+            const key = `${Math.round(vec.x * 1e4)}_${Math.round(vec.y * 1e4)}_${Math.round(vec.z * 1e4)}`;
+            let idx = vertMap.get(key);
+            if (idx === undefined) {
+                idx = worldVerts.length;
+                worldVerts.push(vec.clone());
+                vertMap.set(key, idx);
+            }
+            return idx;
+        };
+
+        const getWeldedUV = (mIdx, u, v) => {
+            const key = `${mIdx}_${Math.round(u * 1e5)}_${Math.round(v * 1e5)}`;
+            let idx = uvMap.get(key);
+            if (idx === undefined) {
+                idx = uvVerts.length;
+                uvVerts.push({ u, v });
+                uvMap.set(key, idx);
+            }
+            return idx;
+        };
+
+        for (let mIdx = 0; mIdx < meshes.length; mIdx++) {
+            const m = meshes[mIdx];
+            const geom = m.geometry;
+            const pos = geom.attributes.position;
+            const uvs = geom.attributes.uv;
+            if (!pos || !uvs) continue;
+            const index = geom.index;
+            const count = index ? index.count : pos.count;
+
+            for (let i = 0; i < count; i += 3) {
+                const iA = index ? index.getX(i) : i;
+                const iB = index ? index.getX(i + 1) : i + 1;
+                const iC = index ? index.getX(i + 2) : i + 2;
+
+                const p0 = new THREE.Vector3().fromBufferAttribute(pos, iA).applyMatrix4(m.matrixWorld);
+                const p1 = new THREE.Vector3().fromBufferAttribute(pos, iB).applyMatrix4(m.matrixWorld);
+                const p2 = new THREE.Vector3().fromBufferAttribute(pos, iC).applyMatrix4(m.matrixWorld);
+
+                const e1 = new THREE.Vector3().subVectors(p1, p0);
+                const e2 = new THREE.Vector3().subVectors(p2, p0);
+                const crossVec = new THREE.Vector3().crossVectors(e1, e2);
+                const len = crossVec.length();
+                if (len < 1e-9) continue;
+
+                const normal = crossVec.multiplyScalar(1 / len);
+                const area = len * 0.5;
+                const centroid = new THREE.Vector3().add(p0).add(p1).add(p2).multiplyScalar(1 / 3);
+
+                const v0 = getWeldedVert(p0);
+                const v1 = getWeldedVert(p1);
+                const v2 = getWeldedVert(p2);
+                if (v0 === v1 || v1 === v2 || v2 === v0) continue;
+
+                const uv0 = getWeldedUV(mIdx, uvs.getX(iA), uvs.getY(iA));
+                const uv1 = getWeldedUV(mIdx, uvs.getX(iB), uvs.getY(iB));
+                const uv2 = getWeldedUV(mIdx, uvs.getX(iC), uvs.getY(iC));
+
+                faces.push({
+                    p0, p1, p2,
+                    vi: [v0, v1, v2],
+                    uvi: [uv0, uv1, uv2],
+                    normal,
+                    area,
+                    centroid
+                });
+            }
+        }
+
+        const numFaces = faces.length;
+        const adj = Array.from({ length: numFaces }, () => []);
+        const edgeMap = new Map();
+
+        for (let fi = 0; fi < numFaces; fi++) {
+            const f = faces[fi];
+            for (let e = 0; e < 3; e++) {
+                const a = f.vi[e];
+                const b = f.vi[(e + 1) % 3];
+                const uva = f.uvi[e];
+                const uvb = f.uvi[(e + 1) % 3];
+                const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+                let list = edgeMap.get(key);
+                if (!list) {
+                    list = [];
+                    edgeMap.set(key, list);
+                }
+                list.push({ fi, a, b, uva, uvb });
+            }
+        }
+
+        const connectEdgePair = (e0, e1) => {
+            const isSeam = !((e0.uva === e1.uva && e0.uvb === e1.uvb) || (e0.uva === e1.uvb && e0.uvb === e1.uva));
+            const uva1For0 = (e0.a === e1.a) ? e1.uva : e1.uvb;
+            const uvb1For0 = (e0.b === e1.b) ? e1.uvb : e1.uva;
+            const uva1For1 = (e1.a === e0.a) ? e0.uva : e0.uvb;
+            const uvb1For1 = (e1.b === e0.b) ? e0.uvb : e0.uva;
+
+            adj[e0.fi].push({
+                to: e1.fi,
+                a: e0.a,
+                b: e0.b,
+                uva0: e0.uva,
+                uvb0: e0.uvb,
+                uva1: uva1For0,
+                uvb1: uvb1For0,
+                isSeam
+            });
+            adj[e1.fi].push({
+                to: e0.fi,
+                a: e1.a,
+                b: e1.b,
+                uva0: e1.uva,
+                uvb0: e1.uvb,
+                uva1: uva1For1,
+                uvb1: uvb1For1,
+                isSeam
+            });
+        };
+
+        for (const list of edgeMap.values()) {
+            if (list.length === 2) {
+                connectEdgePair(list[0], list[1]);
+            } else if (list.length > 2) {
+                for (let i = 0; i < list.length; i++) {
+                    for (let j = i + 1; j < list.length; j++) {
+                        if (faces[list[i].fi].normal.dot(faces[list[j].fi].normal) >= 0.45) {
+                            connectEdgePair(list[i], list[j]);
+                        }
+                    }
+                }
+            }
+        }
+
+        const faceIsland = new Int32Array(numFaces).fill(-1);
+        let islandCount = 0;
+        for (let i = 0; i < numFaces; i++) {
+            if (faceIsland[i] !== -1) continue;
+            const id = islandCount++;
+            faceIsland[i] = id;
+            const stack = [i];
+            while (stack.length > 0) {
+                const cur = stack.pop();
+                for (const nb of adj[cur]) {
+                    if (!nb.isSeam && faceIsland[nb.to] === -1) {
+                        faceIsland[nb.to] = id;
+                        stack.push(nb.to);
+                    }
+                }
+            }
+        }
+
+        const posArr = new Float32Array(numFaces * 9);
+        const normArr = new Float32Array(numFaces * 9);
+        const uvArr = new Float32Array(numFaces * 6);
+        const decalUVArr = new Float32Array(numFaces * 6);
+        const validArr = new Float32Array(numFaces * 3);
+
+        for (let fi = 0; fi < numFaces; fi++) {
+            const f = faces[fi];
+            const pts = [f.p0, f.p1, f.p2];
+            for (let k = 0; k < 3; k++) {
+                const vIdx3 = (fi * 3 + k) * 3;
+                const vIdx2 = (fi * 3 + k) * 2;
+                posArr[vIdx3] = pts[k].x;
+                posArr[vIdx3 + 1] = pts[k].y;
+                posArr[vIdx3 + 2] = pts[k].z;
+                normArr[vIdx3] = f.normal.x;
+                normArr[vIdx3 + 1] = f.normal.y;
+                normArr[vIdx3 + 2] = f.normal.z;
+                const uvObj = uvVerts[f.uvi[k]];
+                uvArr[vIdx2] = uvObj.u;
+                uvArr[vIdx2 + 1] = uvObj.v;
+            }
+        }
+
+        const unwrappedGeo = new THREE.BufferGeometry();
+        unwrappedGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+        unwrappedGeo.setAttribute('normal', new THREE.BufferAttribute(normArr, 3));
+        unwrappedGeo.setAttribute('uv', new THREE.BufferAttribute(uvArr, 2));
+        unwrappedGeo.setAttribute('aDecalUV', new THREE.BufferAttribute(decalUVArr, 2));
+        unwrappedGeo.setAttribute('aValid', new THREE.BufferAttribute(validArr, 1));
+
+        if (this._geodesicGraph && this._geodesicGraph.unwrappedGeo) {
+            this._geodesicGraph.unwrappedGeo.dispose();
+        }
+
+        this._geodesicGraph = {
+            sig,
+            worldVerts,
+            uvVerts,
+            faces,
+            adj,
+            edgeMap,
+            faceIsland,
+            islandCount,
+            unwrappedGeo
+        };
+        return this._geodesicGraph;
+    }
+
+    findSeedFaceInGraph(graph, point, refNormal = null) {
+        if (!graph || graph.faces.length === 0) return -1;
+        const tmpPt = new THREE.Vector3();
+        let bestFi = 0;
+        let bestDistSq = Infinity;
+        let bestScore = Infinity;
+
+        for (let fi = 0; fi < graph.faces.length; fi++) {
+            const f = graph.faces[fi];
+            this._closestPointOnTriangle3D(point, f.p0, f.p1, f.p2, tmpPt);
+            const distSq = point.distanceToSquared(tmpPt);
+            const alignPenalty = refNormal ? (1.0 - Math.abs(f.normal.dot(refNormal))) * 1e-5 : 0;
+            const score = distSq + alignPenalty;
+            if (score < bestScore) {
+                bestScore = score;
+                bestDistSq = distSq;
+                bestFi = fi;
+            }
+        }
+        return bestFi;
+    }
+
+    /**
+     * Estabilización de normal en crestas/lomos:
+     * Promedia las normales geométricas reales (face.normal) de las caras conectadas
+     * dentro del radio de soporte, sin cruzar quiebres estructurales (> 63°).
+     */
+    getStabilizedSurfaceNormal(point, fallbackNormal, radius = 0) {
+        const fb = (fallbackNormal || new THREE.Vector3(0, 0, 1)).clone().normalize();
+        const graph = this.getGeodesicGraph();
+        if (!graph || graph.faces.length === 0) {
+            return { rawNormal: fb.clone(), stabilizedNormal: fb.clone() };
+        }
+
+        const seedFi = this.findSeedFaceInGraph(graph, point, fb);
+        if (seedFi < 0) {
+            return { rawNormal: fb.clone(), stabilizedNormal: fb.clone() };
+        }
+
+        const seedFace = graph.faces[seedFi];
+        const rawNormal = seedFace.normal.clone();
+        const smoothRadius = Math.max((radius || 0) * 0.55, this.getModelBaseSize() * 0.22);
+
+        const visited = new Uint8Array(graph.faces.length);
+        visited[seedFi] = 1;
+        const queue = [seedFi];
+        const sumNormal = new THREE.Vector3();
+        const tmpClosest = new THREE.Vector3();
+
+        while (queue.length > 0) {
+            const cur = queue.shift();
+            const f = graph.faces[cur];
+            this._closestPointOnTriangle3D(point, f.p0, f.p1, f.p2, tmpClosest);
+            const dist = tmpClosest.distanceTo(point);
+            const t = Math.max(0, (dist - smoothRadius * 0.75) / Math.max(1e-5, smoothRadius * 0.25));
+            const falloff = Math.max(0.15, 1.0 - t);
+            const w = f.area * falloff;
+            const orientedN = f.normal.clone();
+            if (orientedN.dot(rawNormal) < 0) orientedN.negate();
+            sumNormal.addScaledVector(orientedN, w);
+
+            for (const nb of graph.adj[cur]) {
+                if (visited[nb.to]) continue;
+                const fNext = graph.faces[nb.to];
+                if (f.normal.dot(fNext.normal) < 0.45) continue;
+                this._closestPointOnTriangle3D(point, fNext.p0, fNext.p1, fNext.p2, tmpClosest);
+                if (tmpClosest.distanceTo(point) > smoothRadius) continue;
+                visited[nb.to] = 1;
+                queue.push(nb.to);
+            }
+        }
+
+        const stabilizedNormal = sumNormal.lengthSq() > 1e-10 ? sumNormal.normalize() : rawNormal.clone();
+        return { rawNormal, stabilizedNormal };
+    }
+
+    /**
+     * Desdoble geodésico por bisagra 3D ("Modo Pegatina Física / Papel"):
+     * Despliega cada triángulo contiguo rotando alrededor de las aristas compartidas en 3D,
+     * manteniendo proporción isométrica 1:1 en las islas UV sin estiramiento 1/cos(theta)
+     * y filtrando discontinuidades superficiales bruscas.
+     */
+    updateGeodesicUnwrapGeometry(projPos, basis, scaleX, scaleY, flipH, flipV, allowPassthrough) {
+        const graph = this.getGeodesicGraph();
+        if (!graph || graph.faces.length === 0) return null;
+
+        const numFaces = graph.faces.length;
+        const decalUVAttr = graph.unwrappedGeo.getAttribute('aDecalUV');
+        const validAttr = graph.unwrappedGeo.getAttribute('aValid');
+        const decalUVArr = decalUVAttr.array;
+        const validArr = validAttr.array;
+
+        validArr.fill(0.0);
+
+        const zAxis = basis.zAxis.clone().normalize();
+        const seedFi = this.findSeedFaceInGraph(graph, projPos, zAxis);
+        if (seedFi < 0) {
+            decalUVAttr.needsUpdate = true;
+            validAttr.needsUpdate = true;
+            return graph.unwrappedGeo;
+        }
+
+        const seedFace = graph.faces[seedFi];
+        const pOrigin = new THREE.Vector3();
+        this._closestPointOnTriangle3D(projPos, seedFace.p0, seedFace.p1, seedFace.p2, pOrigin);
+
+        const n0 = seedFace.normal.clone();
+        if (n0.dot(zAxis) < 0) n0.negate();
+
+        const qSeed = new THREE.Quaternion();
+        if (zAxis.dot(n0) > -0.9999) {
+            qSeed.setFromUnitVectors(zAxis, n0);
+        }
+        const x0 = basis.xAxis.clone().applyQuaternion(qSeed);
+        x0.addScaledVector(n0, -x0.dot(n0));
+        if (x0.lengthSq() > 1e-8) x0.normalize();
+        const y0 = basis.yAxis.clone().applyQuaternion(qSeed);
+        y0.addScaledVector(n0, -y0.dot(n0));
+        if (y0.lengthSq() > 1e-8) y0.normalize();
+
+        const visited = new Uint8Array(numFaces);
+        const islandEntered = new Uint8Array(graph.islandCount);
+        const uvVertPlaced = new Array(graph.uvVerts.length).fill(null);
+        const faceOrientNormal = new Array(numFaces).fill(null);
+
+        visited[seedFi] = 1;
+        islandEntered[graph.faceIsland[seedFi]] = 1;
+        faceOrientNormal[seedFi] = n0;
+
+        for (let k = 0; k < 3; k++) {
+            const pVert = graph.worldVerts[seedFace.vi[k]];
+            const d = new THREE.Vector3().subVectors(pVert, pOrigin);
+            uvVertPlaced[seedFace.uvi[k]] = [d.dot(x0), d.dot(y0)];
+        }
+
+        const minStepCos = allowPassthrough ? -1.0 : 0.45;
+        const minTotalCos = allowPassthrough ? -1.0 : -0.45;
+        const maxRadius = Math.hypot(scaleX, scaleY) * 1.35;
+
+        const queue = [{ fi: seedFi, tier: 0, dist: 0 }];
+
+        while (queue.length > 0) {
+            queue.sort((a, b) => (a.tier - b.tier) || (a.dist - b.dist));
+            const { fi: cur, tier } = queue.shift();
+            const curFace = graph.faces[cur];
+            const curNormal = faceOrientNormal[cur] || curFace.normal;
+
+            for (const nb of graph.adj[cur]) {
+                if (visited[nb.to]) continue;
+
+                const nextFace = graph.faces[nb.to];
+                const nextNormal = nextFace.normal.clone();
+                if (nextNormal.dot(curNormal) < 0 && allowPassthrough) {
+                    nextNormal.negate();
+                }
+
+                // Filtro de continuidad superficial: evitar que una pegatina en el lomo salpique
+                // hacia el piso del fuselaje o cuadernas con cambios bruscos de plano (> 63°).
+                if (curNormal.dot(nextNormal) < minStepCos) continue;
+                if (nextNormal.dot(zAxis) < minTotalCos) continue;
+
+                const crossIsland = graph.faceIsland[nb.to] !== graph.faceIsland[cur];
+                if (crossIsland && islandEntered[graph.faceIsland[nb.to]]) continue;
+                if (nb.isSeam && !crossIsland && uvVertPlaced[nb.uva1] && uvVertPlaced[nb.uvb1]) continue;
+
+                const uA = uvVertPlaced[nb.uva0];
+                const uB = uvVertPlaced[nb.uvb0];
+                if (!uA || !uB) continue;
+
+                if (Math.hypot(uA[0], uA[1]) > maxRadius && Math.hypot(uB[0], uB[1]) > maxRadius) {
+                    continue;
+                }
+
+                // Encontrar el tercer vértice en curFace (dIdx) y en nextFace (cIdx)
+                let dSlot = -1;
+                for (let k = 0; k < 3; k++) {
+                    if (curFace.vi[k] !== nb.a && curFace.vi[k] !== nb.b) {
+                        dSlot = k;
+                        break;
+                    }
+                }
+                let cSlot = -1;
+                for (let k = 0; k < 3; k++) {
+                    if (nextFace.vi[k] !== nb.a && nextFace.vi[k] !== nb.b) {
+                        cSlot = k;
+                        break;
+                    }
+                }
+                if (dSlot === -1 || cSlot === -1) continue;
+                const uD = uvVertPlaced[curFace.uvi[dSlot]];
+                if (!uD) continue;
+
+                visited[nb.to] = 1;
+                faceOrientNormal[nb.to] = nextNormal;
+                if (crossIsland) {
+                    islandEntered[graph.faceIsland[nb.to]] = 1;
+                }
+
+                if (!uvVertPlaced[nb.uva1]) uvVertPlaced[nb.uva1] = [uA[0], uA[1]];
+                if (!uvVertPlaced[nb.uvb1]) uvVertPlaced[nb.uvb1] = [uB[0], uB[1]];
+
+                const cUvi = nextFace.uvi[cSlot];
+                if (!uvVertPlaced[cUvi]) {
+                    const pA = graph.worldVerts[nb.a];
+                    const pB = graph.worldVerts[nb.b];
+                    const pC = graph.worldVerts[nextFace.vi[cSlot]];
+                    const uA1 = uvVertPlaced[nb.uva1];
+                    const uB1 = uvVertPlaced[nb.uvb1];
+
+                    const eAB = new THREE.Vector3().subVectors(pB, pA);
+                    const lenAB3D = Math.max(1e-8, eAB.length());
+                    const dirAB = eAB.multiplyScalar(1 / lenAB3D);
+                    const eAC = new THREE.Vector3().subVectors(pC, pA);
+                    const along = eAC.dot(dirAB);
+                    const perpVec = eAC.clone().addScaledVector(dirAB, -along);
+                    const perpDist = perpVec.length();
+
+                    const du = uB1[0] - uA1[0];
+                    const dv = uB1[1] - uA1[1];
+                    const lenAB2D = Math.max(1e-8, Math.hypot(du, dv));
+                    const tx = du / lenAB2D;
+                    const ty = dv / lenAB2D;
+
+                    // Normal perpendicular en 2D apuntando hacia el lado opuesto de curFace (bisagra plana 180°)
+                    let nx = -ty;
+                    let ny = tx;
+                    if ((uD[0] - uA[0]) * nx + (uD[1] - uA[1]) * ny > 0) {
+                        nx = -nx;
+                        ny = -ny;
+                    }
+
+                    uvVertPlaced[cUvi] = [
+                        uA1[0] + tx * along + nx * perpDist,
+                        uA1[1] + ty * along + ny * perpDist
+                    ];
+                }
+
+                const pA = graph.worldVerts[nb.a];
+                const pB = graph.worldVerts[nb.b];
+                const edgeMid = new THREE.Vector3().addVectors(pA, pB).multiplyScalar(0.5);
+                const dToSeed = edgeMid.distanceTo(pOrigin);
+                queue.push({
+                    fi: nb.to,
+                    tier: crossIsland ? tier + 1 : tier,
+                    dist: dToSeed
+                });
+            }
+        }
+
+        // Soldadura fina de vértices de costura entre islas/pinzas adyacentes para unión 3D con 0.0px de brecha
+        const snapTol = Math.max(scaleX, scaleY) * 0.12;
+        for (const list of graph.edgeMap.values()) {
+            if (list.length === 2) {
+                const [e0, e1] = list;
+                if (visited[e0.fi] && visited[e1.fi]) {
+                    const isSeam = !((e0.uva === e1.uva && e0.uvb === e1.uvb) || (e0.uva === e1.uvb && e0.uvb === e1.uva));
+                    if (isSeam) {
+                        const pairs = [
+                            [e0.uva, e0.a === e1.a ? e1.uva : e1.uvb],
+                            [e0.uvb, e0.b === e1.b ? e1.uvb : e1.uva]
+                        ];
+                        for (const [uv0, uv1] of pairs) {
+                            if (uv0 !== uv1 && uvVertPlaced[uv0] && uvVertPlaced[uv1]) {
+                                const diff = Math.hypot(uvVertPlaced[uv0][0] - uvVertPlaced[uv1][0], uvVertPlaced[uv0][1] - uvVertPlaced[uv1][1]);
+                                if (diff > 0 && diff < snapTol) {
+                                    const mx = 0.5 * (uvVertPlaced[uv0][0] + uvVertPlaced[uv1][0]);
+                                    const my = 0.5 * (uvVertPlaced[uv0][1] + uvVertPlaced[uv1][1]);
+                                    uvVertPlaced[uv0] = [mx, my];
+                                    uvVertPlaced[uv1] = [mx, my];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        const effScaleX = (flipH ? -1 : 1) * Math.max(1e-5, scaleX);
+        const effScaleY = (flipV ? -1 : 1) * Math.max(1e-5, scaleY);
+
+        for (let fi = 0; fi < numFaces; fi++) {
+            if (!visited[fi]) continue;
+            const f = graph.faces[fi];
+            const u0 = uvVertPlaced[f.uvi[0]];
+            const u1 = uvVertPlaced[f.uvi[1]];
+            const u2 = uvVertPlaced[f.uvi[2]];
+            if (!u0 || !u1 || !u2) continue;
+
+            const coords = [u0, u1, u2];
+            for (let k = 0; k < 3; k++) {
+                const vIdx2 = (fi * 3 + k) * 2;
+                decalUVArr[vIdx2] = coords[k][0] / effScaleX + 0.5;
+                decalUVArr[vIdx2 + 1] = coords[k][1] / effScaleY + 0.5;
+                validArr[fi * 3 + k] = 1.0;
+            }
+        }
+
+        decalUVAttr.needsUpdate = true;
+        validAttr.needsUpdate = true;
+        return graph.unwrappedGeo;
+    }
 
     initPreviewBake() {
         if (this.previewBakeMaterial) return;
@@ -3552,17 +4137,24 @@ export class DecalSystem {
                 uProjectorNormal: { value: new THREE.Vector3() },
                 uDecalTexture: { value: null },
                 uModelMatrix: { value: new THREE.Matrix4() },
-                uAllowPassthrough: { value: 0.0 }
+                uAllowPassthrough: { value: 0.0 },
+                uUseGeodesic: { value: 1.0 }
             },
             vertexShader: `
+                attribute vec2 aDecalUV;
+                attribute float aValid;
                 varying vec3 vWorldPosition;
                 varying vec3 vWorldNormal;
+                varying vec2 vDecalUV;
+                varying float vValid;
                 uniform mat4 uModelMatrix;
 
                 void main() {
                     vec4 worldPos = uModelMatrix * vec4(position, 1.0);
                     vWorldPosition = worldPos.xyz;
                     vWorldNormal = normalize((uModelMatrix * vec4(normal, 0.0)).xyz);
+                    vDecalUV = aDecalUV;
+                    vValid = aValid;
                     gl_Position = vec4(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, 0.0, 1.0);
                 }
             `,
@@ -3571,21 +4163,28 @@ export class DecalSystem {
                 uniform vec3 uProjectorNormal;
                 uniform sampler2D uDecalTexture;
                 uniform float uAllowPassthrough;
+                uniform float uUseGeodesic;
 
                 varying vec3 vWorldPosition;
                 varying vec3 vWorldNormal;
+                varying vec2 vDecalUV;
+                varying float vValid;
 
                 void main() {
-                    // Modo 1 cara (Profesional / Sin traspasar):
-                    if (uAllowPassthrough < 0.5) {
-                        // Descartar solo caras traseras/opuestas, permitiendo envolver pliegues y costuras entre islas UV.
-                        if (dot(vWorldNormal, uProjectorNormal) < -0.25) discard;
+                    vec2 decalUV;
+                    if (uUseGeodesic > 0.5) {
+                        if (vValid < 0.99) discard;
+                        if (vDecalUV.x < 0.0 || vDecalUV.x > 1.0 || vDecalUV.y < 0.0 || vDecalUV.y > 1.0) discard;
+                        decalUV = vDecalUV;
+                    } else {
+                        if (uAllowPassthrough < 0.5) {
+                            if (dot(vWorldNormal, uProjectorNormal) < -0.25) discard;
+                        }
+                        vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
+                        if (abs(p.x) > 0.5 || abs(p.y) > 0.5 || abs(p.z) > 0.5) discard;
+                        decalUV = vec2(p.x + 0.5, p.y + 0.5);
                     }
 
-                    vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
-                    if (abs(p.x) > 0.5 || abs(p.y) > 0.5 || abs(p.z) > 0.5) discard;
-
-                    vec2 decalUV = vec2(p.x + 0.5, p.y + 0.5);
                     vec4 col = texture2D(uDecalTexture, decalUV);
                     if (col.a < 0.01) discard;
 
@@ -3623,26 +4222,41 @@ export class DecalSystem {
             if (!pt3D) return;
             decal.projectorPosition = pt3D.point.clone();
             decal.projectorNormal = pt3D.normal.clone();
-            decal.projectorMeshNormal = pt3D.normal.clone();
+            decal.projectorMeshNormal = (pt3D.rawNormal || pt3D.normal).clone();
             if (pt3D.tangent) decal.surfaceTangent = pt3D.tangent.clone();
             if (pt3D.bitangent) decal.surfaceBitangent = pt3D.bitangent.clone();
             if (!decal.worldPerPixelX && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
                 decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
                 decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
             }
-        } else if ((!decal.surfaceTangent || !decal.surfaceBitangent || !decal.worldPerPixelX) && decal.x !== undefined && decal.y !== undefined) {
-            const u = decal.x / this.canvas.width;
-            const v = 1 - (decal.y / this.canvas.height);
-            const pt3D = this.find3DPointFromUV(u, v);
-            if (pt3D) {
-                if (!decal.surfaceTangent && pt3D.tangent) decal.surfaceTangent = pt3D.tangent.clone();
-                if (!decal.surfaceBitangent && pt3D.bitangent) decal.surfaceBitangent = pt3D.bitangent.clone();
-                if (!decal.projectorMeshNormal) decal.projectorMeshNormal = pt3D.normal.clone();
-                if (!decal.worldPerPixelX && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
-                    decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
-                    decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
+        } else {
+            if ((!decal.surfaceTangent || !decal.surfaceBitangent || !decal.worldPerPixelX) && decal.x !== undefined && decal.y !== undefined) {
+                const u = decal.x / this.canvas.width;
+                const v = 1 - (decal.y / this.canvas.height);
+                const pt3D = this.find3DPointFromUV(u, v);
+                if (pt3D) {
+                    if (!decal.surfaceTangent && pt3D.tangent) decal.surfaceTangent = pt3D.tangent.clone();
+                    if (!decal.surfaceBitangent && pt3D.bitangent) decal.surfaceBitangent = pt3D.bitangent.clone();
+                    if (!decal.projectorMeshNormal) decal.projectorMeshNormal = (pt3D.rawNormal || pt3D.normal).clone();
+                    if (!decal.worldPerPixelX && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
+                        decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
+                        decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
+                    }
                 }
             }
+            const estSpan = (decal.worldPerPixelX > 0 && decal.width > 0)
+                ? decal.width * decal.worldPerPixelX
+                : this.getModelBaseSize() * 0.35;
+            const { rawNormal, stabilizedNormal } = this.getStabilizedSurfaceNormal(
+                decal.projectorPosition,
+                decal.projectorMeshNormal || decal.projectorNormal || new THREE.Vector3(0, 0, 1),
+                estSpan
+            );
+            if (decal.projectorNormal && stabilizedNormal.dot(decal.projectorNormal) < 0) {
+                stabilizedNormal.negate();
+            }
+            decal.projectorNormal = stabilizedNormal;
+            decal.projectorMeshNormal = rawNormal;
         }
         this.update3DUnwrapForDecal(decal, true, true);
     }
@@ -3679,38 +4293,61 @@ export class DecalSystem {
             : (this.projectorMeshNormal || this.projectorNormal);
         const allowPass = (preserveMode && decal.allowPassthrough !== undefined) ? !!decal.allowPassthrough : this.allowPassthrough;
 
-        const projectorWorldMatrix = new THREE.Matrix4();
-        projectorWorldMatrix.makeRotationFromEuler(orientation);
-        projectorWorldMatrix.setPosition(projPos);
-        const scaleX = (decal.flipH ? -1 : 1) * size.x;
-        const scaleY = (decal.flipV ? -1 : 1) * size.y;
-        projectorWorldMatrix.multiply(new THREE.Matrix4().makeScale(scaleX, scaleY, size.z));
-        const inverseProjectorMatrix = projectorWorldMatrix.clone().invert();
-
-        const meshesToBake = this.getMeshesToBake();
-        if (meshesToBake.length === 0) return;
-
         while (this.previewBakeScene.children.length > 0) {
             const child = this.previewBakeScene.children[0];
             if (child.material) child.material.dispose();
             this.previewBakeScene.remove(child);
         }
 
-        meshesToBake.forEach(m => {
-            m.updateWorldMatrix(true, false);
-            if (m.geometry && !m.geometry.attributes.normal) {
-                m.geometry.computeVertexNormals();
-            }
+        const basis = this.currentProjectorBasis || {
+            xAxis: new THREE.Vector3(1, 0, 0),
+            yAxis: new THREE.Vector3(0, 1, 0),
+            zAxis: shaderNormal.clone().normalize()
+        };
+
+        const useGeodesic = !allowPass;
+        const geodesicGeo = useGeodesic
+            ? this.updateGeodesicUnwrapGeometry(projPos, basis, size.x, size.y, !!decal.flipH, !!decal.flipV, allowPass)
+            : null;
+
+        if (geodesicGeo) {
             const mat = this.previewBakeMaterial.clone();
-            mat.uniforms.uModelMatrix.value.copy(m.matrixWorld);
-            mat.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
-            mat.uniforms.uProjectorNormal.value.copy(shaderNormal);
+            mat.uniforms.uModelMatrix.value.identity();
             mat.uniforms.uDecalTexture.value = this.decalTexture;
-            mat.uniforms.uAllowPassthrough.value = allowPass ? 1.0 : 0.0;
-            const meshClone = new THREE.Mesh(m.geometry, mat);
+            mat.uniforms.uUseGeodesic.value = 1.0;
+            mat.uniforms.uAllowPassthrough.value = 0.0;
+            const meshClone = new THREE.Mesh(geodesicGeo, mat);
             meshClone.frustumCulled = false;
             this.previewBakeScene.add(meshClone);
-        });
+        } else {
+            const projectorWorldMatrix = new THREE.Matrix4();
+            projectorWorldMatrix.makeRotationFromEuler(orientation);
+            projectorWorldMatrix.setPosition(projPos);
+            const scaleX = (decal.flipH ? -1 : 1) * size.x;
+            const scaleY = (decal.flipV ? -1 : 1) * size.y;
+            projectorWorldMatrix.multiply(new THREE.Matrix4().makeScale(scaleX, scaleY, size.z));
+            const inverseProjectorMatrix = projectorWorldMatrix.clone().invert();
+
+            const meshesToBake = this.getMeshesToBake();
+            if (meshesToBake.length === 0) return;
+
+            meshesToBake.forEach(m => {
+                m.updateWorldMatrix(true, false);
+                if (m.geometry && !m.geometry.attributes.normal) {
+                    m.geometry.computeVertexNormals();
+                }
+                const mat = this.previewBakeMaterial.clone();
+                mat.uniforms.uModelMatrix.value.copy(m.matrixWorld);
+                mat.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
+                mat.uniforms.uProjectorNormal.value.copy(shaderNormal);
+                mat.uniforms.uDecalTexture.value = this.decalTexture;
+                mat.uniforms.uAllowPassthrough.value = allowPass ? 1.0 : 0.0;
+                mat.uniforms.uUseGeodesic.value = 0.0;
+                const meshClone = new THREE.Mesh(m.geometry, mat);
+                meshClone.frustumCulled = false;
+                this.previewBakeScene.add(meshClone);
+            });
+        }
 
         const prevTarget = this.renderer.getRenderTarget();
         const prevClearAlpha = this.renderer.getClearAlpha();
@@ -4600,7 +5237,9 @@ export class DecalSystem {
         const meshesToBake = this.getMeshesToBake();
         if (meshesToBake.length === 0) return;
 
-        // 4. Shader de Despliegue UV por Hardware (RTX)
+        // 4. Shader de Despliegue UV por Hardware (Geodésico / Proyección)
+        this.initPreviewBake();
+        this._doUpdatePreviewTransform(activeDecal3D);
         const bakeImg = (activeDecal3D && activeDecal3D.img) ? activeDecal3D.img : this.currentDecalImage;
         if (bakeImg && (!this.decalTexture || this.decalTexture.image !== bakeImg)) {
             if (this.decalTexture) this.decalTexture.dispose();
@@ -4608,63 +5247,6 @@ export class DecalSystem {
             this.decalTexture.colorSpace = THREE.SRGBColorSpace;
         }
         if (this.decalTexture) this.decalTexture.needsUpdate = true;
-
-        const bakeMaterial = new THREE.ShaderMaterial({
-            uniforms: {
-                uProjectorMatrix: { value: inverseProjectorMatrix },
-                uProjectorNormal: { value: this.projectorNormal },
-                uDecalTexture: { value: this.decalTexture },
-                uModelMatrix: { value: new THREE.Matrix4() },
-                uAllowPassthrough: { value: this.allowPassthrough ? 1.0 : 0.0 }
-            },
-            vertexShader: `
-                varying vec3 vWorldPosition;
-                varying vec3 vWorldNormal;
-                uniform mat4 uModelMatrix;
-
-                void main() {
-                    vec4 worldPos = uModelMatrix * vec4(position, 1.0);
-                    vWorldPosition = worldPos.xyz;
-                    vWorldNormal = normalize((uModelMatrix * vec4(normal, 0.0)).xyz);
-                    // Mapeo directo de UV al espacio NDC de la GPU
-                    // (Invertido en Y para que coincida 1:1 con el sistema de coordenadas de Canvas2D)
-                    gl_Position = vec4(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, 0.0, 1.0);
-                }
-            `,
-            fragmentShader: `
-                uniform mat4 uProjectorMatrix;
-                uniform vec3 uProjectorNormal;
-                uniform sampler2D uDecalTexture;
-                uniform float uAllowPassthrough;
-
-                varying vec3 vWorldPosition;
-                varying vec3 vWorldNormal;
-
-                void main() {
-                    // Modo 1 cara (Profesional / Sin traspasar):
-                    if (uAllowPassthrough < 0.5) {
-                        // Descartar solo caras traseras/opuestas, permitiendo envolver pliegues y costuras entre islas UV.
-                        if (dot(vWorldNormal, uProjectorNormal) < -0.25) discard;
-                    }
-
-                    vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
-
-                    // Verificar límites de la caja proyectora [-0.5, 0.5]
-                    if (abs(p.x) > 0.5 || abs(p.y) > 0.5 || abs(p.z) > 0.5) discard;
-
-                    // Muestrear textura de la calca
-                    vec2 decalUV = vec2(p.x + 0.5, p.y + 0.5);
-                    vec4 col = texture2D(uDecalTexture, decalUV);
-                    if (col.a < 0.01) discard;
-
-                    gl_FragColor = col;
-                }
-            `,
-            side: THREE.DoubleSide,
-            transparent: true,
-            depthTest: false,
-            depthWrite: false
-        });
 
         // 5. Renderizar en WebGLRenderTarget con antialiasing MSAA (4x)
         const renderTarget = new THREE.WebGLRenderTarget(width, height, {
@@ -4676,21 +5258,52 @@ export class DecalSystem {
         const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -10, 10);
         const bakeScene = new THREE.Scene();
         const shaderNormal = this.projectorMeshNormal || this.projectorNormal;
+        const basis = this.currentProjectorBasis || {
+            xAxis: new THREE.Vector3(1, 0, 0),
+            yAxis: new THREE.Vector3(0, 1, 0),
+            zAxis: shaderNormal.clone().normalize()
+        };
 
-        meshesToBake.forEach(m => {
-            m.updateWorldMatrix(true, false);
-            if (m.geometry && !m.geometry.attributes.normal) {
-                m.geometry.computeVertexNormals();
-            }
-            const meshClone = new THREE.Mesh(m.geometry, bakeMaterial.clone());
+        const useGeodesic = !this.allowPassthrough;
+        const geodesicGeo = useGeodesic
+            ? this.updateGeodesicUnwrapGeometry(
+                this.projectorPosition,
+                basis,
+                size.x,
+                size.y,
+                !!(activeDecal3D && activeDecal3D.flipH),
+                !!(activeDecal3D && activeDecal3D.flipV),
+                this.allowPassthrough
+            )
+            : null;
+
+        if (geodesicGeo) {
+            const mat = this.previewBakeMaterial.clone();
+            mat.uniforms.uModelMatrix.value.identity();
+            mat.uniforms.uDecalTexture.value = this.decalTexture;
+            mat.uniforms.uUseGeodesic.value = 1.0;
+            mat.uniforms.uAllowPassthrough.value = 0.0;
+            const meshClone = new THREE.Mesh(geodesicGeo, mat);
             meshClone.frustumCulled = false;
-            meshClone.material.uniforms.uModelMatrix.value.copy(m.matrixWorld);
-            meshClone.material.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
-            meshClone.material.uniforms.uProjectorNormal.value = shaderNormal;
-            meshClone.material.uniforms.uDecalTexture.value = this.decalTexture;
-            meshClone.material.uniforms.uAllowPassthrough.value = this.allowPassthrough ? 1.0 : 0.0;
             bakeScene.add(meshClone);
-        });
+        } else {
+            meshesToBake.forEach(m => {
+                m.updateWorldMatrix(true, false);
+                if (m.geometry && !m.geometry.attributes.normal) {
+                    m.geometry.computeVertexNormals();
+                }
+                const mat = this.previewBakeMaterial.clone();
+                mat.uniforms.uModelMatrix.value.copy(m.matrixWorld);
+                mat.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
+                mat.uniforms.uProjectorNormal.value.copy(shaderNormal);
+                mat.uniforms.uDecalTexture.value = this.decalTexture;
+                mat.uniforms.uAllowPassthrough.value = this.allowPassthrough ? 1.0 : 0.0;
+                mat.uniforms.uUseGeodesic.value = 0.0;
+                const meshClone = new THREE.Mesh(m.geometry, mat);
+                meshClone.frustumCulled = false;
+                bakeScene.add(meshClone);
+            });
+        }
 
         const prevTarget = this.renderer.getRenderTarget();
         const prevClearAlpha = this.renderer.getClearAlpha();
@@ -4729,7 +5342,11 @@ export class DecalSystem {
 
         // 7. Limpiar recursos GPU
         renderTarget.dispose();
-        bakeMaterial.dispose();
+        while (bakeScene.children.length > 0) {
+            const child = bakeScene.children[0];
+            if (child.material) child.material.dispose();
+            bakeScene.remove(child);
+        }
 
         // 8. Recomponer capas y actualizar vistas
         if (activeLayer && this.selectedDecalId) {
