@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { Painter } from './painter.js?v=12.2';
-import { DecalSystem } from './decals.js?v=12.2';
-import { LayerManager } from './layers.js?v=12.2';
+import { Painter } from './painter.js?v=12.3';
+import { DecalSystem } from './decals.js?v=12.3';
+import { LayerManager } from './layers.js?v=12.3';
 import { PapercraftEngine } from './papercraft.js?v=11.4';
 import { SelectionManager } from './selection.js?v=9.8';
 import { ColorPickerManager } from './colorPicker.js?v=9.8';
@@ -4668,6 +4668,7 @@ function getProjectNSPData() {
                     allowPassthrough: !!d.allowPassthrough,
                     projectorPosition: d.projectorPosition ? { x: d.projectorPosition.x, y: d.projectorPosition.y, z: d.projectorPosition.z } : null,
                     projectorNormal: d.projectorNormal ? { x: d.projectorNormal.x, y: d.projectorNormal.y, z: d.projectorNormal.z } : null,
+                    projectorMeshNormal: d.projectorMeshNormal ? { x: d.projectorMeshNormal.x, y: d.projectorMeshNormal.y, z: d.projectorMeshNormal.z } : null,
                     surfaceTangent: d.surfaceTangent ? { x: d.surfaceTangent.x, y: d.surfaceTangent.y, z: d.surfaceTangent.z } : null,
                     surfaceBitangent: d.surfaceBitangent ? { x: d.surfaceBitangent.x, y: d.surfaceBitangent.y, z: d.surfaceBitangent.z } : null
                 };
@@ -5003,6 +5004,7 @@ async function loadProjectNSP(fileOrData, silent = false) {
                                         allowPassthrough: !!d.allowPassthrough,
                                         projectorPosition: d.projectorPosition ? new THREE.Vector3(d.projectorPosition.x, d.projectorPosition.y, d.projectorPosition.z) : null,
                                         projectorNormal: d.projectorNormal ? new THREE.Vector3(d.projectorNormal.x, d.projectorNormal.y, d.projectorNormal.z) : null,
+                                        projectorMeshNormal: d.projectorMeshNormal ? new THREE.Vector3(d.projectorMeshNormal.x, d.projectorMeshNormal.y, d.projectorMeshNormal.z) : null,
                                         surfaceTangent: d.surfaceTangent ? new THREE.Vector3(d.surfaceTangent.x, d.surfaceTangent.y, d.surfaceTangent.z) : null,
                                         surfaceBitangent: d.surfaceBitangent ? new THREE.Vector3(d.surfaceBitangent.x, d.surfaceBitangent.y, d.surfaceBitangent.z) : null
                                     });
@@ -5015,6 +5017,16 @@ async function loadProjectNSP(fileOrData, silent = false) {
                     }
                 }
                 layerManager.layers.push(layer);
+            }
+
+            if (window.decalSystem && state.mesh) {
+                for (const lyr of layerManager.layers) {
+                    if (lyr.decals && lyr.decals.length > 0) {
+                        for (const dec of lyr.decals) {
+                            window.decalSystem.unwrapDecalObject(dec);
+                        }
+                    }
+                }
             }
 
             layerManager.activeLayerId = layerManager.layers[layerManager.layers.length - 1]?.id || null;
@@ -5660,6 +5672,34 @@ function rotate3DModel(axis, angleDeg) {
     if (window.painter && typeof window.painter.buildTrianglesCache === 'function') {
         window.painter.buildTrianglesCache();
     }
+    if (window.decalSystem && typeof layerManager !== 'undefined' && layerManager?.layers) {
+        const rotateVecPos = (v) => {
+            if (!v) return;
+            v.sub(center).applyQuaternion(q).add(center);
+        };
+        const rotateVecDir = (v) => {
+            if (!v) return;
+            v.applyQuaternion(q).normalize();
+        };
+        if (window.decalSystem.projectorPosition) rotateVecPos(window.decalSystem.projectorPosition);
+        if (window.decalSystem.projectorNormal) rotateVecDir(window.decalSystem.projectorNormal);
+        if (window.decalSystem.projectorMeshNormal) rotateVecDir(window.decalSystem.projectorMeshNormal);
+        if (window.decalSystem.surfaceTangent) rotateVecDir(window.decalSystem.surfaceTangent);
+        if (window.decalSystem.surfaceBitangent) rotateVecDir(window.decalSystem.surfaceBitangent);
+        for (const lyr of layerManager.layers) {
+            if (!lyr.decals) continue;
+            for (const dec of lyr.decals) {
+                if (dec.projectorPosition) rotateVecPos(dec.projectorPosition);
+                if (dec.projectorNormal) rotateVecDir(dec.projectorNormal);
+                if (dec.projectorMeshNormal) rotateVecDir(dec.projectorMeshNormal);
+                if (dec.surfaceTangent) rotateVecDir(dec.surfaceTangent);
+                if (dec.surfaceBitangent) rotateVecDir(dec.surfaceBitangent);
+                window.decalSystem.unwrapDecalObject(dec);
+            }
+        }
+        window.decalSystem.updatePreviewTransform();
+        layerManager.recomposite();
+    }
     if (typeof update3DFoldLines === 'function') {
         update3DFoldLines();
     }
@@ -5704,6 +5744,21 @@ function reset3DModelOrientation() {
 
     if (window.painter && typeof window.painter.buildTrianglesCache === 'function') {
         window.painter.buildTrianglesCache();
+    }
+    if (window.decalSystem && typeof layerManager !== 'undefined' && layerManager?.layers) {
+        for (const lyr of layerManager.layers) {
+            if (!lyr.decals) continue;
+            for (const dec of lyr.decals) {
+                dec.projectorPosition = null;
+                dec.projectorNormal = null;
+                dec.projectorMeshNormal = null;
+                dec.surfaceTangent = null;
+                dec.surfaceBitangent = null;
+                window.decalSystem.unwrapDecalObject(dec);
+            }
+        }
+        window.decalSystem.updatePreviewTransform();
+        layerManager.recomposite();
     }
     if (typeof update3DFoldLines === 'function') update3DFoldLines();
     if (typeof update3DWireframe === 'function') update3DWireframe();

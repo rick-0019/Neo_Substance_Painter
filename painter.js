@@ -646,14 +646,25 @@ export class Painter {
                             normal = new THREE.Vector3().add(nA).add(nB).add(nC).normalize();
                         }
                     }
-                    const worldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
+                    const rawWorldNormal = normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+                    const worldNormal = rawWorldNormal.clone();
                     if (this.camera) {
                         const camDir = new THREE.Vector3().subVectors(this.camera.position, hit.point).normalize();
                         if (worldNormal.dot(camDir) < 0) worldNormal.negate();
                     }
+                    const surfTang = window.decalSystem
+                        ? (window.decalSystem.getSurfaceTangentFromHit(hit) || window.decalSystem.find3DPointFromUV(uv.x, uv.y))
+                        : null;
                     this.shape3DHit = {
                         point: hit.point.clone(),
-                        normal: worldNormal.clone()
+                        normal: worldNormal.clone(),
+                        rawNormal: rawWorldNormal.clone(),
+                        tangent: surfTang?.tangent ? surfTang.tangent.clone() : null,
+                        bitangent: surfTang?.bitangent ? surfTang.bitangent.clone() : null,
+                        worldUnitsPerU: surfTang?.worldUnitsPerU || 0,
+                        worldUnitsPerV: surfTang?.worldUnitsPerV || 0,
+                        startX: x,
+                        startY: y
                     };
                     this.shape3DEndHit = {
                         point: hit.point.clone(),
@@ -786,8 +797,16 @@ export class Painter {
                         point: hit.point.clone()
                     };
                     const uv = hit.uv;
-                    const curX = uv.x * this.canvas.width;
-                    const curY = (1 - uv.y) * this.canvas.height;
+                    let curX = uv.x * this.canvas.width;
+                    let curY = (1 - uv.y) * this.canvas.height;
+                    if (this.shape3DHit?.tangent && this.shape3DHit?.bitangent &&
+                        this.shape3DHit.worldUnitsPerU > 0 && this.shape3DHit.worldUnitsPerV > 0) {
+                        const delta3D = hit.point.clone().sub(this.shape3DHit.point);
+                        const du = delta3D.dot(this.shape3DHit.tangent) / this.shape3DHit.worldUnitsPerU;
+                        const dv = delta3D.dot(this.shape3DHit.bitangent) / this.shape3DHit.worldUnitsPerV;
+                        curX = this.editingShape.x1 + du * this.canvas.width;
+                        curY = this.editingShape.y1 - dv * this.canvas.height;
+                    }
                     const dx = curX - this.editingShape.x1;
                     const dy = curY - this.editingShape.y1;
 
@@ -1669,35 +1688,71 @@ export class Painter {
                     const u = cx / this.canvas.width;
                     const v = 1 - (cy / this.canvas.height);
                     const pt3D = window.decalSystem.find3DPointFromUV(u, v);
+                    if (targetMode === '3d' && this.shape3DHit) {
+                        let centerPos = this.shape3DHit.point.clone();
+                        let centerNorm = this.shape3DHit.normal.clone();
+                        let centerRawNorm = (this.shape3DHit.rawNormal || this.shape3DHit.normal).clone();
+                        if (this.shape3DHit.tangent && this.shape3DHit.bitangent &&
+                            this.shape3DHit.worldUnitsPerU > 0 && this.shape3DHit.worldUnitsPerV > 0) {
+                            const du = (cx - (this.shape3DHit.startX ?? s.x1)) / this.canvas.width;
+                            const dv = -((cy - (this.shape3DHit.startY ?? s.y1)) / this.canvas.height);
+                            centerPos.addScaledVector(this.shape3DHit.tangent, du * this.shape3DHit.worldUnitsPerU);
+                            centerPos.addScaledVector(this.shape3DHit.bitangent, dv * this.shape3DHit.worldUnitsPerV);
+                            if (this.mesh && this.raycaster) {
+                                const rayOrigin = centerPos.clone().addScaledVector(centerNorm, 2.0);
+                                const rayDir = centerNorm.clone().negate();
+                                this.raycaster.set(rayOrigin, rayDir);
+                                const hits = this.raycaster.intersectObject(this.mesh, true);
+                                const snapHit = hits.find(i => i.object.isMesh && !i.object.userData?.isSelectionOverlay);
+                                if (snapHit) {
+                                    centerPos.copy(snapHit.point);
+                                }
+                            }
+                        } else if (this.shape3DEndHit) {
+                            centerPos.add(this.shape3DEndHit.point).multiplyScalar(0.5);
+                        }
+                        createdShapeObj.projectorPosition = centerPos;
+                        createdShapeObj.projectorNormal = centerNorm;
+                        createdShapeObj.projectorMeshNormal = centerRawNorm;
+                        if (this.shape3DHit.tangent) createdShapeObj.surfaceTangent = this.shape3DHit.tangent.clone();
+                        if (this.shape3DHit.bitangent) createdShapeObj.surfaceBitangent = this.shape3DHit.bitangent.clone();
+                        if (this.shape3DHit.worldUnitsPerU > 0) {
+                            createdShapeObj.worldPerPixelX = this.shape3DHit.worldUnitsPerU / this.canvas.width;
+                            createdShapeObj.worldPerPixelY = (this.shape3DHit.worldUnitsPerV || this.shape3DHit.worldUnitsPerU) / this.canvas.height;
+                        }
+                    }
                     if (pt3D) {
-                        if (targetMode === '3d') {
+                        if (targetMode === '3d' && !createdShapeObj.projectorPosition) {
                             createdShapeObj.projectorPosition = pt3D.point.clone();
                             createdShapeObj.projectorNormal = pt3D.normal.clone();
+                            createdShapeObj.projectorMeshNormal = (pt3D.rawNormal || pt3D.normal).clone();
                         }
-                        if (pt3D.tangent) createdShapeObj.surfaceTangent = pt3D.tangent.clone();
-                        if (pt3D.bitangent) createdShapeObj.surfaceBitangent = pt3D.bitangent.clone();
+                        if (!createdShapeObj.surfaceTangent && pt3D.tangent) createdShapeObj.surfaceTangent = pt3D.tangent.clone();
+                        if (!createdShapeObj.surfaceBitangent && pt3D.bitangent) createdShapeObj.surfaceBitangent = pt3D.bitangent.clone();
 
                         const uvWppX = (pt3D.worldUnitsPerU > 0) ? (pt3D.worldUnitsPerU / this.canvas.width) : 0;
                         const uvWppY = (pt3D.worldUnitsPerV > 0) ? (pt3D.worldUnitsPerV / this.canvas.height) : 0;
 
                         let dragWppX = 0;
                         let dragWppY = 0;
+                        const refTang = createdShapeObj.surfaceTangent || pt3D.tangent;
+                        const refBitang = createdShapeObj.surfaceBitangent || pt3D.bitangent;
                         if (targetMode === '3d' && this.shape3DHit && this.shape3DEndHit) {
                             const delta3D = this.shape3DEndHit.point.clone().sub(this.shape3DHit.point);
                             const drawnW = Math.max(10, Math.round(Math.abs(s.x2 - s.x1)));
                             const drawnH = Math.max(10, Math.round(Math.abs(s.y2 - s.y1)));
-                            if (pt3D.tangent && drawnW > 12) {
-                                const spanX = Math.abs(delta3D.dot(pt3D.tangent));
+                            if (refTang && drawnW > 12) {
+                                const spanX = Math.abs(delta3D.dot(refTang));
                                 if (spanX > 1e-4) dragWppX = spanX / drawnW;
                             }
-                            if (pt3D.bitangent && drawnH > 12) {
-                                const spanY = Math.abs(delta3D.dot(pt3D.bitangent));
+                            if (refBitang && drawnH > 12) {
+                                const spanY = Math.abs(delta3D.dot(refBitang));
                                 if (spanY > 1e-4) dragWppY = spanY / drawnH;
                             }
                         }
 
-                        const finalWppX = Math.max(uvWppX, dragWppX);
-                        const finalWppY = Math.max(uvWppY, dragWppY) || finalWppX;
+                        const finalWppX = Math.max(createdShapeObj.worldPerPixelX || 0, uvWppX, dragWppX);
+                        const finalWppY = Math.max(createdShapeObj.worldPerPixelY || 0, uvWppY, dragWppY) || finalWppX;
                         if (finalWppX > 0) {
                             createdShapeObj.worldPerPixelX = finalWppX;
                             createdShapeObj.worldPerPixelY = finalWppY;
@@ -1707,6 +1762,7 @@ export class Painter {
                 if (targetMode === '3d' && !createdShapeObj.projectorPosition && this.shape3DHit) {
                     createdShapeObj.projectorPosition = this.shape3DHit.point.clone();
                     createdShapeObj.projectorNormal = this.shape3DHit.normal.clone();
+                    createdShapeObj.projectorMeshNormal = (this.shape3DHit.rawNormal || this.shape3DHit.normal).clone();
                 }
                 this.shape3DHit = null;
                 this.shape3DEndHit = null;

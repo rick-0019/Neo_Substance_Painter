@@ -28,6 +28,7 @@ export class DecalSystem {
         // Parámetros del proyector 3D
         this.projectorPosition = new THREE.Vector3();
         this.projectorNormal = new THREE.Vector3(0, 0, 1);
+        this.projectorMeshNormal = null;
         this.projectorRotation = 0; // en radianes
         this.projectorScale = 100;  // 100% por defecto
         this.currentProjectorOrientation = new THREE.Euler();
@@ -156,7 +157,6 @@ export class DecalSystem {
             const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
             if (decal) {
                 decal.mode = '2d';
-                decal.unwrappedCanvas = null;
                 if (decal.x !== undefined && decal.y !== undefined) {
                     this.decal2D.x = decal.x;
                     this.decal2D.y = decal.y;
@@ -201,6 +201,7 @@ export class DecalSystem {
                 if (hasExisting3D && decal && decal.projectorPosition) {
                     this.projectorPosition.copy(decal.projectorPosition);
                     if (decal.projectorNormal) this.projectorNormal.copy(decal.projectorNormal);
+                    this.projectorMeshNormal = decal.projectorMeshNormal ? decal.projectorMeshNormal.clone() : (decal.projectorNormal ? decal.projectorNormal.clone() : null);
                     if (decal.surfaceTangent) this.surfaceTangent = decal.surfaceTangent.clone();
                     if (decal.surfaceBitangent) this.surfaceBitangent = decal.surfaceBitangent.clone();
                     if ((!decal.worldPerPixelX || !decal.worldPerPixelY) && this.decal2D && this.mesh) {
@@ -208,11 +209,8 @@ export class DecalSystem {
                         const v = 1 - (this.decal2D.y / this.canvas.height);
                         const pt3D = this.find3DPointFromUV(u, v);
                         if (pt3D && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
-                            const isShape = ['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line', 'curve', 'vector_container'].includes(decal.type);
-                            if (isShape) {
-                                decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
-                                decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
-                            }
+                            decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
+                            decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
                         }
                     }
                     this.projectorRotation = decal.projectorRotation !== undefined ? decal.projectorRotation : (this.decal2D ? (this.decal2D.rotation || 0) : 0);
@@ -228,6 +226,8 @@ export class DecalSystem {
                     if (pt3D) {
                         this.projectorPosition.copy(pt3D.point);
                         this.projectorNormal.copy(pt3D.normal);
+                        this.projectorMeshNormal = pt3D.normal.clone();
+                        if (decal) decal.projectorMeshNormal = pt3D.normal.clone();
                         if (pt3D.tangent) {
                             this.surfaceTangent = pt3D.tangent.clone();
                             if (decal) decal.surfaceTangent = this.surfaceTangent.clone();
@@ -237,11 +237,8 @@ export class DecalSystem {
                             if (decal) decal.surfaceBitangent = this.surfaceBitangent.clone();
                         }
                         if (decal && (!decal.worldPerPixelX || !decal.worldPerPixelY) && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
-                            const isShape = ['rect', 'circle', 'triangle', 'star', 'polygon', 'arrow', 'badge', 'line', 'curve', 'vector_container'].includes(decal.type);
-                            if (isShape) {
-                                decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
-                                decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
-                            }
+                            decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
+                            decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
                         }
                     }
                     this.projectorRotation = this.decal2D.rotation || 0;
@@ -1427,6 +1424,9 @@ export class DecalSystem {
                     e.stopPropagation();
                     return;
                 } else if (clickedDecal && clickedDecal.id === this.selectedDecalId) {
+                    if (this.mode !== '3d') {
+                        this.setMode('3d', true);
+                    }
                     this.isLocked = true;
                     this.isDragging3D = false;
                     this.record3DDragOffset(e, rect, hit);
@@ -1867,26 +1867,35 @@ export class DecalSystem {
                         normal = new THREE.Vector3().add(nA).add(nB).add(nC).normalize();
                     }
                 }
-                const worldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
+                const rawWorldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
+                this.projectorMeshNormal = rawWorldNormal.clone();
+                const worldNormal = rawWorldNormal.clone();
                 if (this.camera) {
                     const camDir = new THREE.Vector3().subVectors(this.camera.position, hit.point).normalize();
                     if (worldNormal.dot(camDir) < 0) worldNormal.negate();
                 }
                 this.projectorNormal.copy(worldNormal);
-                this._doUpdatePreviewTransform();
+                if (decalObj && this.lastHitWorldUnitsPerU > 0 && this.lastHitWorldUnitsPerV > 0 && this.canvas) {
+                    decalObj.worldPerPixelX = this.lastHitWorldUnitsPerU / this.canvas.width;
+                    decalObj.worldPerPixelY = this.lastHitWorldUnitsPerV / this.canvas.height;
+                }
+                this._doUpdatePreviewTransform(decalObj);
                 this.sync2DFrom3D(hit);
                 if (decalObj) {
                     decalObj.x = this.decal2D.x;
                     decalObj.y = this.decal2D.y;
                     decalObj.projectorPosition = this.projectorPosition.clone();
                     decalObj.projectorNormal = this.projectorNormal.clone();
+                    decalObj.projectorMeshNormal = this.projectorMeshNormal.clone();
                     decalObj.projectorScale = this.projectorScale;
                     decalObj.projectorRotation = this.projectorRotation;
+                    if (this.surfaceTangent) decalObj.surfaceTangent = this.surfaceTangent.clone();
+                    if (this.surfaceBitangent) decalObj.surfaceBitangent = this.surfaceBitangent.clone();
                 }
                 if (this.mode === '3d' && decalObj) {
                     this.update3DUnwrapForDecal(decalObj, true);
                 } else {
-                    this.syncCurrentDecalToObject(false);
+                    this.syncCurrentDecalToObject(true);
                 }
             } else {
                 this.isLocked = false;
@@ -2038,19 +2047,24 @@ export class DecalSystem {
         const detUV = du1 * dv2 - du2 * dv1;
         if (Math.abs(detUV) < 1e-9) return null;
 
-        const tangent = new THREE.Vector3()
+        const originWorld = new THREE.Vector3().setFromMatrixPosition(hit.object.matrixWorld);
+        const dPdu = new THREE.Vector3()
             .addScaledVector(e1, dv2)
             .addScaledVector(e2, -dv1)
             .multiplyScalar(1 / detUV)
-            .transformDirection(hit.object.matrixWorld)
-            .normalize();
+            .applyMatrix4(hit.object.matrixWorld)
+            .sub(originWorld);
+        this.lastHitWorldUnitsPerU = dPdu.length();
+        const tangent = dPdu.clone().normalize();
 
-        const bitangent = new THREE.Vector3()
+        const dPdv = new THREE.Vector3()
             .addScaledVector(e1, -du2)
             .addScaledVector(e2, du1)
             .multiplyScalar(1 / detUV)
-            .transformDirection(hit.object.matrixWorld)
-            .normalize();
+            .applyMatrix4(hit.object.matrixWorld)
+            .sub(originWorld);
+        this.lastHitWorldUnitsPerV = dPdv.length();
+        const bitangent = dPdv.clone().normalize();
 
         this.surfaceBitangent = bitangent;
         return tangent;
@@ -2070,7 +2084,7 @@ export class DecalSystem {
                 for (let i = layer.decals.length - 1; i >= 0; i--) {
                     const d = layer.decals[i];
                     if (d.visible === false) continue;
-                    if (d.mode === '3d' && d.unwrappedCanvas && d.unwrappedCtx && d.hasValidUnwrap !== false) {
+                    if (d.unwrappedCanvas && d.unwrappedCtx && d.hasValidUnwrap !== false) {
                         const px = Math.floor(uvX);
                         const py = Math.floor(uvY);
                         if (px >= 0 && px < d.unwrappedCanvas.width && py >= 0 && py < d.unwrappedCanvas.height) {
@@ -2192,6 +2206,7 @@ export class DecalSystem {
         if (decal.projectorPosition) {
             this.projectorPosition.copy(decal.projectorPosition);
             this.projectorNormal.copy(decal.projectorNormal || new THREE.Vector3(0, 0, 1));
+            this.projectorMeshNormal = decal.projectorMeshNormal ? decal.projectorMeshNormal.clone() : this.projectorNormal.clone();
             this.projectorScale = decal.projectorScale || 100;
             this.projectorRotation = decal.projectorRotation !== undefined ? decal.projectorRotation : (decal.rotation || 0);
             if (decal.surfaceTangent) {
@@ -2207,6 +2222,8 @@ export class DecalSystem {
             if (pt3D) {
                 this.projectorPosition.copy(pt3D.point);
                 this.projectorNormal.copy(pt3D.normal);
+                this.projectorMeshNormal = pt3D.normal.clone();
+                decal.projectorMeshNormal = pt3D.normal.clone();
                 if (pt3D.tangent) {
                     this.surfaceTangent = pt3D.tangent.clone();
                     decal.surfaceTangent = this.surfaceTangent.clone();
@@ -2225,9 +2242,9 @@ export class DecalSystem {
         }
 
         // La normal del proyector permanece fija a la superficie natural para garantizar coherencia en todas las vistas
-        this.setMode(this.mode, !!decal.projectorPosition);
         this.allowPassthrough = decal.allowPassthrough !== undefined ? !!decal.allowPassthrough : false;
         this.syncPassthroughUI();
+        this.setMode(this.mode, !!decal.projectorPosition);
 
         if (decal.type === 'text') {
             this.isTextMode = true;
@@ -2596,7 +2613,7 @@ export class DecalSystem {
                 const d = layer.decals[i];
                 if (d.visible === false) continue;
 
-                if (d.mode === '3d' && d.unwrappedCanvas && d.unwrappedCtx) {
+                if (d.unwrappedCanvas && d.unwrappedCtx && d.hasValidUnwrap !== false) {
                     const px = Math.floor(canvasX);
                     const py = Math.floor(canvasY);
                     if (px >= 0 && px < d.unwrappedCanvas.width && py >= 0 && py < d.unwrappedCanvas.height) {
@@ -2764,27 +2781,52 @@ export class DecalSystem {
 
         // Optimización Crítica: find3DPointFromUV() recorre todos los triángulos de la malla en CPU.
         // En modo 2D NO debe ejecutarse en cada fotograma del arrastre; solo al soltar el puntero (force=true) o al conmutar a 3D.
+        let foundPt3DIn2D = false;
         if (force || !isDragging) {
             if (this.mesh && this.mode === '2d' && this.canvas) {
                 const u = this.decal2D.x / this.canvas.width;
                 const v = 1 - (this.decal2D.y / this.canvas.height);
                 const pt3D = this.find3DPointFromUV(u, v);
                 if (pt3D) {
+                    foundPt3DIn2D = true;
                     this.projectorPosition.copy(pt3D.point);
                     this.projectorNormal.copy(pt3D.normal);
+                    this.projectorMeshNormal = pt3D.normal.clone();
+                    dObj.projectorMeshNormal = pt3D.normal.clone();
                     if (pt3D.tangent) {
                         this.surfaceTangent = pt3D.tangent.clone();
                     }
+                    if (pt3D.bitangent) {
+                        this.surfaceBitangent = pt3D.bitangent.clone();
+                    }
+                    if (pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
+                        dObj.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
+                        dObj.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
+                    }
+                    this.projectorRotation = this.decal2D.rotation || 0;
+                    this.projectorScale = Math.round((this.decal2D.width / (this.decal2D.baseWidth || this.decal2D.width || 1)) * 100) || 100;
+                } else {
+                    dObj.hasValidUnwrap = false;
                 }
             }
             if (this.projectorPosition) {
                 dObj.projectorPosition = this.projectorPosition.clone();
                 dObj.projectorNormal = this.projectorNormal.clone();
+                if (this.projectorMeshNormal) {
+                    dObj.projectorMeshNormal = this.projectorMeshNormal.clone();
+                }
                 dObj.projectorScale = this.projectorScale;
                 dObj.projectorRotation = this.projectorRotation;
                 if (this.surfaceTangent) {
                     dObj.surfaceTangent = this.surfaceTangent.clone();
                 }
+                if (this.surfaceBitangent) {
+                    dObj.surfaceBitangent = this.surfaceBitangent.clone();
+                }
+            }
+            if (this.mode === '2d' && foundPt3DIn2D && this.mesh) {
+                this.update3DUnwrapForDecal(dObj, true, true);
+                return;
             }
         }
 
@@ -3184,20 +3226,26 @@ export class DecalSystem {
                     normal = new THREE.Vector3().add(nA).add(nB).add(nC).normalize();
                 }
             }
-            const worldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
+            const rawWorldNormal = normal.transformDirection(hit.object.matrixWorld).normalize();
+            this.projectorMeshNormal = rawWorldNormal.clone();
+            const worldNormal = rawWorldNormal.clone();
             if (this.camera) {
                 const camDir = new THREE.Vector3().subVectors(this.camera.position, hit.point).normalize();
                 if (worldNormal.dot(camDir) < 0) worldNormal.negate();
             }
             this.projectorNormal.copy(worldNormal);
-            this._doUpdatePreviewTransform();
+            const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+            const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
+            if (decal && (!decal.worldPerPixelX || !decal.worldPerPixelY) && this.lastHitWorldUnitsPerU > 0 && this.lastHitWorldUnitsPerV > 0 && this.canvas) {
+                decal.worldPerPixelX = this.lastHitWorldUnitsPerU / this.canvas.width;
+                decal.worldPerPixelY = this.lastHitWorldUnitsPerV / this.canvas.height;
+            }
+            this._doUpdatePreviewTransform(decal);
 
             // Sincronizar siempre las coordenadas 2D correspondientes al impacto UV 3D
             this.sync2DFrom3D(hit);
 
             if (this.mode === '3d') {
-                const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-                const decal = activeLayer ? activeLayer.getDecal(this.selectedDecalId) : null;
                 if (decal) {
                     decal.x = this.decal2D.x;
                     decal.y = this.decal2D.y;
@@ -3206,8 +3254,11 @@ export class DecalSystem {
                     decal.height = this.decal2D.height;
                     decal.projectorPosition = this.projectorPosition.clone();
                     decal.projectorNormal = this.projectorNormal.clone();
+                    decal.projectorMeshNormal = this.projectorMeshNormal.clone();
                     decal.projectorScale = this.projectorScale;
                     decal.projectorRotation = this.projectorRotation;
+                    if (this.surfaceTangent) decal.surfaceTangent = this.surfaceTangent.clone();
+                    if (this.surfaceBitangent) decal.surfaceBitangent = this.surfaceBitangent.clone();
                     this.schedule3DUnwrap(decal);
                 }
             } else {
@@ -3261,15 +3312,30 @@ export class DecalSystem {
         });
     }
 
-    _doUpdatePreviewTransform() {
-        if (!this.previewGroup || !this.isActive) return;
+    _doUpdatePreviewTransform(targetDecal = null) {
+        if (!this.previewGroup) return;
+
+        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
+        const activeDecal = targetDecal || ((activeLayer && this.selectedDecalId) ? activeLayer.getDecal(this.selectedDecalId) : null);
 
         // 1. Orientación referenciada al espacio UV de la superficie (coincidencia 1:1 con la vista 2D)
-        const zAxis = this.projectorNormal.clone().normalize();
+        const refNormal = (targetDecal && targetDecal.projectorNormal) ? targetDecal.projectorNormal : this.projectorNormal;
+        const refTangent = (targetDecal && targetDecal.surfaceTangent) ? targetDecal.surfaceTangent : this.surfaceTangent;
+        const refBitangent = (targetDecal && targetDecal.surfaceBitangent) ? targetDecal.surfaceBitangent : this.surfaceBitangent;
+        const refRot = (targetDecal && targetDecal.projectorRotation !== undefined)
+            ? targetDecal.projectorRotation
+            : (targetDecal && targetDecal.rotation !== undefined ? targetDecal.rotation : this.projectorRotation);
+
+        const zAxis = (refNormal || new THREE.Vector3(0, 0, 1)).clone().normalize();
         let xAxis = null;
-        if (this.surfaceTangent) {
-            xAxis = this.surfaceTangent.clone();
-            xAxis.addScaledVector(zAxis, -xAxis.dot(zAxis)).normalize();
+        if (refTangent) {
+            xAxis = refTangent.clone();
+            xAxis.addScaledVector(zAxis, -xAxis.dot(zAxis));
+            if (xAxis.lengthSq() > 1e-6) {
+                xAxis.normalize();
+            } else {
+                xAxis = null;
+            }
         }
         if (!xAxis || xAxis.lengthSq() < 0.01) {
             let up = this.camera ? this.camera.up.clone() : new THREE.Vector3(0, 1, 0);
@@ -3280,39 +3346,43 @@ export class DecalSystem {
             }
         }
         let yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
-        if (this.surfaceBitangent && yAxis.dot(this.surfaceBitangent) < 0) {
+        if (refBitangent && yAxis.dot(refBitangent) < 0) {
             yAxis.negate();
-            xAxis.negate();
         }
+        const basisZ = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
 
-        const rotMatrix = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+        const rotMatrix = new THREE.Matrix4().makeBasis(xAxis, yAxis, basisZ);
         const baseQuat = new THREE.Quaternion().setFromRotationMatrix(rotMatrix);
 
-        // Giro del usuario alrededor de la normal alineado con el espacio UV
-        const angleQuat = new THREE.Quaternion().setFromAxisAngle(zAxis, -this.projectorRotation);
+        // Giro del usuario alrededor de la normal alineado con el espacio UV (sin inversión de xAxis)
+        const angleQuat = new THREE.Quaternion().setFromAxisAngle(basisZ, -refRot);
         const finalQuat = angleQuat.multiply(baseQuat);
 
         // 2. Escala exacta 1:1 en unidades del mundo 3D con soporte independiente de ancho y alto
         const baseSize = this.getModelBaseSize();
-        const activeLayer = this.layerManager ? this.layerManager.getActiveLayer() : null;
-        const activeDecal = (activeLayer && this.selectedDecalId) ? activeLayer.getDecal(this.selectedDecalId) : null;
+        const dWidth = targetDecal ? targetDecal.width : (this.decal2D ? this.decal2D.width : 0);
+        const dHeight = targetDecal ? targetDecal.height : (this.decal2D ? this.decal2D.height : 0);
+        const dBaseW = targetDecal ? (targetDecal.baseWidth || targetDecal.width) : (this.decal2D ? (this.decal2D.baseWidth || this.decal2D.width) : 0);
+        const dBaseH = targetDecal ? (targetDecal.baseHeight || targetDecal.height) : (this.decal2D ? (this.decal2D.baseHeight || this.decal2D.height) : 0);
+        const allowPass = (targetDecal && targetDecal.allowPassthrough !== undefined) ? !!targetDecal.allowPassthrough : this.allowPassthrough;
 
         let scaleX = baseSize;
         let scaleY = baseSize;
 
-        if (activeDecal && activeDecal.worldPerPixelX > 0 && activeDecal.worldPerPixelY > 0 && this.decal2D && this.decal2D.width > 0 && this.decal2D.height > 0) {
-            scaleX = this.decal2D.width * activeDecal.worldPerPixelX;
-            scaleY = this.decal2D.height * activeDecal.worldPerPixelY;
-        } else if (this.decal2D && this.decal2D.width > 0 && this.decal2D.height > 0) {
+        if (activeDecal && activeDecal.worldPerPixelX > 0 && activeDecal.worldPerPixelY > 0 && dWidth > 0 && dHeight > 0) {
+            const avgWpp = (activeDecal.worldPerPixelX + activeDecal.worldPerPixelY) * 0.5;
+            scaleX = dWidth * avgWpp;
+            scaleY = dHeight * avgWpp;
+        } else if (dWidth > 0 && dHeight > 0) {
             if (activeDecal && !activeDecal.initialBaseMax) {
-                activeDecal.initialBaseMax = Math.max(1, this.decal2D.baseWidth || this.decal2D.width, this.decal2D.baseHeight || this.decal2D.height);
+                activeDecal.initialBaseMax = Math.max(1, dBaseW, dBaseH);
             }
             const initMax = (activeDecal && activeDecal.initialBaseMax)
                 ? activeDecal.initialBaseMax
-                : Math.max(1, this.decal2D.baseWidth || this.decal2D.width, this.decal2D.baseHeight || this.decal2D.height);
+                : Math.max(1, dBaseW, dBaseH);
             const wpp = baseSize / initMax;
-            scaleX = this.decal2D.width * wpp;
-            scaleY = this.decal2D.height * wpp;
+            scaleX = dWidth * wpp;
+            scaleY = dHeight * wpp;
         } else {
             const finalScale = baseSize * (this.projectorScale / 100);
             let aspect = 1;
@@ -3328,11 +3398,12 @@ export class DecalSystem {
             }
         }
 
-        // Profundidad generosa para abrazar la curvatura completa del fuselaje/góndola sin recortar los extremos;
-        // el backface culling por normal en el shader ya garantiza que nunca atraviese caras opuestas si allowPassthrough es false.
-        const depth = this.allowPassthrough
-            ? Math.max(scaleX, scaleY, baseSize) * 4.0
-            : Math.max(scaleX, scaleY, baseSize) * 1.5;
+        // Profundidad proporcional al tamaño de la calca para envolver costuras y lomos entre islas adyacentes
+        // sin perforar caras lejanas en el interior del modelo.
+        const maxSpan = Math.max(scaleX, scaleY);
+        const depth = allowPass
+            ? Math.max(maxSpan, baseSize) * 6.0
+            : Math.max(maxSpan * 1.5, baseSize * 0.45);
         const size = new THREE.Vector3(scaleX, scaleY, depth);
         const orientation = new THREE.Euler().setFromQuaternion(finalQuat);
 
@@ -3472,7 +3543,7 @@ export class DecalSystem {
             format: THREE.RGBAFormat,
             type: THREE.UnsignedByteType
         });
-        this.previewOrthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        this.previewOrthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -10, 10);
         this.previewBakeScene = new THREE.Scene();
 
         this.previewBakeMaterial = new THREE.ShaderMaterial({
@@ -3507,8 +3578,8 @@ export class DecalSystem {
                 void main() {
                     // Modo 1 cara (Profesional / Sin traspasar):
                     if (uAllowPassthrough < 0.5) {
-                        // Descartar caras netamente opuestas (en la espalda de la superficie)
-                        if (dot(vWorldNormal, uProjectorNormal) < -0.1) discard;
+                        // Descartar solo caras traseras/opuestas, permitiendo envolver pliegues y costuras entre islas UV.
+                        if (dot(vWorldNormal, uProjectorNormal) < -0.25) discard;
                     }
 
                     vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
@@ -3522,7 +3593,9 @@ export class DecalSystem {
                 }
             `,
             side: THREE.DoubleSide,
-            transparent: true
+            transparent: true,
+            depthTest: false,
+            depthWrite: false
         });
 
         this.previewPixelBuffer = new Uint8Array(w * h * 4);
@@ -3541,10 +3614,46 @@ export class DecalSystem {
         });
     }
 
-    update3DUnwrapForDecal(decal, isFinal = false) {
+    unwrapDecalObject(decal) {
+        if (!decal || !decal.img || !this.renderer || !this.mesh || !this.canvas) return;
+        if (!decal.projectorPosition) {
+            const u = decal.x / this.canvas.width;
+            const v = 1 - (decal.y / this.canvas.height);
+            const pt3D = this.find3DPointFromUV(u, v);
+            if (!pt3D) return;
+            decal.projectorPosition = pt3D.point.clone();
+            decal.projectorNormal = pt3D.normal.clone();
+            decal.projectorMeshNormal = pt3D.normal.clone();
+            if (pt3D.tangent) decal.surfaceTangent = pt3D.tangent.clone();
+            if (pt3D.bitangent) decal.surfaceBitangent = pt3D.bitangent.clone();
+            if (!decal.worldPerPixelX && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
+                decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
+                decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
+            }
+        } else if ((!decal.surfaceTangent || !decal.surfaceBitangent || !decal.worldPerPixelX) && decal.x !== undefined && decal.y !== undefined) {
+            const u = decal.x / this.canvas.width;
+            const v = 1 - (decal.y / this.canvas.height);
+            const pt3D = this.find3DPointFromUV(u, v);
+            if (pt3D) {
+                if (!decal.surfaceTangent && pt3D.tangent) decal.surfaceTangent = pt3D.tangent.clone();
+                if (!decal.surfaceBitangent && pt3D.bitangent) decal.surfaceBitangent = pt3D.bitangent.clone();
+                if (!decal.projectorMeshNormal) decal.projectorMeshNormal = pt3D.normal.clone();
+                if (!decal.worldPerPixelX && pt3D.worldUnitsPerU > 0 && pt3D.worldUnitsPerV > 0) {
+                    decal.worldPerPixelX = pt3D.worldUnitsPerU / this.canvas.width;
+                    decal.worldPerPixelY = pt3D.worldUnitsPerV / this.canvas.height;
+                }
+            }
+        }
+        this.update3DUnwrapForDecal(decal, true, true);
+    }
+
+    update3DUnwrapForDecal(decal, isFinal = false, preserveMode = false) {
         if (!decal || !decal.img || !this.renderer || !this.mesh) return;
 
         this.initPreviewBake();
+
+        // Actualizar orientación y dimensiones del proyector para este decal
+        this._doUpdatePreviewTransform(decal);
 
         // Asegurar que this.decalTexture apunte a la imagen del decal y esté sincronizada en GPU
         if (!this.decalTexture || this.decalTexture.image !== decal.img) {
@@ -3557,12 +3666,22 @@ export class DecalSystem {
         const w = this.canvas ? this.canvas.width : 2048;
         const h = this.canvas ? this.canvas.height : 2048;
 
+        if (this.previewRenderTarget && (this.previewRenderTarget.width !== w || this.previewRenderTarget.height !== h)) {
+            this.previewRenderTarget.setSize(w, h);
+            this.previewPixelBuffer = new Uint8Array(w * h * 4);
+        }
+
         const orientation = this.currentProjectorOrientation || new THREE.Euler();
         const size = this.currentProjectorSize || new THREE.Vector3(1, 1, 1);
+        const projPos = (preserveMode && decal.projectorPosition) ? decal.projectorPosition : this.projectorPosition;
+        const shaderNormal = (preserveMode && (decal.projectorMeshNormal || decal.projectorNormal))
+            ? (decal.projectorMeshNormal || decal.projectorNormal)
+            : (this.projectorMeshNormal || this.projectorNormal);
+        const allowPass = (preserveMode && decal.allowPassthrough !== undefined) ? !!decal.allowPassthrough : this.allowPassthrough;
 
         const projectorWorldMatrix = new THREE.Matrix4();
         projectorWorldMatrix.makeRotationFromEuler(orientation);
-        projectorWorldMatrix.setPosition(this.projectorPosition);
+        projectorWorldMatrix.setPosition(projPos);
         const scaleX = (decal.flipH ? -1 : 1) * size.x;
         const scaleY = (decal.flipV ? -1 : 1) * size.y;
         projectorWorldMatrix.multiply(new THREE.Matrix4().makeScale(scaleX, scaleY, size.z));
@@ -3578,13 +3697,18 @@ export class DecalSystem {
         }
 
         meshesToBake.forEach(m => {
+            m.updateWorldMatrix(true, false);
+            if (m.geometry && !m.geometry.attributes.normal) {
+                m.geometry.computeVertexNormals();
+            }
             const mat = this.previewBakeMaterial.clone();
             mat.uniforms.uModelMatrix.value.copy(m.matrixWorld);
             mat.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
-            mat.uniforms.uProjectorNormal.value.copy(this.projectorNormal);
+            mat.uniforms.uProjectorNormal.value.copy(shaderNormal);
             mat.uniforms.uDecalTexture.value = this.decalTexture;
-            mat.uniforms.uAllowPassthrough.value = this.allowPassthrough ? 1.0 : 0.0;
+            mat.uniforms.uAllowPassthrough.value = allowPass ? 1.0 : 0.0;
             const meshClone = new THREE.Mesh(m.geometry, mat);
+            meshClone.frustumCulled = false;
             this.previewBakeScene.add(meshClone);
         });
 
@@ -3599,7 +3723,7 @@ export class DecalSystem {
         this.renderer.setRenderTarget(prevTarget);
         this.renderer.setClearColor(prevClearColor, prevClearAlpha);
 
-        if (!decal.unwrappedCanvas) {
+        if (!decal.unwrappedCanvas || decal.unwrappedCanvas.width !== w || decal.unwrappedCanvas.height !== h) {
             decal.unwrappedCanvas = document.createElement('canvas');
             decal.unwrappedCanvas.width = w;
             decal.unwrappedCanvas.height = h;
@@ -3625,12 +3749,17 @@ export class DecalSystem {
             decal.hasValidUnwrap = false;
         }
 
-        decal.mode = '3d';
-        decal.projectorPosition = this.projectorPosition.clone();
-        decal.projectorNormal = this.projectorNormal.clone();
-        decal.projectorScale = this.projectorScale;
-        decal.projectorRotation = this.projectorRotation;
-        decal.allowPassthrough = this.allowPassthrough;
+        if (!preserveMode) {
+            decal.mode = '3d';
+            decal.projectorPosition = this.projectorPosition.clone();
+            decal.projectorNormal = this.projectorNormal.clone();
+            if (this.projectorMeshNormal) decal.projectorMeshNormal = this.projectorMeshNormal.clone();
+            if (this.surfaceTangent) decal.surfaceTangent = this.surfaceTangent.clone();
+            if (this.surfaceBitangent) decal.surfaceBitangent = this.surfaceBitangent.clone();
+            decal.projectorScale = this.projectorScale;
+            decal.projectorRotation = this.projectorRotation;
+            decal.allowPassthrough = this.allowPassthrough;
+        }
 
         if (this.layerManager) {
             this.layerManager.recomposite();
@@ -4514,8 +4643,8 @@ export class DecalSystem {
                 void main() {
                     // Modo 1 cara (Profesional / Sin traspasar):
                     if (uAllowPassthrough < 0.5) {
-                        // Descartar caras netamente opuestas (en la espalda de la superficie)
-                        if (dot(vWorldNormal, uProjectorNormal) < -0.1) discard;
+                        // Descartar solo caras traseras/opuestas, permitiendo envolver pliegues y costuras entre islas UV.
+                        if (dot(vWorldNormal, uProjectorNormal) < -0.25) discard;
                     }
 
                     vec4 p = uProjectorMatrix * vec4(vWorldPosition, 1.0);
@@ -4532,7 +4661,9 @@ export class DecalSystem {
                 }
             `,
             side: THREE.DoubleSide,
-            transparent: true
+            transparent: true,
+            depthTest: false,
+            depthWrite: false
         });
 
         // 5. Renderizar en WebGLRenderTarget con antialiasing MSAA (4x)
@@ -4542,14 +4673,20 @@ export class DecalSystem {
             samples: 4
         });
 
-        const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -10, 10);
         const bakeScene = new THREE.Scene();
+        const shaderNormal = this.projectorMeshNormal || this.projectorNormal;
 
         meshesToBake.forEach(m => {
+            m.updateWorldMatrix(true, false);
+            if (m.geometry && !m.geometry.attributes.normal) {
+                m.geometry.computeVertexNormals();
+            }
             const meshClone = new THREE.Mesh(m.geometry, bakeMaterial.clone());
+            meshClone.frustumCulled = false;
             meshClone.material.uniforms.uModelMatrix.value.copy(m.matrixWorld);
             meshClone.material.uniforms.uProjectorMatrix.value = inverseProjectorMatrix;
-            meshClone.material.uniforms.uProjectorNormal.value = this.projectorNormal;
+            meshClone.material.uniforms.uProjectorNormal.value = shaderNormal;
             meshClone.material.uniforms.uDecalTexture.value = this.decalTexture;
             meshClone.material.uniforms.uAllowPassthrough.value = this.allowPassthrough ? 1.0 : 0.0;
             bakeScene.add(meshClone);

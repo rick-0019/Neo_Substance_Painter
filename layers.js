@@ -61,7 +61,8 @@ export class Layer {
             targetCtx.globalAlpha = (d.opacity !== undefined ? d.opacity : 1.0);
 
             let drawn3D = false;
-            if (d.mode === '3d' && d.unwrappedCanvas && d.hasValidUnwrap !== false) {
+            const isDragging2D = !!(window.decalSystem && window.decalSystem.selectedDecalId === d.id && window.decalSystem.mode === '2d' && window.decalSystem.decal2D && window.decalSystem.decal2D.isDragging);
+            if (!isDragging2D && d.unwrappedCanvas && d.hasValidUnwrap !== false) {
                 targetCtx.drawImage(d.unwrappedCanvas, 0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
                 drawn3D = true;
             }
@@ -103,7 +104,7 @@ export class Layer {
             this.ctx.globalAlpha = (d.opacity !== undefined ? d.opacity : 1.0);
 
             let baked3D = false;
-            if (d.mode === '3d' && d.unwrappedCanvas && d.hasValidUnwrap !== false) {
+            if (d.unwrappedCanvas && d.hasValidUnwrap !== false) {
                 this.ctx.drawImage(d.unwrappedCanvas, 0, 0, this.canvas.width, this.canvas.height);
                 baked3D = true;
             }
@@ -128,7 +129,7 @@ export class Layer {
     unmaskDecal(d) {
         if (!this.maskCtx || !d || !d.img) return;
         try {
-            if (d.mode === '3d' && d.unwrappedCanvas && d.hasValidUnwrap !== false) {
+            if (d.unwrappedCanvas && d.hasValidUnwrap !== false) {
                 const tempCanvas = document.createElement('canvas');
                 tempCanvas.width = this.width;
                 tempCanvas.height = this.height;
